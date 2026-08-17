@@ -1,215 +1,451 @@
 # UI/UX Decisions V1
 
+## Core terminology
+
+- **State:** runtime condition/value coming from firmware data. States may exist simultaneously. Examples include up, down, door states and warnings.
+- **Scene:** visual presentation selected from currently active states according to scene priority. Exactly one scene is active for a given runtime presentation context.
+- **Rotation:** one of the four design documents in a Theme Project.
+- **Theme Project:** the theme package containing exactly four rotations.
+- **Project:** the SD-card-level project. One project is placed on an SD card deployment.
+
+State and Scene must remain distinct in the application model even when users casually mix the terms.
+
 ## Workspace
+
 - Professional engineering desktop application; not a generic dashboard.
 - Expandable top command/menu bar.
 - Left Altium-style hierarchical Project Explorer.
-- Multiple projects/templates can be open and switched.
-- Project hierarchy preserves deployment organization: project/theme/rotation/scene/objects/resources.
-- Rotation/orientation selection behaves like switching schematic documents in Altium.
-- Open rotations/scenes/projects appear as tabs.
-- Tabs may be docked, floated, moved to another monitor, and recombined.
+- Multiple projects can be open and switched.
+- Open rotations/documents appear as tabs and behave like switching schematic documents in Altium.
+- Tabs may be docked, floated, moved to another monitor, reordered and recombined.
 - Project Explorer, Properties, Simulator, Console and other tool windows are resizable/collapsible/dockable.
-- Window docking must behave like familiar professional desktop applications/IDEs: panels can dock to left, right, top, bottom, center/document area, or appropriate side regions; an incoming docked panel takes the selected docking region and existing content is rearranged/stacked/tabbed rather than arbitrarily overlapping or destroying content.
-- Dock targets/preview zones should be visible during drag, making the result predictable before drop.
-- Multiple panels can occupy the same dock region as tabs or stacked groups.
-- Panels can be resized by dragging splitters, collapsed/auto-hidden, undocked/floated, redocked and moved between monitors.
-- Docking is stateful: the application remembers the user's workspace arrangement and restores it where practical.
-- The system should be at least as flexible as common IDE docking systems, while remaining simpler and more predictable than an unrestricted custom window manager.
-- When a docked panel is opened/closed, the remaining workspace reflows; panels do not cover the canvas unexpectedly unless explicitly floated/overlaid.
-- Resizing panels must not distort their contents; previews preserve logical aspect ratio and use scaling/centering/letterboxing as needed.
+- Docking follows familiar professional IDE behavior: panels can dock to left, right, top, bottom, center/document area and appropriate side regions; incoming panels rearrange/stack/tab existing content rather than arbitrarily overlapping or destroying it.
+- Dock targets/preview zones are visible while dragging a panel.
+- Panels can be resized by splitters, collapsed/auto-hidden, undocked/floated, redocked and moved between monitors.
+- Docking/workspace state is remembered where practical.
+- Resizing panels must not distort content; device previews preserve logical aspect ratio and use scaling/centering/letterboxing as needed.
 
-## Dock/Window Controls
-- Persistent visibility controls exist for right-side, left-side and bottom tool regions.
-- Controls are placed in the upper/right workspace chrome in a compact, familiar IDE-like manner.
-- The exact chrome can be more flexible than VS Code, but behavior must remain predictable.
-- Controls reflect current visibility/docking state.
-- Opening a hidden panel restores its previous useful dock/context where possible.
-- Simulator, Console and other secondary tools use the same docking framework as Project Explorer and Properties.
+## Canonical project hierarchy
 
-## Project Explorer
+The canonical logical hierarchy is:
+
 ```text
-Deployment/Project
-├── Theme Project
-│   ├── Theme
-│   │   ├── Rotation
-│   │   │   ├── Scene
-│   │   │   │   ├── Widget
-│   │   │   │   └── Media
-│   │   │   └── Scene
-│   │   └── Rotation
-│   └── Resources
-└── Theme Project
+Workspace
+└── Project (SD-card project)
+    └── Theme Project Group
+        └── Theme Project
+            ├── Rotation 1
+            ├── Rotation 2
+            ├── Rotation 3
+            └── Rotation 4
 ```
 
-The exact node names may evolve, but the hierarchical project/theme/rotation/scene/object relationship is required.
+A Project contains one Theme Project Group. The Theme Project is the actual theme package and contains exactly four rotations.
+
+Each Theme Project contains its own resources.
+
+## Project creation
+
+When a new Project is created for a DeviceProfile:
+
+1. Firmware/profile-supported rotations are created automatically.
+2. Firmware/profile-supported scenes are created automatically.
+3. Corresponding profile/config information is initialized.
+4. The user may delete rotations/scenes.
+5. The user may later restore/add them through Project Explorer context menus such as `Add Rotation` and `Add Scene`.
+6. Unsupported rotations/scenes cannot silently be added.
+
+This gives a new project a profile-conformant skeleton instead of an empty canvas.
+
+## Rotation
+
+A Theme Project has exactly four rotations. Each is a separate design document/tab.
+
+Selecting a rotation from Project Explorer activates its corresponding document/tab and workspace.
+
+An inverted theme project may be generated from a theme through a context command such as:
+
+```text
+Create Theme Project as Inverted
+```
+
+The operation mirrors the visual layout toward the opposite screen orientation and creates the corresponding inverted design structure. The implementation may later use DSI/LTDC/display-controller-friendly transformations, but the Designer must explicitly model the resulting layout rather than depend on an unspecified runtime transform.
+
+## Scene semantics
+
+A Scene is the **active presentation** selected from runtime states by priority. It is not merely a static canvas and it is not itself a runtime state.
+
+Multiple states may be active simultaneously. Exactly one scene is selected according to the applicable scene priority.
+
+Examples:
+
+```text
+fire active       → Fire scene wins
+fire inactive
+idle              → Idle scene
+up active         → Up scene wins over idle if its priority is higher
+```
+
+If applicable scenes have equal priority, the later-arriving applicable event/state wins according to runtime event ordering.
+
+Scene priority is separate from widget Z-order.
+
+Example: if `up` is active and the Up scene contains an arrow, then a higher-priority warning scene can replace it. If that warning scene also contains an Up arrow, the arrow remains visible because it belongs to the active Warning scene.
+
+Therefore:
+
+```text
+Firmware runtime states
+        ↓
+Applicable scene conditions
+        ↓
+Scene priority resolution
+        ↓
+Exactly one active scene
+        ↓
+Scene widgets/media rendered using Z-order
+```
+
+## Runtime State registry
+
+States come from the DeviceProfile/firmware contract. The Designer does not invent new runtime states.
+
+Examples include:
+
+```text
+up
+down
+door_opening
+door_open
+door_closing
+fire
+overload
+service_out
+```
+
+Warnings are also states. The warning registry is firmware-facing; the current elevator application has three known warnings:
+
+```text
+service_out
+overload
+fire
+```
+
+The UI may expose firmware warning identifiers such as `warning1`, `warning2`, `warning3` where that is the actual profile terminology. Warnings remain inside the common state model rather than being a separate presentation system.
+
+## State / Context Bar
+
+The State/Context Bar is a workspace control for selecting/inspecting runtime context while editing/testing.
+
+It is not a second project hierarchy and does not replace Project Explorer.
+
+Project Explorer answers:
+
+> Which project/theme/rotation/scene/object am I editing?
+
+State/Context Bar answers:
+
+> Which runtime state/context am I previewing or binding against?
+
+The bar is independently collapsible/hidden and remains a usable workspace edge/region when other dockable panels are added.
+
+## Scene management
+
+Scene operations are available through Project Explorer context menus and suitable toolbar commands:
+
+```text
+New Scene
+Duplicate Scene
+Rename
+Delete
+Add/Restore Scene
+```
+
+Scenes can be reordered within compatible parents. Compatible scenes/objects may be dragged between projects/rotations.
+
+If a drag/drop operation causes a DeviceProfile/capability mismatch, the application must not silently perform it. Show a comparison/conflict UI explaining the mismatch and ask which supported resolution the user wants.
+
+## Scene duplication
+
+Duplicate Scene performs a deep copy of the editable presentation model:
+
+- widgets,
+- widget properties,
+- bindings/conditions,
+- layout,
+- style references,
+- media-slide configuration,
+- Bounding Groups,
+- relevant scene metadata.
+
+Assets are not blindly duplicated; references may continue to point to the same asset when appropriate.
+
+## Objects across scenes
+
+Objects may intentionally have different positions in different scenes.
+
+Moving/copying an object from one scene to another creates a scene-specific object instance by default.
+
+A dedicated operation can apply general parameters to other scenes. For geometry synchronization, an explicit selection such as:
+
+```text
+Apply to other scenes
+☑ X
+☑ Y
+☐ Width
+☐ Height
+```
+
+may be used. The important rule is that scene-specific geometry remains possible while common parameters can be propagated intentionally.
+
+## Project Explorer object ordering
+
+When a scene is selected, its child objects are visible in Project Explorer.
+
+The Explorer may expose object order and category/filter controls. Z-order operations remain available through context menus/toolbars and can be adjusted from the Explorer where useful.
+
+When the user clicks empty canvas space, the UI may expose ordering/layer controls without requiring a widget selection.
+
+Core order operations:
+
+```text
+Bring to Front
+Bring Forward
+Send Backward
+Send to Back
+```
+
+## Drag/drop within Explorer
+
+Project Explorer supports drag/drop for compatible operations.
+
+- Normal drag: Move.
+- `Ctrl` modifier: Copy.
+- Cross-project drag/drop is allowed when compatible.
+- Incompatible drops show a comparison/resolution dialog.
+- Objects dropped into another scene become scene-specific instances.
+
+## Resources
+
+Every Theme contains its own Resources area/directory. Theme assets remain separated by theme for predictable firmware deployment.
+
+A higher-level Resources area may exist under Theme Project Group if needed later, but its exact contents are intentionally not fixed yet.
+
+### Future firmware optimization — TODO
+
+Remember but do not implement now:
+
+The Theme Project Group config could contain an index/manifest of the complete file/directory tree. Firmware could locate files through this index instead of requiring fixed paths/names. This could save SD-card space and allow more flexible asset reuse, but it requires firmware changes.
+
+Keep this in the future implementation backlog.
+
+## External resource drag/drop
+
+Files may be dragged from Windows Explorer into the application.
+
+Resource intake distinguishes:
+
+### Unassigned
+
+The file format is recognized/supported by the active DeviceProfile, but no semantic template type has been assigned.
+
+Example:
+
+```text
+random.png
+→ supported image format
+→ semantic type = None / Unassigned
+```
+
+It remains in project resources and can later be assigned as an Image, Digit, Direction, Warning, etc. when supported.
+
+### Unsupported
+
+The DeviceProfile does not support the file format/type.
+
+The resource is explicitly marked `Unsupported` and must not silently become a template object.
+
+It may still be retained in the project/SD resource area according to the current resource policy. Export must warn the user and ask whether to continue.
+
+### Current scope
+
+Do not add automatic media format conversion to the current Designer implementation. A separate Format Tool may be added later.
+
+## Resource semantic assignment
+
+A selected resource exposes:
+
+```text
+Type: [ None ▼ ]
+```
+
+The dropdown contains only semantic types supported by the active DeviceProfile.
+
+If the user assigns a supported type, the resource becomes available for template usage. If no type is assigned, it remains Unassigned.
+
+## Asset copying
+
+When an object/resource is copied into another Theme/scene and independent ownership is required, the application may create a separate asset copy in the destination Theme's resource directory. The UI must make the ownership/reference behavior clear.
+
+During export, referenced assets are copied/processed according to the deployment package rules. Automatic format/size conversion is intentionally deferred to the later Format Tool.
+
+## Cross-project compatibility
+
+Projects, themes, rotations, scenes and resources may be moved/copied by drag/drop only when compatible.
+
+On mismatch, show a comparison/resolution UI with:
+
+- source DeviceProfile,
+- destination DeviceProfile,
+- conflicting capabilities,
+- affected objects/assets,
+- supported resolutions.
+
+## Tabs
+
+Open rotations and other design documents appear as tabs.
+
+Tabs can be reordered, closed, pinned where useful, docked, floated, moved to another monitor and recombined into the main document area.
+
+Tab titles should expose enough project/theme/rotation identity to avoid confusion when multiple projects are open.
 
 ## Properties
-- Right-side Altium-style contextual Properties/Inspector.
+
+Right-side Altium-style contextual Properties/Inspector remains the authoritative editing surface for object parameters.
+
 - One selected object: show all supported relevant properties.
 - Multiple selected objects: show only properties common to all selected objects.
-- If values are identical, show the value normally.
-- If values differ, show `*` as a mixed value.
-- Editing a mixed value applies the new value to every selected object.
-- A multi-object edit is one meaningful undo/redo operation.
-- Properties are contextual to object type/capability.
-- Locked objects remain selectable and their non-geometry properties can still be edited.
-- When locked, size and coordinates cannot be changed through canvas or Properties.
-- Visibility is separate from lock state.
+- Identical values display normally.
+- Different values display `*`.
+- Editing a mixed value applies it to every selected object as one undoable operation.
+- Locked objects remain selectable and non-geometry properties remain editable.
+- Locked size and coordinates cannot be changed through canvas or Properties.
+- Visibility is independent from lock.
 
-## Drag/drop
-- External files can be dragged into the application/resource area.
-- Imported media initially has semantic type `None` unless explicitly assigned.
-- User may assign an appropriate semantic type such as image, video, warning symbol, digit, direction, etc.; exact options come from DeviceProfile.
-- Unsupported/inappropriate formats are not automatically inserted into the template. They remain in the intake/resource area and can still be handled according to project/SD resource rules.
-- Resource intake and template semantic usage are distinct.
+## Dock/Window Controls
+
+Persistent visibility controls exist for right-side, left-side and bottom tool regions. Controls reflect current visibility/docking state and restore the previous useful context when a panel is reopened where possible.
 
 ## Design Studio — Canvas Interaction
 
 ### Selection
-- Primary selection uses left mouse click.
-- `Ctrl + left click` adds/removes an object from the current selection.
-- Clicking empty canvas clears the current selection.
-- Rectangle selection is supported.
-- Selection behavior should follow familiar CAD/engineering-editor conventions.
+
+- Left click selects.
+- `Ctrl + left click` adds/removes from selection.
+- Empty canvas click clears selection.
+- Rectangle selection follows familiar CAD conventions.
 
 ### Move
-- Objects can be moved by dragging.
-- Snap behavior is controlled by Snap Grid state.
-- `Ctrl` temporarily bypasses snapping while moving/resizing where that behavior is applicable.
-- Exact shortcut conflicts must be resolved centrally in the application shortcut registry.
+
+- Drag moves objects.
+- Snap Grid controls snapping.
+- `Ctrl` temporarily bypasses snapping where applicable.
 
 ### Snap Grid
-- Snap Grid is a first-class Designer setting.
-- Snap can be enabled/disabled.
-- Grid step is configurable.
-- Move, resize and alignment operations can respect the active snap grid.
-- The visual grid treatment remains a visual-design choice, but it must remain unobtrusive and useful.
+
+- First-class Designer setting.
+- On/off.
+- Configurable grid step.
+- Move, resize and alignment can respect the active grid.
 
 ### Keyboard movement
-- Arrow keys move the selected object(s) by the normal small-step amount.
-- `Ctrl + Arrow` moves by the active Snap Grid amount.
-- `Ctrl + Shift + Arrow` moves by `Snap Grid × 5`.
-- This rule is specifically for normal object movement; it does not redefine unrelated shortcut behavior.
+
+- Normal Arrow keys move by the small step.
+- `Ctrl + Arrow` moves by active Snap Grid.
+- `Ctrl + Shift + Arrow` moves by Snap Grid × 5.
 
 ### Resize
-- Resize uses visible handles and Properties editing.
-- There is no multi-selection scale/transform operation requirement in V1.
-- If a user grabs one object's resize handle, that object is resized; other selected objects are not automatically scaled.
-- Width/height can be entered directly in Properties to make objects the same size.
-- Size lock and aspect-ratio lock are explicit settings.
-- Aspect ratio locking is supported independently from size locking.
-- The user can enable/disable these locks according to the selected object's capabilities.
+
+- Visible resize handles + Properties editing.
+- No multi-selection scale/transform feature in V1.
+- Resizing one selected object's handle changes only that object.
+- Width/height can be entered directly in Properties.
+- **Size Lock** and **Aspect Ratio Lock** are separate settings.
+- Aspect ratio locking can be enabled independently of size locking.
 
 ### Rotation
-- Rotation is available through the object's rotation UI and Properties.
-- Rotation is free by default.
-- Rotation has 5-degree snapping.
+
+- Rotation is available through rotation UI and Properties.
+- Free rotation with 5° snapping.
 - 45° and 90° positions have visible snap/guide indication.
-- While dragging/rotating, pressing `R` rotates the selected object by 90°.
-- Rotation must not be forced into only 90° increments.
+- Pressing `R` while rotating turns the selected object 90°.
 
 ### Duplicate
-- Duplicate is available from the context menu and toolbar.
-- Duplicate does not require a permanent duplicate mode after one action.
-- On invoking Duplicate, the duplicated object's/group's center follows the cursor; the user places it with the next click.
-- After placement, normal selection behavior resumes unless the repeated-duplicate command is explicitly invoked.
-- Repeated duplicate behavior is a separate interaction decision and must not be conflated with the one-shot Duplicate command.
+
+- Duplicate is available from right-click context menu and toolbar.
+- Invoking Duplicate starts a placement interaction: the duplicate/group center follows the cursor.
+- The next click places the duplicate centered on that clicked location.
+- Repeated duplicate mode: after each placement, another duplicate follows the cursor; each click places another copy centered at that location.
+- `Esc` exits repeated duplicate mode and returns to normal selection behavior.
 
 ### Alignment / Distribution
-- Multi-selection supports alignment and distribution commands.
-- Commands are available through toolbar/contextual UI as appropriate.
-- Alignment/distribution must respect the active snap/layout rules where applicable.
+
+Multi-selection supports alignment/distribution commands through toolbar/context UI.
 
 ### Cross-scene positioning
-- Scenes may intentionally contain the same object at different positions.
-- A dedicated command can apply the selected object's position to other applicable scenes.
-- This is an explicit cross-scene operation, not an automatic synchronization rule.
-- No `Shift+S` shortcut is reserved for cross-scene visibility/position behavior.
+
+Scenes may intentionally contain the same object at different positions. A dedicated command can apply selected geometry/general parameters to other scenes. No `Shift+S` shortcut is reserved for this feature.
 
 ### Z-order
-- Objects support Bring to Front, Bring Forward, Send Backward and Send to Back.
-- Z-order controls may be exposed through toolbar/context menu/project hierarchy where useful.
+
+Objects support Bring to Front, Bring Forward, Send Backward and Send to Back.
 
 ### Lock / Visibility
-- Locked objects can still be selected.
-- Locked objects expose their properties, but coordinate and size editing is disabled.
+
+- Locked objects remain selectable.
+- Locked objects allow non-geometry Properties editing.
+- Locked objects cannot have size or coordinates changed.
 - `Visible` is independent from `Locked`.
-- A hidden object can remain selectable when selected from the Project Explorer.
-- When a hidden object is selected from the Project Explorer, the canvas shows its selection bounding box/handles but does not render the object's visual content.
-- Hidden objects have a clear visibility indicator in the Project Explorer.
-- `Hide All` and `Show All` commands are available.
-- The previous proposal to use `Shift+S` as a hide/visibility shortcut is removed.
+- A hidden object can be selected from Project Explorer.
+- Selecting a hidden object shows its selection bounding box/handles without rendering its visual content.
+- Hidden objects have a clear visibility indicator in Project Explorer.
+- `Hide All` and `Show All` are available.
+- The previous `Shift+S` visibility shortcut is removed.
 
 ### Context menu
-- Right-click menus are contextual and should follow familiar engineering/CAD ordering.
-- Core commands include selection/editing, duplicate/delete, alignment/distribution, order, grouping/Bounding Group, lock/visibility, scene-position operations and Properties where applicable.
-- Media/widget-specific commands may be inserted contextually.
 
-## State / Context Bar
-- There is a dedicated bar between the main workspace regions and the canvas/tool area for firmware-defined runtime states/contexts.
-- This bar is independently collapsible/hidden.
-- It must remain available as a workspace edge/region when other dockable panels are added.
-- Runtime state/context controls are not the same thing as the Project Explorer hierarchy.
+Right-click menus follow familiar engineering/CAD ordering and are contextual. They include appropriate selection/editing, duplicate/delete, alignment/distribution, order, grouping/Bounding Group, lock/visibility and Properties commands.
 
 ## Console
-- A dedicated Console is dockable/collapsible/floating like other tool windows and is normally available in the lower workspace region.
-- The Console supports command entry.
-- The Console also displays commands/actions performed by the Designer and relevant tool output.
-- Validation output is visible here.
-- SD-card/package build output is visible here.
-- Simulator/runtime test commands and results are visible here.
-- AI/API operations can be shown here so the user can observe what the agent is doing.
-- Errors, warnings, progress and command results should be structured and readable rather than being an unfiltered log dump.
 
-Example:
-```text
-> validate
-✓ 0 errors, 2 warnings
+A dedicated Console is dockable/collapsible/floating and normally available in the lower workspace region.
 
-> build sd-card
-✓ package generated
+It supports command entry and shows:
 
-> simulate floor=11 direction=up
-✓ runtime state applied
-
-> _
-```
+- Designer actions/commands,
+- validation output,
+- SD-card/package build output,
+- simulator/runtime commands and results,
+- AI/API operations,
+- errors/warnings/progress/results.
 
 ## Simulator
-- Simulator is a separate collapsible/dockable workspace panel/window, similar to Project Explorer.
-- It may be docked, floated or opened as a tab.
-- Preview must preserve device aspect ratio when resized.
-- Multiple panels/windows may be used across monitors.
+
+Simulator uses the same docking framework as Project Explorer and Properties. It may be docked, floated or opened as a tab. Device previews preserve aspect ratio when resized.
 
 ## Color / Asset selection
-- DeviceProfile provides the initial supported/default firmware-defined color palette.
-- V1 device profile should expose 10 defined colors to the Designer.
-- Color Properties should normally present those profile-defined colors.
+
+- DeviceProfile supplies the initial firmware-defined palette.
+- V1 device profile exposes 10 defined colors.
+- Color Properties present those profile-defined colors.
 - A Windows/native color picker is also available for custom selection.
-- A custom color may be stored in the project, but if the target firmware/device does not support that color at runtime, validation/simulation must make the limitation visible rather than silently pretending it will work.
-- Asset selectors use a dropdown containing profile-supported/default assets where applicable.
-- An `...`/Browse action opens a custom asset/resource selection flow.
+- If firmware does not support a selected custom color, validation/simulation visibly reports the limitation instead of silently assuming support.
+- Asset selectors use a dropdown of profile-supported/default assets/options where applicable.
+- `...`/Browse opens custom asset/resource selection.
 
 ## Visual direction
-- Match supplied reference screenshots as the primary visual source.
+
+- Supplied reference screenshots are the primary visual source.
 - Light neutral workspace, dark device preview, restrained teal/cyan accent, compact controls, thin borders, subtle elevation, dense but calm information layout.
 - Professional, familiar, useful, aesthetic and not fussy.
 
 ## Shortcut policy
-- Keyboard shortcuts should follow familiar Altium/CAD/Windows conventions wherever possible.
-- Do not invent application-specific modifier behavior when a familiar convention exists.
-- A centralized shortcut registry must own assignments and detect conflicts.
-- Current explicit interaction decisions include `Ctrl` as the main modifier family, `R` for 90° rotation during rotation, arrow-key movement, `Ctrl+Arrow` for grid-step movement and `Ctrl+Shift+Arrow` for 5× grid-step movement.
 
-## Not yet fixed
-- Exact top-bar menus.
-- Exact Project Explorer icons/nodes.
-- Exact tab close/pin/docking interactions.
-- Full application shortcut table and conflict resolution for every command.
-- Exact selection handle visuals/colors.
-- Exact snap-grid visual treatment.
-- Exact context-menu command ordering.
-- Exact Properties section ordering.
-- Simulator toolbar.
-- Validation, Publish, Deployment, Theme Library and Settings detailed screens.
+- Prefer familiar Altium/CAD/Windows conventions.
+- Do not invent unrelated modifier behavior when a familiar convention exists.
+- Central shortcut registry owns assignments and detects conflicts.
+- Explicit current decisions: `Ctrl` modifier family, `R` during rotation for 90°, Arrow movement, `Ctrl+Arrow` for grid-step movement and `Ctrl+Shift+Arrow` for 5× grid-step movement.
+
+## Default decisions
+
+Where the user did not explicitly override a proposed behavior, retain the previously proposed professional-desktop behavior, subject to the rules above. Context-sensitive UI, DeviceProfile-driven capabilities, Altium/CAD interaction conventions and a calm professional desktop aesthetic remain defaults.
