@@ -7,6 +7,7 @@
 - **Rotation:** one of the four design documents in a Theme Project.
 - **Theme Project:** the theme package containing exactly four rotations.
 - **Project:** the SD-card-level project. One project is placed on an SD card deployment.
+- **Asset Browser / Asset Depot:** the library/depot view used to browse available reusable/default assets. It is not the same thing as a Theme's Resources area.
 
 State and Scene must remain distinct in the application model even when users casually mix the terms.
 
@@ -42,7 +43,7 @@ Workspace
 
 A Project contains one Theme Project Group. The Theme Project is the actual theme package and contains exactly four rotations.
 
-Each Theme Project contains its own resources.
+Each Theme Project contains its own Resources area.
 
 ## Project creation
 
@@ -225,13 +226,356 @@ Project Explorer supports drag/drop for compatible operations.
 - Incompatible drops show a comparison/resolution dialog.
 - Objects dropped into another scene become scene-specific instances.
 
-## Resources
+## Resources and Asset Depot
 
-Every Theme contains its own Resources area/directory. Theme assets remain separated by theme for predictable firmware deployment.
+The application distinguishes the **Asset Depot/Asset Browser** from the Theme's **Resources** area.
 
-A higher-level Resources area may exist under Theme Project Group if needed later, but its exact contents are intentionally not fixed yet.
+### Asset Depot / Asset Browser
 
-### Future firmware optimization — TODO
+The Asset Browser is analogous to an engineering library such as an Altium library. It represents the assets available for reuse by the application/project ecosystem.
+
+It shows assets from a configured depot/library location and also exposes profile/default assets as applicable.
+
+It is not itself a Scene and it does not contain widgets.
+
+The Asset Browser should have:
+
+- a library/depot selector or configured depot location,
+- category navigation,
+- search/filter,
+- list/grid/thumbnail views,
+- supported/default asset views,
+- visual indication when an asset is already used by the current project/theme,
+- dependency/use information where useful.
+
+A good UX term for the reusable collection is **Asset Depot**. The UI may show `Asset Browser` as the tool-window title and `Depot`/library as the source selector.
+
+### Used indicator
+
+If an asset selected from the Asset Depot is already used by the current project/theme, the Asset Browser should show a clear but unobtrusive indicator (for example a checkmark/badge) and may expose `Used By` information.
+
+The asset can still be reused; the indicator is informational and helps the user understand project usage.
+
+### Default assets
+
+DeviceProfile/default assets are available to the Designer without requiring every project to maintain redundant source copies. They are included in the deployment package when referenced/required by the project.
+
+## Theme Resources
+
+Every Theme contains its own Resources area.
+
+Resources are **project-owned files** rather than a library category.
+
+Only files belong in Resources. Widgets and Scenes never belong inside Resources.
+
+A supported asset can be stored directly in a Theme's Resources area even when it has not yet been assigned to a Scene.
+
+A resource may also be used directly by a Scene; in that case the Scene's object reference is visible in the Scene hierarchy and the asset remains associated with that Scene/object according to the project model.
+
+### Resource intake rule
+
+When an external file is dropped into a Project Explorer location, the target location determines the operation.
+
+There is **no generic Windows Explorer → Canvas drag/drop workflow**.
+
+The Designer must not create a widget merely because a file is dragged over the canvas.
+
+If a file is dropped into a project resource-capable location:
+
+- if its format is supported by the DeviceProfile, it is placed in the appropriate Resources area/category;
+- if its format is unsupported, it is placed in `Unsupported Files`;
+- no additional Unassigned/Unsigned category is required.
+
+`Unsupported Files` are retained for visibility/debugging but are not usable template resources and are not part of the normal asset-selection workflow.
+
+## Resource categories
+
+Resource categories should follow useful semantic/device-supported media categories where appropriate, for example:
+
+```text
+Images
+Videos
+Audio
+Fonts (if applicable to a future profile contract)
+Digit Styles
+Direction Styles
+Warning Signs
+Other profile-defined media categories
+```
+
+If a resource is explicitly assigned a semantic category such as `Warning Sign`, the UI can place/display it in that category. The exact on-disk category structure must remain compatible with the firmware contract.
+
+The current firmware-facing rule can use category folders directly where useful (for example a `Warning Signs` folder) so firmware can discover the expected resources predictably.
+
+## Unsupported Files
+
+`Unsupported Files` is the only special unsupported bucket required by the current UX model.
+
+Unsupported files:
+
+- remain visible in Project Explorer/resource management where they were dropped,
+- are not displayed as usable assets in the normal Asset Browser workflow,
+- cannot be inserted as template widgets,
+- are not exported as normal project assets,
+- may be reported by Design Rules/Validation.
+
+They are intentionally not promoted to a semantic asset type.
+
+## Asset Browser visibility model
+
+The main places where usable assets are intentionally visible are:
+
+1. Canvas/Scene when referenced by a widget.
+2. Theme Resources.
+3. Asset Browser / Asset Depot.
+4. Default/Profile asset views.
+
+`Unsupported Files` is a management/debug area and should not pollute normal asset browsing.
+
+## Asset preview
+
+The Asset Browser provides type-appropriate preview:
+
+- Images display directly.
+- Videos can be played in the preview pane.
+- Audio can be played in the preview pane.
+- A video thumbnail uses an appropriate video frame (first frame by default or another available representative frame).
+
+### Audio/video preview controls
+
+Preview playback is intentionally simple:
+
+- Play/Pause.
+- A seek/progress bar that can be clicked to start playback from any point.
+- Volume where applicable.
+- Audio/video is not automatically looped in the Asset Browser preview.
+- Pressing play again resumes/continues playback according to the preview player behavior.
+
+Playback behavior for actual template widgets is configured separately in Widget/Media Slide Properties.
+
+## Asset metadata
+
+Asset Properties may show basic information plus an Advanced section:
+
+```text
+Name
+Stable ID
+File
+Type
+Format
+Size
+Duration
+Resolution
+Color Format
+```
+
+Metadata display should remain compact by default.
+
+## Stable IDs
+
+Assets have a stable internal identifier independent from their human-readable display name and physical filename.
+
+Example:
+
+```text
+Display Name: Serdar Ortaç
+Stable ID:    T01A0042
+File:         serdarortac.wav
+```
+
+The display name and filename may change without changing the stable ID.
+
+### Stable ID and rotation
+
+A key design rule is that **an asset is not inherently a rotation-specific object**. The same asset may legitimately be reused by multiple rotations and themes.
+
+Therefore the stable asset identifier should not be forced to contain a rotation identifier merely because the asset is referenced from a rotation.
+
+A practical V1 model is:
+
+```text
+Theme/Package namespace + Asset ID
+```
+
+For example:
+
+```text
+T01-A0042
+```
+
+where `T01` identifies the theme/package namespace and `A0042` identifies the asset within that namespace.
+
+Rotation usage is represented by the Scene/widget reference, not by changing the asset's identity.
+
+If the same asset is intentionally duplicated into another Theme, it receives an independent asset namespace/ID there. Duplicate stable IDs across physically separate theme packages are acceptable because package/theme scope disambiguates them. Within one exported package, stable IDs must be unique.
+
+This avoids unnecessary ID churn when one asset is reused by multiple rotations and keeps firmware references deterministic.
+
+## Asset rename
+
+Changing the display name does not change the stable ID.
+
+Changing the physical filename does not change the stable ID.
+
+The UI may allow display name and filename to be changed independently where safe.
+
+## Duplicate/import of an existing asset
+
+When the same content is imported again, the Designer may detect the existing asset.
+
+Recommended UX:
+
+```text
+Existing asset found
+[ Use Existing ] [ Create Copy ] [ Cancel ]
+```
+
+A deliberate copy gets its own asset identity in the destination ownership scope.
+
+## Asset ownership and copying
+
+If an asset is reused by another Theme/project, the destination can receive a physical copy so firmware deployment remains self-contained and predictable.
+
+The Designer should preserve source/reference metadata for debugging where useful, but firmware deployment must not depend on an external Theme's resource path.
+
+## Asset replacement
+
+Replacing an asset's content while preserving its semantic identity keeps the stable ID unchanged.
+
+Example:
+
+```text
+T01-A0042
+old.wav → new.wav
+```
+
+The stable identity remains `T01-A0042`.
+
+## Asset dependency
+
+When an asset is selected, the Designer can show `Used By` information such as:
+
+```text
+Theme 1
+  Rotation 2
+    Scene Fire
+      Media Slide
+```
+
+This information is especially important before deleting/replacing assets.
+
+## Asset deletion
+
+If an asset is referenced by Scenes/widgets, deletion opens a dependency-aware dialog rather than silently breaking references.
+
+The dialog can offer:
+
+```text
+Cancel
+Remove References
+Delete + Replace
+```
+
+The exact options depend on the reference type and DeviceProfile.
+
+## Asset selection and external files
+
+There is no canvas file-drop import path.
+
+Windows Explorer files are imported only by dropping them onto an appropriate Project Explorer/resource target.
+
+The target location determines whether the file enters Theme Resources or `Unsupported Files`.
+
+## Media format handling
+
+The current Designer does **not** perform full media format conversion.
+
+Do not automatically convert:
+
+```text
+MP4 → AVI
+JPEG → another format
+WAV → another format
+ARGB888 conversion
+```
+
+unless a small, low-risk resize/processing feature is explicitly implemented later.
+
+A separate Format Tool is the planned location for full format conversion and device-specific encoding.
+
+## Designer resize vs Format Tool
+
+The Designer may change the **widget/displayed size** through Widget Properties and canvas resize.
+
+This does not mean it performs full asset format conversion.
+
+The future Format Tool owns:
+
+- format conversion,
+- encoding,
+- pixel-format conversion,
+- device-specific media preparation,
+- bulk conversion.
+
+If a simple asset resize is later added to Designer, it must remain clearly separate from full format conversion.
+
+## Export asset selection
+
+Only the following are exported as normal assets:
+
+1. Assets actually required/referenced by the project.
+2. Assets explicitly present in Theme Resources and included by deployment rules.
+3. Required DeviceProfile/default assets.
+
+`Unsupported Files` are not normal export assets.
+
+The Asset Browser itself is only a view of the depot/library; it is not an export source by itself.
+
+An asset existing in the depot does not automatically get copied to the SD card. It must be referenced/selected by the project or be required by the default/profile package rules.
+
+## Design Rules / Asset Validation
+
+A dedicated **Design Rules** tab/section can contain the project's asset/design checks.
+
+The checks should be consolidated into a single rule configuration rather than scattered across unrelated dialogs.
+
+Examples:
+
+```text
+Missing asset reference
+Unsupported file
+Asset format mismatch
+Missing required profile asset
+Duplicate stable ID within package
+Missing resource
+Invalid widget/media combination
+Unused resource (informational)
+```
+
+Design Rules can run manually and as part of export validation.
+
+Export should clearly report critical errors vs warnings and ask whether the user wants to continue when only non-critical issues remain.
+
+## Asset Browser and project usage indicator
+
+The Asset Browser may show a subtle status badge/check when an asset is already used by the current project/theme.
+
+The indicator must not prevent reuse.
+
+The Asset Browser should also allow the user to inspect `Used By` references where available.
+
+## Console and validation
+
+Asset import/export/validation actions can be logged in the dockable Console, including:
+
+- imported file,
+- destination resource category,
+- stable ID assignment,
+- unsupported status,
+- validation result,
+- export inclusion/exclusion.
+
+## Future firmware optimization — TODO
 
 Remember but do not implement now:
 
@@ -239,212 +583,18 @@ The Theme Project Group config could contain an index/manifest of the complete f
 
 Keep this in the future implementation backlog.
 
-## External resource drag/drop
-
-Files may be dragged from Windows Explorer into the application.
-
-Resource intake distinguishes:
-
-### Unassigned
-
-The file format is recognized/supported by the active DeviceProfile, but no semantic template type has been assigned.
-
-Example:
-
-```text
-random.png
-→ supported image format
-→ semantic type = None / Unassigned
-```
-
-It remains in project resources and can later be assigned as an Image, Digit, Direction, Warning, etc. when supported.
-
-### Unsupported
-
-The DeviceProfile does not support the file format/type.
-
-The resource is explicitly marked `Unsupported` and must not silently become a template object.
-
-It may still be retained in the project/SD resource area according to the current resource policy. Export must warn the user and ask whether to continue.
-
-### Current scope
-
-Do not add automatic media format conversion to the current Designer implementation. A separate Format Tool may be added later.
-
-## Resource semantic assignment
-
-A selected resource exposes:
-
-```text
-Type: [ None ▼ ]
-```
-
-The dropdown contains only semantic types supported by the active DeviceProfile.
-
-If the user assigns a supported type, the resource becomes available for template usage. If no type is assigned, it remains Unassigned.
-
-## Asset copying
-
-When an object/resource is copied into another Theme/scene and independent ownership is required, the application may create a separate asset copy in the destination Theme's resource directory. The UI must make the ownership/reference behavior clear.
-
-During export, referenced assets are copied/processed according to the deployment package rules. Automatic format/size conversion is intentionally deferred to the later Format Tool.
-
-## Cross-project compatibility
-
-Projects, themes, rotations, scenes and resources may be moved/copied by drag/drop only when compatible.
-
-On mismatch, show a comparison/resolution UI with:
-
-- source DeviceProfile,
-- destination DeviceProfile,
-- conflicting capabilities,
-- affected objects/assets,
-- supported resolutions.
-
-## Tabs
-
-Open rotations and other design documents appear as tabs.
-
-Tabs can be reordered, closed, pinned where useful, docked, floated, moved to another monitor and recombined into the main document area.
-
-Tab titles should expose enough project/theme/rotation identity to avoid confusion when multiple projects are open.
-
-## Properties
-
-Right-side Altium-style contextual Properties/Inspector remains the authoritative editing surface for object parameters.
-
-- One selected object: show all supported relevant properties.
-- Multiple selected objects: show only properties common to all selected objects.
-- Identical values display normally.
-- Different values display `*`.
-- Editing a mixed value applies it to every selected object as one undoable operation.
-- Locked objects remain selectable and non-geometry properties remain editable.
-- Locked size and coordinates cannot be changed through canvas or Properties.
-- Visibility is independent from lock.
-
-## Dock/Window Controls
-
-Persistent visibility controls exist for right-side, left-side and bottom tool regions. Controls reflect current visibility/docking state and restore the previous useful context when a panel is reopened where possible.
-
-## Design Studio — Canvas Interaction
-
-### Selection
-
-- Left click selects.
-- `Ctrl + left click` adds/removes from selection.
-- Empty canvas click clears selection.
-- Rectangle selection follows familiar CAD conventions.
-
-### Move
-
-- Drag moves objects.
-- Snap Grid controls snapping.
-- `Ctrl` temporarily bypasses snapping where applicable.
-
-### Snap Grid
-
-- First-class Designer setting.
-- On/off.
-- Configurable grid step.
-- Move, resize and alignment can respect the active grid.
-
-### Keyboard movement
-
-- Normal Arrow keys move by the small step.
-- `Ctrl + Arrow` moves by active Snap Grid.
-- `Ctrl + Shift + Arrow` moves by Snap Grid × 5.
-
-### Resize
-
-- Visible resize handles + Properties editing.
-- No multi-selection scale/transform feature in V1.
-- Resizing one selected object's handle changes only that object.
-- Width/height can be entered directly in Properties.
-- **Size Lock** and **Aspect Ratio Lock** are separate settings.
-- Aspect ratio locking can be enabled independently of size locking.
-
-### Rotation
-
-- Rotation is available through rotation UI and Properties.
-- Free rotation with 5° snapping.
-- 45° and 90° positions have visible snap/guide indication.
-- Pressing `R` while rotating turns the selected object 90°.
-
-### Duplicate
-
-- Duplicate is available from right-click context menu and toolbar.
-- Invoking Duplicate starts a placement interaction: the duplicate/group center follows the cursor.
-- The next click places the duplicate centered on that clicked location.
-- Repeated duplicate mode: after each placement, another duplicate follows the cursor; each click places another copy centered at that location.
-- `Esc` exits repeated duplicate mode and returns to normal selection behavior.
-
-### Alignment / Distribution
-
-Multi-selection supports alignment/distribution commands through toolbar/context UI.
-
-### Cross-scene positioning
-
-Scenes may intentionally contain the same object at different positions. A dedicated command can apply selected geometry/general parameters to other scenes. No `Shift+S` shortcut is reserved for this feature.
-
-### Z-order
-
-Objects support Bring to Front, Bring Forward, Send Backward and Send to Back.
-
-### Lock / Visibility
-
-- Locked objects remain selectable.
-- Locked objects allow non-geometry Properties editing.
-- Locked objects cannot have size or coordinates changed.
-- `Visible` is independent from `Locked`.
-- A hidden object can be selected from Project Explorer.
-- Selecting a hidden object shows its selection bounding box/handles without rendering its visual content.
-- Hidden objects have a clear visibility indicator in Project Explorer.
-- `Hide All` and `Show All` are available.
-- The previous `Shift+S` visibility shortcut is removed.
-
-### Context menu
-
-Right-click menus follow familiar engineering/CAD ordering and are contextual. They include appropriate selection/editing, duplicate/delete, alignment/distribution, order, grouping/Bounding Group, lock/visibility and Properties commands.
-
-## Console
-
-A dedicated Console is dockable/collapsible/floating and normally available in the lower workspace region.
-
-It supports command entry and shows:
-
-- Designer actions/commands,
-- validation output,
-- SD-card/package build output,
-- simulator/runtime commands and results,
-- AI/API operations,
-- errors/warnings/progress/results.
-
-## Simulator
-
-Simulator uses the same docking framework as Project Explorer and Properties. It may be docked, floated or opened as a tab. Device previews preserve aspect ratio when resized.
-
-## Color / Asset selection
-
-- DeviceProfile supplies the initial firmware-defined palette.
-- V1 device profile exposes 10 defined colors.
-- Color Properties present those profile-defined colors.
-- A Windows/native color picker is also available for custom selection.
-- If firmware does not support a selected custom color, validation/simulation visibly reports the limitation instead of silently assuming support.
-- Asset selectors use a dropdown of profile-supported/default assets/options where applicable.
-- `...`/Browse opens custom asset/resource selection.
-
-## Visual direction
-
-- Supplied reference screenshots are the primary visual source.
-- Light neutral workspace, dark device preview, restrained teal/cyan accent, compact controls, thin borders, subtle elevation, dense but calm information layout.
-- Professional, familiar, useful, aesthetic and not fussy.
-
 ## Shortcut policy
 
 - Prefer familiar Altium/CAD/Windows conventions.
 - Do not invent unrelated modifier behavior when a familiar convention exists.
 - Central shortcut registry owns assignments and detects conflicts.
 - Explicit current decisions: `Ctrl` modifier family, `R` during rotation for 90°, Arrow movement, `Ctrl+Arrow` for grid-step movement and `Ctrl+Shift+Arrow` for 5× grid-step movement.
+
+## Visual direction
+
+- Supplied reference screenshots are the primary visual source.
+- Light neutral workspace, dark device preview, restrained teal/cyan accent, compact controls, thin borders, subtle elevation, dense but calm information layout.
+- Professional, familiar, useful, aesthetic and not fussy.
 
 ## Default decisions
 
