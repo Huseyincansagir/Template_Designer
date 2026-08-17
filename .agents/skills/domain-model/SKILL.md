@@ -1,24 +1,59 @@
-# Domain Model Skill
+# Domain and Shared Model Skill
 
-Use this skill for ThemeProject, forms, scenes, widgets, styles, media, firmware profiles, validation models and persistence schemas.
+## Purpose
 
-## Rules
+Use this skill for Project, Template, Asset, DeploymentPackage, DeploymentTarget, Device and DeviceConnection models and shared TypeScript contracts.
 
-- Domain objects must represent the product contract, not the current UI layout.
-- Stable IDs are required for themes, widgets, scenes, assets and styles.
-- Four physical forms are first-class: `r0`, `r90`, `r180`, `r270`.
-- Canonical scene IDs are `yangin`, `estop`, `asiri_yuk`, `servis_disi`, `kapi_ac`, `kapi_kapa`, `seyir_yukari`, `seyir_asagi`, `bosta`.
-- Separate base widget state from scene overrides.
-- Keep designer-only fields distinct from firmware-exportable fields.
-- Model firmware capability profiles explicitly.
-- Use versioned, migration-friendly persisted project schemas.
+## Core separation
 
-## Changes
+Keep these concepts distinct:
 
-When changing a domain model:
-1. Find all consumers.
-2. Update serialization/deserialization.
-3. Update validation.
-4. Update preview/render model mapping.
-5. Update export mapping if relevant.
-6. Add regression tests.
+- `Project` — editable project container and persistence boundary
+- `Template` — template/theme data being designed
+- `Asset` — source or deployment asset
+- `DeploymentPackage` — compiled, transport-independent delivery artifact
+- `DeploymentTarget` — physical delivery mechanism
+- `Device` — future target-device identity/capability model
+- `DeviceConnection` — future communication state
+
+Do not make SD-card paths or network addresses part of the Template model.
+
+## Canonical state
+
+Editor, preview, validation, package builder and deployment preparation must consume a coherent canonical project/template state. Avoid separate UI-only representations that can diverge from persisted data.
+
+## V1 transport model
+
+```text
+DeploymentTarget
+├── SDCardTarget        active V1
+└── WiFiDeviceTarget    reserved V2
+```
+
+A future device transport is separate from the deployment target abstraction.
+
+## Persistence
+
+Project persistence must be versioned and migration-friendly. Do not couple the persisted schema to React component state or Tauri APIs.
+
+## Package model
+
+The deployment package is derived from the editable project. It should carry version/manifest, theme/layout data, required assets and integrity information according to the documented package format.
+
+## Device model
+
+Future device information may include id, name, type, IP address, firmware/hardware versions, capabilities and connection status. V1 does not require device management.
+
+## Change checklist
+
+When changing a model:
+
+1. update shared types/domain code
+2. update serialization/deserialization
+3. update application services
+4. update validation
+5. update preview mapping
+6. update package mapping if relevant
+7. add regression tests
+
+Do not add speculative fields solely to make future UI screens look complete.
