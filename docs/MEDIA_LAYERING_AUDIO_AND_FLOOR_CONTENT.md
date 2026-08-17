@@ -4,7 +4,7 @@
 
 Template içindeki widgetlar ve medya içerikleri aynı ekran üzerinde üst üste render edilir.
 
-Her görsel öğenin bir **z-order / layer priority** değeri vardır. Daha yüksek değer üstte görünür.
+Her görsel öğenin bir **z-order / visual layer** değeri vardır. Daha yüksek değer üstte görünür.
 
 Örnek:
 
@@ -14,17 +14,10 @@ Layer 10  Main media
 Layer 20  Floor number
 Layer 30  Direction arrow
 Layer 40  Text
-Layer 100 Floor Popup
+Layer 100 Floor-specific Media Slide
 ```
 
-Bu değerler örnektir; cihaz/firmware profile gerektiğinde farklı defaultlar tanımlayabilir.
-
-Temel kural:
-
-```text
-lower layer → behind
-higher layer → in front
-```
+Bu değerler örnektir; cihaz/firmware profile göre defaultlar değişebilir.
 
 Background varsayılan olarak en arkadadır.
 
@@ -32,103 +25,78 @@ Layering yalnız Designer canvas görünümü için değildir. Firmware'deki ger
 
 ## 2. Runtime priority ile visual layer priority farklıdır
 
-İki farklı priority kavramı vardır ve karıştırılmamalıdır.
+İki farklı kavram kesinlikle karıştırılmamalıdır.
 
 ### Event / Binding Priority
 
-Birden fazla runtime condition aktif olduğunda hangi davranışın seçileceğini belirler.
-
-```text
-fire = 10
-estop = 9
-door_open = 4
-```
+Birden fazla runtime condition aktif olduğunda hangi davranışın seçileceğini belirler. Template'te 0–10 aralığındadır.
 
 ### Visual Layer / Z-order
 
 Seçilen içeriklerin fiziksel olarak birbirinin üzerinde nasıl çizileceğini belirler.
 
-```text
-background = 0
-main = 10
-popup = 100
-```
+Bir eventin runtime priority'sinin yüksek olması otomatik olarak widgetın z-order'ını değiştirmez.
 
-Bir eventin priority'sinin yüksek olması otomatik olarak widgetın z-order'ını değiştirmez. İkisi ayrı kavramdır.
+## 3. Kata özel medya = normal Media Slide
 
-## 3. Kata özel medya
+Ürün modelinde ayrı bir `Popup` veya `Floor Popup` widgetı **yoktur**.
 
-Template Designer kata özel media/content tanımlamayı desteklemelidir.
+Kullanıcı kata özel üst içerik istiyorsa normal `Media Slide` kullanır ve bunu `floor` runtime state'ine bağlar.
 
-Örneğin:
+Örnek:
 
 ```text
-floor == 5
-    → floor_5_media
-```
-
-Bu medya:
-
-- image
-- video
-- desteklenen diğer media content
-
-olabilir.
-
-Normal runtime içeriklerin üzerinde görünmesi gerekiyorsa yüksek z-order verilebilir.
-
-## 4. Kata özel Popup
-
-Kullanıcı Designer'da bir **Floor Popup** oluşturabilir.
-
-Örneğin:
-
-```text
-Floor Popup
+Media Slide
 Condition:
     floor == 5
 
 Content:
-    customer_5_popup.mp4
+    customer_5.jpg
 
-Layer:
+Duration:
+    2 sec
+
+Audio:
+    customer_5.wav
+
+Audio Repeat Count:
+    1
+
+Visual Layer:
     100
 ```
 
-Floor 5 aktif olduğunda bu medya yalnızca Floor 5 için gösterilir ve yüksek layer nedeniyle diğer normal içeriklerin üzerinde görünür.
+Floor 5 aktif olduğunda bu normal Media Slide diğer normal içeriklerin üzerinde görünebilir. Kullanıcı bunu görsel olarak popup gibi kullanabilir; ancak domain modelinde popup kavramı yoktur.
 
-Popup ayrı bir fiziksel ekran değildir; aynı canvas/compositing sistemindeki bir üst katmandır.
+## 4. Media Slide içeriği
 
-Popup'ın görünürlüğü runtime condition ile belirlenir.
+Media Slide şunları destekler:
 
-## 5. Kata özel içerik genel binding sistemini kullanır
+- image,
+- video,
+- duration,
+- video loop enable,
+- video loop count,
+- audio,
+- audio repeat count,
+- runtime condition/binding,
+- visual layer.
 
-Floor-specific content özel bir runtime motoru icat etmemelidir.
+Örneğin 2 saniyelik fotoğraf + kat özel ses veya loop eden video + ayrı ses tekrar sayısı tanımlanabilir.
 
-```text
-State:
-    floor
+Video loop count ile audio repeat count birbirinden bağımsızdır.
 
-Condition:
-    floor == 5
+## 5. Kata özel medya
 
-Content:
-    popup_5.png
-
-Layer:
-    100
-```
-
-Aynı mekanizma:
+Herhangi bir firmware-supported floor value için özel media kullanılabilir:
 
 ```text
-floor == R
-floor == Z
-floor == -1
-floor == 11
+floor == 5 → customer_5.jpg
+floor == 8 → floor8.mp4
+floor == R → reception.mp4
 ```
 
-gibi değerlerde de çalışmalıdır.
+Bu içerik yüksek visual layer ile diğer normal içeriklerin üzerinde gösterilebilir.
 
 ## 6. Kata özel anons
 
@@ -138,33 +106,25 @@ Her kata özel audio announcement tanımlanabilir.
 
 ```text
 Floor 5
-├── TR
-│   └── floor_5_tr.wav
-├── EN
-│   └── floor_5_en.wav
-└── DE
-    └── floor_5_de.wav
+├── TR → floor_5_tr.wav
+├── EN → floor_5_en.wav
+└── DE → floor_5_de.wav
 ```
 
-Kullanıcı isterse kat anonsunu parçalardan oluşturabilir:
+Kullanıcı isterse anonsu parçalardan oluşturabilir:
 
 ```text
-Language = TR
-Floor = 5
-
-announcement sequence:
+TR
 [5] + [inci] + [kat]
 ```
 
-veya firmware'in/voice pack'in desteklediği hazır kat anonsu kullanılabilir.
-
-Kat anonsu template içinde **kata özel** olarak tanımlanabilir.
+Kata özel anons sistemi language-aware olmalıdır.
 
 ## 7. Kat sembolleri
 
 Floor value yalnız sayısal digitlerden oluşmaz.
 
-Desteklenen floor value'lar örneğin:
+Desteklenen değerler örneğin:
 
 ```text
 -1
@@ -180,17 +140,13 @@ T
 P
 ```
 
-olabilir.
+Gerçek değer kümesini firmware/device profile belirler.
 
-Gerçek desteklenen değer kümesini firmware/device profile belirler.
+Designer digit/floor style gerekli sembollerin assetlerini kontrol etmelidir.
 
-Designer digit/floor style seçerken gerekli sembollerin assetlerinin bulunup bulunmadığını validation ile kontrol etmelidir.
+## 8. Audio seviyeleri
 
-## 8. Audio sisteminde ayrı seviyeler
-
-Audio volume tek bir global değer değildir.
-
-En azından şu kanallar ayrı modellenebilir:
+En az üç ses kanalı ayrı modellenmelidir:
 
 ```text
 Announcement Volume
@@ -198,7 +154,7 @@ Background Music Volume
 Video Audio Volume
 ```
 
-Bunların Designer'da **default değerleri** tanımlanabilir.
+Designer bunların template defaultlarını ayarlayabilir.
 
 Örneğin:
 
@@ -208,109 +164,53 @@ Background Music Default: 20%
 Video Audio Default: 60%
 ```
 
-Ancak firmware profile bu ayarların runtime'da teknisyen tarafından değiştirilebilmesine izin verebilir.
+Firmware bunları sahada runtime setting olarak değiştirebilir.
 
-Bu durumda:
-
-```text
-Template Default
-       ↓
-Firmware Runtime Setting
-       ↓
-Effective Volume
-```
-
-kullanılır.
-
-## 9. Firmware volume settings
-
-Firmware kendi menüsünden örneğin:
-
-```text
-Announcement Volume
-Background Music Volume
-Video Volume
-Master Volume
-```
-
-gibi değerleri değiştirebilir.
-
-Hangi ayarların mevcut olduğu firmware/device profile tarafından ilan edilir.
-
-Designer'da olmayan bir firmware setting'i uydurulmaz.
-
-## 10. Fon müziği
+## 9. Fon müziği
 
 Template bir background music asset tanımlayabilir.
 
-Fon müziği:
+Fon müziği ayrı audio asset olarak paketlenir ve default volume taşıyabilir. Firmware runtime setting'i bu değeri override edebilir.
 
-- ayrı audio asset olarak paketlenebilir,
-- default volume taşıyabilir,
-- firmware runtime volume setting'i tarafından değiştirilebilir,
-- announcement/audio policy ile birlikte çalışabilir.
+## 10. Video audio
 
-Örneğin:
+Video kendi audio track'ini taşıyabilir. Ayrıca harici audio bağlanabilir.
 
-```text
-Background Music:
-    lobby_music.wav
+Video audio, background music ve announcement ayrı kanallar olarak modellenmelidir.
 
-Default Volume:
-    20%
-```
+## 11. Audio repeat
 
-## 11. Video audio
-
-Video content'in kendi audio track'i olabilir.
-
-Ayrıca harici audio/fon müziği bağlanabilir.
-
-Volume seviyeleri ayrı tutulabilir:
+Media Slide'a bağlanan audio için tekrar sayısı açıkça ayarlanabilir:
 
 ```text
-Video Audio Volume
-Background Music Volume
-Announcement Volume
+Audio File
+Audio Repeat Count
 ```
 
-Final audio mixing policy firmware capability'sine göre belirlenmelidir.
+Bu ayar video loop count'tan bağımsızdır.
 
-## 12. Audio priority
+## 12. Audio arbitration Designer'ın işi değildir
 
-Görsel z-order ile audio priority aynı şey değildir.
+Template Designer firmware'in gerçek runtime audio arbitration/mixing mantığını yeniden uygulamaz.
 
-Bir alarm/announcement görsel olarak üstte olmasa bile audio olarak daha yüksek öncelikli olabilir.
+Örneğin düşük öncelikli bir Media Slide sesi çalarken yüksek öncelikli bir alarm/anons gelirse hangi sesin duyulacağı firmware/runtime audio engine tarafından belirlenir.
 
-Örneğin:
+Designer yalnızca content, binding, default volume ve repeat bilgisini sağlar.
 
-```text
-Fire announcement
-    → audio priority high
+## 13. Dil
 
-Background music
-    → audio priority low
-```
+Language firmware runtime setting olabilir.
 
-Firmware profile destekliyorsa audio ducking/muting gibi davranışlar ayrıca tanımlanabilir.
-
-## 13. Dil çözümleme
-
-Dil firmware runtime setting olabilir.
-
-Template gerekli language variantlarını paketler.
-
-Örneğin:
+Template gerekli language variantlarını paketler:
 
 ```text
 floor == 5
-
 TR → floor_5_tr.wav
 EN → floor_5_en.wav
 DE → floor_5_de.wav
 ```
 
-Firmware menüsündeki aktif language seçimi effective content'i belirler.
+Aynı localization yaklaşımı text, media/audio ve gerektiğinde floor/digit content için kullanılabilir.
 
 ## 14. Render/compositing invariantı
 
@@ -321,38 +221,35 @@ Canonical Project
       ↓
 Layer Resolution
       ↓
-┌─────────────┬──────────────┐
-│ Designer    │ Simulator    │ Firmware
-│ Preview     │ Render       │ Renderer
-└─────────────┴──────────────┘
+Designer Preview / Simulator / Firmware Renderer
 ```
 
-Designer'da popup üstte görünüyorsa simulator'da da üstte görünmelidir. Export edilen firmware package de aynı z-order bilgisini taşımalıdır.
+Designer'da üstte görünen içerik simulator ve firmware'de de aynı layer semantiğine sahip olmalıdır.
 
-## 15. AI için görünür layer bilgisi
+## 15. AI için layer ve media bilgisi
 
-AI template oluştururken yalnız widget listesini değil, z-order bilgisini de okuyabilmelidir.
+AI template oluştururken widgetların yanı sıra:
 
-Örneğin:
+- z-order,
+- media type,
+- duration,
+- loop,
+- loop count,
+- audio,
+- audio repeat,
+- runtime condition,
+- floor binding
 
-```text
-Background       z=0
-Floor Number     z=20
-Arrow            z=30
-Text             z=40
-Floor Popup      z=100
-```
+bilgilerini okuyabilmelidir.
 
-Böylece AI oluşturduğu ekranın hangi öğesinin hangisinin üzerinde olduğunu anlayabilir ve screenshot/render sonucunu doğru yorumlayabilir.
+Böylece oluşturduğu ekranın gerçek runtime görünümünü simulator/render üzerinden değerlendirebilir.
 
 ## 16. Açık kararlar
 
 Kesinleştirilecekler:
 
-1. Firmware'in desteklediği kesin z-order aralığı.
+1. Firmware'in kesin z-order aralığı.
 2. Aynı z-order değerindeki iki widget için deterministic sıra.
-3. Popup'ın varsayılan yaşam süresi / sürekli görünme davranışı.
-4. Floor popup'ın state değişiminde kapanma davranışı.
-5. Audio channel mixing/ducking kuralları.
-6. Video audio + background music aynı anda destekleniyorsa kesin mix davranışı.
-7. Firmware'in volume settinglerinin template defaultlarını nasıl override ettiği.
+3. Audio channel mixing/ducking kuralları.
+4. Firmware volume settinglerinin template defaultlarını override etme modeli.
+5. Exact floor announcement sequence formatı.
