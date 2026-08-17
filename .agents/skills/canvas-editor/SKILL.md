@@ -1,24 +1,56 @@
-# Canvas Editor Skill
+# Canvas / Design Studio Skill
 
-Use this skill for Design Studio, canvas rendering, selection, geometry, layers, anchors and editor interactions.
+## Purpose
 
-## Requirements
+Use this skill for the visual Template Designer shown in the supplied reference screens.
 
-- Render at the device's logical resolution while scaling to the available viewport.
-- Preserve aspect ratio.
-- Support zoom, pan, rulers, selection, multi-selection, resize, alignment, distribution, duplicate, delete, lock and undo/redo.
-- Keep editor coordinates separate from screen/pixel coordinates.
-- Use a render model derived from the canonical ThemeProject.
-- Keep interaction responsive; do not serialize the whole project on every pointer move.
+## Visual product language
 
-## Anchors
+Target a professional engineering/design application rather than a generic website builder.
 
-Support 9-point anchors and canvas/safe-area/widget targets. Support dynamic content anchors only when the firmware profile permits them. Detect cycles and missing targets before publish.
+Reference characteristics:
 
-## Layers
+- light neutral workspace
+- dark device/display preview
+- restrained teal/cyan accent
+- compact toolbar controls
+- clear active/selected states
+- central canvas
+- contextual right-side Properties/Inspector
+- left navigation, resources or layers
+- theme/orientation controls
+- status/validation feedback
 
-Layer ordering must correspond to render ordering. Visibility and lock state must be real project state.
+## Editor responsibilities
 
-## Quality
+Design Studio should provide a real device-oriented editing surface with:
 
-Selection handles, guides and inspector changes must update the same canonical state used by preview and export. Avoid fake rectangles that are disconnected from actual widgets.
+- logical device canvas
+- zoom/pan
+- selection
+- multi-selection where useful
+- resize handles
+- rulers/guides where useful
+- alignment/distribution
+- duplicate/delete
+- lock/visibility
+- undo/redo
+- contextual properties
+
+The exact widget set and behavior must come from the product specification and subsequent domain contracts; do not invent a second incompatible editor model.
+
+## State rule
+
+Selection, geometry, visibility, lock state and property changes must update canonical application state. Avoid fake rectangles or local-only widgets that disappear when preview or persistence is used.
+
+## Platform rule
+
+Canvas/editor code must remain browser-compatible. Native Windows operations such as SD-card access must never be embedded in canvas components.
+
+## Performance
+
+Keep pointer interactions responsive. Do not serialize the entire project on every pointer movement. Use an editor/render model derived from canonical state and commit meaningful edits through application state/commands.
+
+## Completion
+
+A visual feature is complete only when it is represented in canonical state and participates correctly in preview, persistence, validation or package generation wherever relevant.
