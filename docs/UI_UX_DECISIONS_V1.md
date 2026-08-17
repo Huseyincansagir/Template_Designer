@@ -9,32 +9,45 @@
 - Rotation/orientation selection behaves like switching schematic documents in Altium.
 - Open rotations/scenes/projects appear as tabs.
 - Tabs may be docked, floated, moved to another monitor, and recombined.
-- Project Explorer, Properties and Simulator are resizable/collapsible/dockable.
+- Project Explorer, Properties, Simulator, Console and other tool windows are resizable/collapsible/dockable.
+- Window docking must behave like familiar professional desktop applications/IDEs: panels can dock to left, right, top, bottom, center/document area, or appropriate side regions; an incoming docked panel takes the selected docking region and existing content is rearranged/stacked/tabbed rather than arbitrarily overlapping or destroying content.
+- Dock targets/preview zones should be visible during drag, making the result predictable before drop.
+- Multiple panels can occupy the same dock region as tabs or stacked groups.
+- Panels can be resized by dragging splitters, collapsed/auto-hidden, undocked/floated, redocked and moved between monitors.
+- Docking is stateful: the application remembers the user's workspace arrangement and restores it where practical.
+- The system should be at least as flexible as common IDE docking systems, while remaining simpler and more predictable than an unrestricted custom window manager.
+- When a docked panel is opened/closed, the remaining workspace reflows; panels do not cover the canvas unexpectedly unless explicitly floated/overlaid.
 - Resizing panels must not distort their contents; previews preserve logical aspect ratio and use scaling/centering/letterboxing as needed.
 
-## Workspace state/context bar
-A compact contextual bar must exist between the Project Explorer and Properties areas, adjacent to the canvas edge.
+## Dock/Window Controls
 
-Its purpose is to expose the currently relevant firmware-defined runtime states/context selectors without consuming the main canvas area.
+The application has persistent visibility controls for the main tool regions, similar in spirit to professional IDEs such as VS Code but adapted to this application.
 
-The bar itself is collapsible/hideable, but remains attached to the canvas edge while other dockable panels are opened or docked around the workspace.
+- A compact control area at the upper-right/workspace edge exposes visibility toggles for right-side panels.
+- Corresponding controls expose left-side panels and bottom panels.
+- These controls are available without requiring the user to search through menus every time.
+- The controls reflect current visibility/docking state.
+- A panel can be opened, closed, collapsed, expanded, docked or floated without losing its current document/context.
+- Docking and visibility controls must never remove the underlying project/scene state.
+- Simulator, Console and other secondary tools can use the same docking framework as Project Explorer and Properties.
 
-Examples of content shown there may include firmware-defined states/context such as direction, door state, warning state, or other profile-provided runtime contexts. The Designer does not invent states.
-
-Docking behavior:
+Conceptually:
 
 ```text
-┌──────────────┬─────────────────────────────┬──────────────┐
-│ Project      │                             │ Properties   │
-│ Explorer     │            Canvas           │              │
-│              │                             │              │
-├──────────────┼─────────────────────────────┤              │
-│ State /      │                             │              │
-│ Context Bar  │                             │              │
-└──────────────┴─────────────────────────────┴──────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ Menu / Command Bar                         [Right Panels ▾] │
+├───────────────┬───────────────────────────────┬─────────────┤
+│ Project       │                               │ Properties  │
+│ Explorer      │            Canvas             │             │
+│               │                               │             │
+├───────────────┴───────────────────────────────┴─────────────┤
+│ State / Context Bar                                  [▾]    │
+├─────────────────────────────────────────────────────────────┤
+│ Console                                                     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-If another panel is docked around the workspace, the state/context bar remains visually associated with the canvas edge rather than becoming part of an arbitrary floating panel.
+The exact chrome/placement of visibility buttons is still a visual-design detail, but the behavior is fixed: left/right/bottom tool regions can be independently shown/hidden and docked/floated.
 
 ## Project Explorer
 ```text
@@ -52,8 +65,6 @@ Deployment/Project
 ```
 
 The exact node names may evolve, but the hierarchical project/theme/rotation/scene/object relationship is required.
-
-Rotation is selected from Project Explorer, similarly to switching schematic documents in Altium. Objects added to that rotation remain visible in its hierarchy and under the corresponding theme/project.
 
 ## Properties
 - Right-side Altium-style contextual Properties/Inspector.
@@ -81,72 +92,44 @@ Rotation is selected from Project Explorer, similarly to switching schematic doc
 - Snap Grid is supported, with configurable grid step and on/off control.
 - Mouse drag, selection, resize and context-menu mechanics should feel like familiar professional desktop editors.
 - Right-click menus are contextual.
+- Ctrl is the primary multi-selection/modifier family and shortcut conventions should follow familiar Altium/CAD patterns wherever possible rather than inventing unrelated interactions.
 
-## Keyboard and editing interaction
-- Keyboard shortcuts should follow familiar Altium/CAD-style conventions where practical.
-- `Ctrl` is preferred for modifier-based temporary editing behavior where it matches established desktop/CAD conventions.
-- Example: holding `Ctrl` may temporarily modify snap/selection behavior rather than introducing a new custom shortcut language.
-- The exact shortcut map remains a separate interaction specification and should be documented before implementation.
+## State / Context Bar
+- There is a dedicated bar between the main workspace regions and the canvas/tool area for firmware-defined runtime states/contexts.
+- This bar is independently collapsible/hidden.
+- It must remain available as a workspace edge/region when other dockable panels are added.
+- Runtime state/context controls are not the same thing as the Project Explorer hierarchy.
 
-## Visibility behavior
-- Hidden objects should follow familiar Altium-style editor behavior: remain represented in the project/layer hierarchy while being absent from normal canvas rendering.
-- The exact visibility shortcut/key gesture will be defined in the keyboard shortcut specification; the UI should not invent an unrelated custom interaction.
+## Console
+- A dedicated Console is dockable/collapsible/floating like other tool windows and is normally available in the lower workspace region.
+- The Console supports command entry.
+- The Console also displays commands/actions performed by the Designer and relevant tool output.
+- Validation output is visible here.
+- SD-card/package build output is visible here.
+- Simulator/runtime test commands and results are visible here.
+- AI/API operations can be shown here so the user can observe what the agent is doing.
+- Errors, warnings, progress and command results should be structured and readable rather than being an unfiltered log dump.
+
+Example:
+
+```text
+> validate
+✓ 0 errors, 2 warnings
+
+> build sd-card
+✓ package generated
+
+> simulate floor=11 direction=up
+✓ runtime state applied
+
+> _
+```
 
 ## Simulator
 - Simulator is a separate collapsible/dockable workspace panel/window, similar to Project Explorer.
 - It may be docked, floated or opened as a tab.
 - Preview must preserve device aspect ratio when resized.
 - Multiple panels/windows may be used across monitors.
-
-## Console
-A dedicated bottom **Console** panel is part of the main workspace.
-
-The Console is both:
-
-1. an observable command/log surface, and
-2. an interactive command input surface.
-
-It can display:
-
-- commands entered by the user or external AI agent,
-- commands/actions executed by Designer,
-- validation output,
-- simulator/test operations,
-- build/package operations,
-- SD-card deployment/package operations,
-- warnings and errors,
-- API/automation activity.
-
-Example:
-
-```text
-┌──────────────────────────────────────────────────────────────┐
-│ Console                                                      │
-├──────────────────────────────────────────────────────────────┤
-│ > validate project                                           │
-│ ✓ 0 errors, 2 warnings                                       │
-│ > build sd-card-package                                      │
-│ ✓ Theme package generated                                    │
-│ > simulate floor=11 direction=up                             │
-│ ✓ Runtime state applied                                      │
-│                                                              │
-│ > _                                                          │
-└──────────────────────────────────────────────────────────────┘
-```
-
-The Console is dockable/collapsible/resizable like other workspace panels.
-
-The Console must be useful during development because the Designer API/command surface is intentionally observable. External AI agents can issue commands through the supported API/console workflow, and the user can see what the Designer is doing.
-
-Console output must not replace normal UI feedback; important errors/results should also appear through the appropriate UI surfaces.
-
-## Docking and panel behavior
-- Project Explorer, Properties, Simulator and Console are dockable/resizable/collapsible.
-- A docked panel may be moved, resized or floated.
-- Docking another panel must not destroy the canvas layout or permanently hide the contextual state bar.
-- The contextual state bar remains attached to the canvas edge.
-- Panels have sensible minimum sizes and responsive internal layout.
-- Device previews preserve aspect ratio and do not stretch when their containing area changes.
 
 ## Visual direction
 - Match supplied reference screenshots as the primary visual source.
@@ -157,12 +140,10 @@ Console output must not replace normal UI feedback; important errors/results sho
 - Exact top-bar menus.
 - Exact Project Explorer icons/nodes.
 - Exact tab close/pin/docking interactions.
-- Exact keyboard shortcut map beyond the established modifier principles.
+- Exact keyboard shortcuts beyond the stated Altium/CAD compatibility direction.
 - Exact selection handles/colors.
 - Exact snap-grid visual treatment.
 - Exact context-menu command ordering.
 - Exact Properties section ordering.
 - Simulator toolbar.
-- Exact state/context bar controls.
-- Console command language/API command names.
 - Validation, Publish, Deployment, Theme Library and Settings detailed screens.
