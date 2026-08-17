@@ -1,145 +1,153 @@
-# Template Designer — Agent Instructions
+# Template Designer — Agent Contract
 
-## Mission
+## Authoritative specification
 
-Build a production-oriented Windows desktop Template Designer for the STM32H747I-DISCO elevator display project. The application is a real product, not a mockup. It must turn a canonical ThemeProject into a validated firmware-compatible SD-card publish package.
+The primary product specification is `Template Designer — Ana Proje Geliştirme Promptu.md`. Read it before architectural or implementation work. It defines the V1 product boundary, deployment model, offline requirement, future Wi-Fi boundary, technology direction, workflow, reliability requirements and development phases.
 
-## Source of truth
+The supplied UI/theme screenshots are the visual reference. They establish the intended product language: professional engineering/designer tooling, theme library and orientation variants, a central device canvas, contextual properties, layers/resources, media, test sequences, validation and publish/deployment states.
 
-1. `Template Designer Widget ve Tema Sözleşmesi.md` is the primary product/data/firmware contract when present in the repository.
-2. Provided design references/screenshots are the visual and UX reference.
-3. Existing repository code is authoritative for already-implemented behavior unless it conflicts with the contract; conflicts must be surfaced and resolved deliberately, never silently.
+Do not silently replace these requirements with a generic template editor architecture.
 
-Do not invent firmware behavior that is not supported by the contract.
+## Product mission
 
-## Architecture principles
+Build a Windows desktop Template Designer / Device Deployment application.
 
-- Domain-first architecture.
-- Keep editor, preview, test, validation, and publish on the same canonical `ThemeProject` model.
-- Keep firmware/package logic out of UI code.
-- Use explicit export adapters between Designer concepts and firmware concepts.
-- Treat firmware capability profiles as actual constraints, not cosmetic UI filters.
-- Prefer typed models, immutable value objects where appropriate, commands, services, and dependency injection.
-- Avoid global mutable state and hidden singleton coupling.
+V1's real deployment path is only:
 
-## Product invariants
+`PC -> SD Card -> physical target device`
 
-A theme consists of:
-- metadata
-- target firmware profile
-- four physical forms: `r0`, `r90`, `r180`, `r270`
-- canonical scenes
-- widgets
-- styles
-- media/assets
-- audio
-- fonts/glyphs
-- language bindings
-- test sequence
-- validation/publish state
+The application is offline-first. No cloud, account, remote database, internet dependency or device-hosted web UI is part of V1.
 
-Canonical scenes:
-- `yangin`
-- `estop`
-- `asiri_yuk`
-- `servis_disi`
-- `kapi_ac`
-- `kapi_kapa`
-- `seyir_yukari`
-- `seyir_asagi`
-- `bosta`
+The UI is a local web-technology application using React + TypeScript + CSS and may use SVG/Canvas. Development must support localhost execution. Production must be packageable as a Windows desktop application, with Tauri as the preferred shell while keeping the application core independent of Tauri.
 
-Alarm scenes must fail closed: `kat_no` and `ok` remain hidden unless explicitly enabled by an alarm-scene override.
+## Core architecture
 
-All four forms must exist in a publishable project.
+The central principle is **One Template, Multiple Deployment Transports.**
 
-## Widget rules
+```text
+UI / Presentation
+        |
+Application Core
+        |
+Deployment Manager
+        |
+Deployment Target
+   +----+----+
+   |         |
+SD Card   Wi-Fi (reserved V2)
+```
 
-Supported Designer widget concepts include:
-- `background`
-- `kat_no`
-- `ok`
-- `uyari`
-- `logo`
-- `saat`
-- `kat_listesi`
-- `video`
-- `media_sequence`
-- `kapı_animasyonu`
-- `metin`
-- `overlay`
+V1 implements only the SD-card target. A future Wi-Fi target may communicate with an ESP32-C6, but V1 must not implement Wi-Fi communication, ESP32 firmware, an ESP32 web page, cloud services or browser-to-device deployment.
 
-Each widget should have a stable technical ID, type, name, enabled/locked state, layer, per-form geometry, scene visibility, optional scene overrides, style binding, media binding, and type-specific properties.
+The deployment package must be transport-independent so the same package can later be delivered by SD card or Wi-Fi.
 
-Do not expose technical fixed names such as `video1` to users. Users add generic `Video` widgets; the system generates unique IDs.
+## Platform isolation
 
-## Anchor rules
+Never put native filesystem, removable-drive, safe-eject or future network/device calls directly inside React components.
 
-Support canvas/safe-area/widget anchors and 9-point alignment. Support dynamic `content` anchors only when the selected firmware profile allows them. Detect cycles, missing targets, invalid geometry, and unsupported profile capabilities.
+Use:
 
-## Media rules
+`UI -> Application Service -> Platform/Deployment Adapter`
 
-Designer source files and firmware target files are distinct.
+Examples:
 
-Where required by the selected profile, perform real conversion (for example video to MJPEG AVI and audio extraction/conversion to supported WAV). Do not claim a target exists merely because a source exists.
+`DeploymentService -> SDCardAdapter -> Windows removable storage`
 
-Conversion must be asynchronous/non-blocking and publish must wait for required targets to finish successfully.
+`DeploymentService -> WiFiDeviceAdapter (reserved for V2)`
 
-## Validation rules
+The UI must not need to know which transport is being used.
 
-Validation must cover at least:
-- theme ID consistency
-- four-form completeness
-- duplicate widget IDs
-- invalid geometry
-- out-of-bounds geometry where prohibited
-- alarm fail-closed visibility
-- warning/media asset bindings
-- glyph completeness and digit limits
-- anchor cycles/unknown targets
-- media conversion state
-- video slot limits
-- media sequence bindings
-- firmware capability compatibility
-- required package files
-- layout/config fields supported by the firmware contract
+## Domain boundaries
 
-User-facing errors must be actionable and must not expose raw exceptions as the primary message.
+Keep these concepts distinct:
 
-## Firmware/package rules
+- Project
+- Template
+- Asset
+- DeploymentPackage
+- DeploymentTarget
+- Device
+- DeviceConnection
 
-Do not export fields that the firmware contract does not support merely because the Designer model contains them. In particular, do not emit `warn_x`, `warn_y`, `warn_w`, `warn_h` as if they were valid firmware layout fields when the contract says they have no firmware parser/layout counterpart.
+Shared types should be centralized and platform-neutral. Do not make the visual editor's component tree the deployment source of truth. Use a canonical project/template model consumed by editor, preview, validation, package building and deployment.
 
-The publish structure should follow the contract, including `config.txt`, `tN`, four forms, `layout.cfg`, `tema.cfg`, media/image/video/audio/font/data areas and Designer metadata files where applicable.
+## V1 workflow
 
-Do not silently overwrite global device settings such as `SOUND`, `VOLUME`, or `LANG` during theme export.
+```text
+Open/Create Project
+ -> Edit Template
+ -> Preview
+ -> Validate
+ -> Build Deployment Package
+ -> Select SD Card
+ -> Write
+ -> Verify
+ -> Safe Eject
+ -> User inserts card into target device
+```
 
-## UI/UX rules
+The deployment UI must expose clear states such as Preparing, Writing, Verifying and Completed and explain failures in user-oriented language while retaining technical details in logs.
 
-Target a professional Windows engineering/design application: modern, restrained, technical, high information density without clutter.
+## Reliability
 
-Primary areas:
-- Themes
-- Design
-- Test
-- Publish
-- Settings
+Deployment is a real device operation. Support or design for removable-drive detection, available-space validation, package-size validation, progress reporting, checksum/hash verification, temporary/atomic writes where practical, failure handling, detailed logs, safe-eject workflow and explicit completion state.
 
-Design Studio should support canvas zoom/pan, selection, resize, multi-selection, rulers, guides, alignment, distribution, layers, lock, duplicate, delete, undo/redo, keyboard shortcuts and a dynamic Properties inspector.
+Never claim success before verification completes.
 
-Use the supplied screenshots as UX references, not as a mandate to copy pixels. Improve usability where necessary while preserving the product's interaction model.
+## Package boundary
+
+Do not copy the editable project directory directly to the SD card.
+
+Use:
+
+```text
+Project
+  -> Template Compiler / Package Builder
+  -> Deployment Package
+  -> Deployment Target
+```
+
+The package schema must be documented and versioned. The project specification currently describes a logical package containing a manifest, theme/layout data, assets and checksum information. Do not invent target-device file semantics beyond the specification.
+
+## UI rules
+
+Use the screenshots as interaction and visual references, not pixel-perfect specifications. Preserve these characteristics:
+
+- light workspace around a dark device/display preview
+- restrained teal/cyan accent
+- clear active/selected states
+- compact controls and strong hierarchy
+- central device canvas
+- contextual right-side inspector
+- left navigation/resource/layer areas
+- status/validation/deployment feedback
+- theme library with physical orientation variants
+- test sequence/block workflow
+- publish readiness feedback
 
 ## Development rules
 
-- Read the repository before making architectural changes.
-- Make small, coherent commits.
-- Keep builds green after each milestone.
-- Add or update tests for domain/validation/export behavior.
-- Never replace real functionality with fake buttons, placeholders, or `TODO` paths for core features.
-- Do not rewrite unrelated files.
-- Prefer incremental, reviewable changes.
-- Keep documentation synchronized with behavior.
+Before changing code:
 
-## Quality bar
+1. Read this file.
+2. Read `Template Designer — Ana Proje Geliştirme Promptu.md`.
+3. Read all applicable `.agents/skills/*/SKILL.md` files.
+4. Inspect the complete repository and existing toolchain.
+5. Determine the smallest coherent architectural change.
 
-The application should be able to create/open/edit/save a theme, modify all four forms, edit scenes/widget visibility, manage anchors, import and convert media, run a test sequence, validate the project, and generate a real firmware-compatible publish package from the same canonical project model.
+Then:
+
+- update architecture/domain models before wiring UI when data behavior changes
+- keep browser-compatible logic platform-neutral
+- keep native APIs behind adapters
+- add tests for core behavior
+- build after meaningful milestones
+- never leave fake core buttons, placeholder deployment, or TODO implementations for claimed V1 functionality
+- do not add V2 Wi-Fi functionality prematurely
+- do not create abstractions with no architectural purpose
+
+## Completion rule
+
+A feature is complete only when its underlying state, persistence where applicable, UI behavior, validation and relevant application/deployment path are coherent.
+
+The V1 acceptance test is successful Windows execution of the full SD-card workflow from project creation/editing through verified deployment and safe removal.
