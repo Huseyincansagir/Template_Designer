@@ -1,27 +1,67 @@
-# Media and Publish Skill
+# Package and SD Deployment Skill
 
-Use this skill for asset import, media conversion, manifests, firmware package generation and SD-card publishing.
+## Purpose
 
-## Media
+Use this skill for deployment-package construction and the real V1 Windows SD-card workflow.
 
-Keep source assets separate from firmware target assets. Track conversion state, target path, hash, resolution, duration and compatibility.
+## Boundary
 
-Use asynchronous/background processing for expensive conversion. Never block the UI thread.
+```text
+Editable Project
+   -> Template Compiler / Package Builder
+   -> Deployment Package
+   -> Deployment Manager
+   -> SDCardTarget
+   -> Removable SD Card
+```
 
-Where the contract requires target conversion, perform real conversion rather than copying or renaming files.
+The package is transport-independent. The SD-card adapter is one deployment implementation, not part of the template model.
 
-## Publish pipeline
+## Package requirements
 
-Use an explicit pipeline:
+The package concept described by the project specification contains:
 
-`ThemeProject -> validate -> resolve assets -> convert -> generate form data -> generate metadata/manifests -> assemble package -> verify package`
+- manifest metadata
+- theme/layout data
+- required assets
+- checksum/integrity data
 
-Publishing must fail on blocking validation errors or incomplete required conversions.
+Keep the exact format versioned and documented. Do not invent target-device semantics without a source requirement.
 
-Do not export Designer-only fields as firmware fields unless the contract explicitly defines them.
+## SD-card workflow
 
-Do not silently modify global device configuration from a theme package.
+Support:
 
-## User experience
+1. removable-drive detection
+2. SD-card selection
+3. available-space check
+4. package-size check
+5. write progress
+6. verification
+7. checksum/hash comparison
+8. clear failure handling
+9. safe-eject workflow
+10. explicit successful completion
 
-Show progress and actionable errors. After a successful publish, provide the generated package location and verification result.
+Never report success before verification finishes.
+
+## Reliability
+
+Prefer temporary/atomic write strategies where practical. Avoid partially replacing a target package when a write fails. Preserve detailed technical logs while showing actionable user-facing errors.
+
+## UI integration
+
+React components call application services. They do not access drives directly.
+
+```text
+UI
+ -> DeploymentService
+ -> SDCardAdapter
+ -> Windows removable storage
+```
+
+The same application service boundary must be able to host a future Wi-Fi target.
+
+## V1 exclusion
+
+Do not implement Wi-Fi, ESP32-C6 firmware, discovery, network protocols, cloud services or browser-to-device deployment as part of this skill's V1 work.
