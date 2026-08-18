@@ -139,3 +139,45 @@ These decisions are canonical and live in their source documents. They are liste
 | Rotation geometry/transform contract | Future Geometry/Transform contract | Domain owner | AGENT2 §5, §11 |
 | Duplicate mode & `Ctrl+D` binding | Product confirmation | Product owner | UI spec §19/§27; AGENT2 §4.12 |
 | Dark theme / OS theme following | No canonical decision exists | Product owner | UI-D-0001 |
+
+## 5. Decisions established by the remediation pass (audit-driven)
+
+### UI-D-0008 — Single-document foundation: one honest document tab
+- **Topic:** Document tabs while only one document exists.
+- **Context:** Audits INT-04/05/06 (E2E) found N label-keyed tabs over one store — switching changed nothing but a label and the dirty dot followed activation. Real multi-document is deferred.
+- **Decision:** V1 renders exactly one document tab labelled with the project name, a dirty-derived dot, and an honest close refusal; multi-document tabs arrive with the real document manager.
+- **Reason:** State honesty (AP-STATE-02): a surface must not imply N documents when the store holds one.
+- **Alternatives:** (a) keep fake label tabs — rejected (audit FAIL); (b) full multi-document manager now — rejected (out of remediation scope).
+- **Status:** CONFIRMED
+- **Canonical source:** UI §20; this log
+- **Date:** 2026-08-18
+
+### UI-D-0009 — Z-order operations normalize the whole stack deterministically
+- **Topic:** Equal-z stacking operations.
+- **Context:** INT-47/WC-11-12: bring-forward over ≥3 equal-z siblings leapfrogged. The interaction contract fixes the total order but not the mutation semantics.
+- **Decision:** Every z-order operation renumbers the Scene's unlocked widgets to sequential zIndex values in stacking order, applies the requested swap, and emits one undoable command with the changed assignments; locked widgets keep their zIndex and cannot be targets.
+- **Reason:** Deterministic, tie-free, one history entry; satisfies AGENT2 §4.5's "assignments of zIndex" rule without inventing new domain state.
+- **Alternatives:** (a) array reorder (moveWidget) — rejected: contradicts the zIndex stacking source; (b) z+1 leapfrog — rejected: the audited defect.
+- **Status:** CONFIRMED
+- **Canonical source:** AGENT2 §4.5; this log
+- **Date:** 2026-08-18
+
+### UI-D-0010 — Post-gesture click suppression is timestamp-based
+- **Topic:** Suppressing the click that terminates a drag/marquee.
+- **Context:** Live CDP verification showed the legacy `setTimeout(0)` boolean flag could clear before the terminating click arrived (the drag's click then cleared the selection). Timer-vs-click ordering is browser-dependent.
+- **Decision:** A gesture arms a 600 ms suppression window; the first click inside the window is consumed by whichever canvas handler receives it.
+- **Reason:** Ordering-independent; removes a class of flaky-selection bugs that static review cannot reach.
+- **Alternatives:** (a) timer flag — rejected (observed failure); (b) ignoring clicks after pointerup only when the pointer moved — rejected (same ordering problem).
+- **Status:** CONFIRMED
+- **Canonical source:** AGENT2 §4.3/§4.13; this log
+- **Date:** 2026-08-18
+
+### UI-D-0011 — Dock tabs are a real tab stack; close is distinct from collapse
+- **Topic:** Docking honesty (DK-01/05).
+- **Context:** Docking a panel silently collapsed its sibling, and the panel `×` performed the same collapse as `−`.
+- **Decision:** Left/right dock tabs keep both panels docked and switch the visible tab; `−` collapses, `×` closes into a `closed` mode reopened from the View menu; floating keeps fixed offsets and says so.
+- **Reason:** UI §3 defines close/reopen and tab stacks as distinct behaviours; mapping two labels to one handler is a false affordance.
+- **Alternatives:** (a) full drag/drop docking — rejected for V1 (deferred); (b) removing `×` — rejected: close/reopen is canonical.
+- **Status:** CONFIRMED
+- **Canonical source:** UI §3; this log
+- **Date:** 2026-08-18
