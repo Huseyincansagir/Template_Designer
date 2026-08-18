@@ -468,6 +468,20 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (documentStore.redo()) logAction("> redo()", "EVENT");
   };
 
+  // Selection reconciliation (INT-25/Scenario F): after undo/redo (or any
+  // project change) a selection that no longer resolves is cleared, and
+  // stale ids are pruned — no surface may keep pointing at a deleted node.
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const next = current.filter((id) => Boolean(resolveCanonicalNode(project, id)));
+      return next.length === current.length ? current : next;
+    });
+    setSelection((current) => {
+      if (!current) return current;
+      return resolveCanonicalNode(project, current.id) ? current : null;
+    });
+  }, [project]);
+
   const createProject = () => {
     cancelCanvasInteraction();
     const nextProject = createEmptyProject("Untitled Project");
@@ -606,6 +620,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const createdId = result.createdIds?.[0];
     if (createdId) {
+      // Expand the parent Scene (and its Rotation) so the new widget is
+      // immediately visible in the Explorer (Scenario C: parent expands when
+      // necessary).
+      const parent = resolveCanonicalNode(project, sceneId);
+      setExpandedNodes((current) => ({
+        ...current,
+        ...(parent?.scene ? { [parent.scene.id]: true } : {}),
+        ...(parent?.rotation ? { [parent.rotation.id]: true } : {}),
+      }));
       setSelectedIds([createdId]);
       setSelection({ id: createdId, label: defaultWidgetName(widgetType), kind: "widget", nodeType: widgetType, detail: "Visible" });
     }
@@ -762,7 +785,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const renameSelectedNode = (name: string): boolean => {
     if (!selection) return false;
     const result = editorApplication.renameNode(selection.id, name);
-    if (result.changed) logAction(`Renamed to ${name.trim()}`, "EVENT");
+    if (result.changed) {
+      // Keep the selection label in sync with the renamed node (INT-24):
+      // the snapshot must not stay stale after a rename.
+      setSelection((current) => current && current.id === selection.id ? { ...current, label: name.trim() } : current);
+      logAction(`Renamed to ${name.trim()}`, "EVENT");
+    }
     return result.changed;
   };
 
@@ -938,6 +966,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const nodeType = canonical?.widget?.widgetType ?? node.nodeType ?? node.kind;
     const nextIds = orderSelectionIds(activeScene?.widgets ?? [], selectIds(selectedIds, node.id, additive));
     setSelectedIds(nextIds);
+    // Selecting a widget from the Canvas expands its Scene/Rotation, and
+    // selecting a container node reveals its children, so every surface
+    // shows the same selection without dead-end collapsed nodes.
+    if (canonical?.widget) {
+      setExpandedNodes((current) => ({
+        ...current,
+        ...(canonical.scene ? { [canonical.scene.id]: true } : {}),
+        ...(canonical.rotation ? { [canonical.rotation.id]: true } : {}),
+      }));
+    } else if (canonical && node.children && node.children.length > 0) {
+      setExpandedNodes((current) => ({ ...current, [node.id]: true }));
+    }
     if (!nextIds.length) {
       setSelection(null);
     } else if (additive && selectedIds.includes(node.id)) {
@@ -959,7 +999,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const toggleExpanded = (nodeId: string) => setExpandedNodes((current) => ({ ...current, [nodeId]: !current[nodeId] }));
 
   const renderTreeNode = (node: TreeNode, depth = 0): ReactNode => {
-    const expanded = expandedNodes[node.id] ?? depth < 3;
+    const expanded = expandedNodes[node.id] ?? depth < 4;
     const isSelected = selectedIds.includes(node.id);
     const icon = node.kind === "Scene" ? "◈" : node.kind === "Widget" ? "◇" : node.kind === "Rotation / Form" ? "▧" : node.kind === "Project" ? "▣" : node.kind === "Resources" ? "▤" : "▱";
     return (
@@ -1398,7 +1438,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // inputs are excluded; mutation keys are blocked mid-gesture (INT-38/39).
   const handleGlobalKeyDown = (event: KeyboardEvent) => {
     const target = event.target as HTMLElement;
-    if (isCanvasKeyboardExcludedTarget(target)) return;
+    const descriptor = matchShortcut(event, shortcutRegistry);
+    // Text inputs keep native editing semantics for C/X/V/A/Z/Y/arrows, but
+    // Save and New Project have no native input meaning and must work from
+    // any focus (Scenario E: after committing a field, Ctrl+S still saves).
+    const excluded = isCanvasKeyboardExcludedTarget(target);
+    if (excluded && descriptor?.id !== "save" && descriptor?.id !== "new") return;
     if (confirmState) return;
     if (settingsOpen) {
       if (event.key === "Escape") { event.preventDefault(); cancelSettings(); }
@@ -1423,7 +1468,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       else if (contextMenu) setContextMenu(null);
       return;
     }
-    const descriptor = matchShortcut(event, shortcutRegistry);
     const pointerActive = canvasPointerRef.current.mode !== "idle";
     if (descriptor?.id === "undo" && !pointerActive) { event.preventDefault(); undo(); return; }
     if (descriptor?.id === "redo" && !pointerActive) { event.preventDefault(); redo(); return; }
