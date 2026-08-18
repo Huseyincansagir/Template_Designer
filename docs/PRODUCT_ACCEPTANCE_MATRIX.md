@@ -87,6 +87,16 @@ Filled from specialist reports during integration; each row gets a fix commit or
 | S5-06 | P3 | export | in-memory checksum self-check | DOCUMENTED deferred (read-back verification belongs to the deployment transport) |
 | S5-07 | P3 | shell | favicon 404 | FIXED fdea84f (inline SVG data-URI) |
 | LEAD | P1 | modals | Escape in a Settings input silently did nothing; first Tab escaped the dialog | FIXED 04af491 (modal branch precedes input exclusion; autofocus + outside-focus trap redirect); live-verified 8 Tabs inside |
+| S1-01 | P1 | canvas | plain canvas click on a widget CLEARED the selection (capture retargeted the click to the device screen) | FIXED e6831fe (lazy capture on drag threshold); live-verified select/clear |
+| S1-02 | P1 | canvas | 50% zoom drag broken; CSS min-size distorted scaled rendering | FIXED e6831fe (min-size removed); live-verified X 390→500 at 50% |
+| S1-03 | P2 | canvas | edge/center snap unreachable at grid 10 / threshold 6 | RECORDED — canonical pass-priority arithmetic (AGENT2 §4.11); grid-off configurations reach edge/center |
+| S1-04 | P2 | canvas | drag could strand a widget outside the scene bounds | FIXED e6831fe (scene-bounds clamp on both commit paths + suppression on out-of-viewport gestures); live-verified X=9999→600 |
+| S1 note | P3 | canvas | at ≤50% zoom, resize handles overlap small widget bodies (resize-vs-move ambiguity) | DOCUMENTED low-priority known behaviour |
+| S2-01 | P1 | canvas | empty-state Add Widget button swallowed by marquee pointerdown | FIXED e6831fe (interactive-element exclusion) |
+| S2-02 | P2 | explorer | Expand omitted Scene/Widget levels | FIXED e6831fe |
+| S2-03 | P2 | runtime | runtime-override note fired only with nothing selected | FIXED e6831fe (selected ≠ runtime-active condition) |
+| S2-04 | P3 | console | boot entry had empty timestamp | FIXED e6831fe |
+| S2-05 | P3 | menus | Add Rotation could only add R0 and produced an invalid fifth rotation | FIXED e6831fe (command surface removed; scaffold guarantees the canonical four) |
 
 ## Acceptance blockers after lead pass (fixed)
 
