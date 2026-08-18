@@ -303,11 +303,11 @@ Bilinmeyen veya kaldırılmış floor value sessizce silinmez; `Unresolved` vali
 
 ## 13. Media
 
-Media ile Widget Type ayrıdır. Media types `image`, `video` ve `audio` olabilir; Widget types Media, Digit, Direction, Warning, Text ve DeviceProfile'ın desteklediği diğer semantic nesnelerdir. Bir semantic widget uygun profile capability'si varsa image/video/audio asset/reference kullanabilir.
+Media ile Widget Type ayrıdır. Media types `image`, `video` ve `audio` olabilir; Widget types Media, Digit, Direction, Warning, Text ve DeviceProfile'ın desteklediği diğer semantic nesnelerdir. Bir semantic widget yalnızca kendi capability'siyle uyumlu media/reference türlerini kullanabilir; audio generic olarak her semantic widget'a bağlanmaz ve Media/Media Slide ile audio policy kapsamındadır.
 
 Media Properties profile ve media türüne göre duration, loop, repeat, repeat count, volume, playback, fit/crop ve optional audio alanlarını gösterir. Duration her yerde `0.1 s` precision ile düzenlenir. Normal Media default duration `0` veya uygulanabilir durumda indefinite; Media Slide içindeki visual media default duration `3.0 s`'dir. Loop sonsuz tekrar, Repeat sınırlı tekrar, Repeat Count ise sayıdır. [1]
 
-V1 Template Designer full format conversion yapmaz. MP4→AVI, image conversion, audio conversion veya ARGB888/ARGB8888 preparation UI'da otomatik işlem gibi gösterilmez. UI capability validation, unsupported indication, metadata, source/reference ve export dependency resolution sunar; hedef format hazırlanmadıysa açık validation sonucu üretir. Format Tool gelecekte ayrı bir surface olabilir. [1]
+V1 Template Designer full format conversion yapmaz. MP4→AVI, image conversion, audio conversion veya ARGB888 preparation UI'da otomatik işlem gibi gösterilmez. UI capability validation, unsupported indication, metadata, source/reference ve export dependency resolution sunar; hedef format hazırlanmadıysa açık validation sonucu üretir. Format Tool gelecekte ayrı bir surface olabilir. [1]
 
 ### Media Slide
 
@@ -328,7 +328,7 @@ Media Slide Properties şu sırada gösterilebilir:
 | Duration | Varsayılan `3.0 s`, `0.1 s` precision. |
 | Playback | Loop, Repeat, Repeat Count ayrı alanlar. |
 | Attached Audio | Optional audio reference, volume/repeat alanları. |
-| Continuity | Profile/domain destekliyorsa Continue/Retain Playback; garanti gibi sunulmaz. |
+| Continuity | Yalnız aynı gerekli size/playback continuity koşulları sağlanırsa opsiyonel Continue/Retain Playback; aksi halde yeni media başlar. |
 | Layer/Z-order | Scene içi görsel çizim sırası; runtime priority değildir. |
 
 Aynı Scene içinde birden fazla Media Slide bulunabilir ve DeviceProfile izin verdiği sürece aynı anda active olabilir. Media Slide playback'inin bitmesi Scene'i değiştirmez. `Media Sequence` veya tam timeline editor V1'de zorunlu domain/UI değildir; generic sequence veya keyframe surface'i Future/Not in V1 olarak gizlenir. [1]
@@ -337,7 +337,7 @@ Aynı Scene içinde birden fazla Media Slide bulunabilir ve DeviceProfile izin v
 
 ### Audio / Background Music
 
-Background Music Theme-level persistent/looping audio katmanıdır. Announcement/Voice ve Media/Video Audio ayrı kanallardır. UI; volume, enabled, repeat/loop ve profile'ın izin verdiği priority/ducking/override/mute policy metadata'sını gösterebilir. Audio priority `0–100` aralığında tanımlanabiliyorsa field profile/policy üzerinden gelir.
+Background Music Theme-level persistent/looping audio katmanıdır. Announcement/Voice ve Media/Video Audio ayrı kanallardır. UI; volume, enabled, repeat/loop, video/media audio volume ve background duck/override/mute policy alanlarını gösterebilir. Audio priority kesin olarak `0–100` aralığındadır; Designer policy metadata'sını tanımlar, gerçek firmware mixer/arbitration algoritmasını icat etmez.
 
 Designer policy metadata ve template defaultlarını düzenleyebilir; gerçek firmware mixer, interrupt, ducking ve arbitration algoritmasını icat etmez. Firmware saha ayarları template defaultlarını runtime'da override edebilir. Background + Announcement, Background + Media ve Background + Announcement + Media kombinasyonları supported policy kapsamı kadar preview'da açıklanır; desteklenmeyen mix çalışıyormuş gibi gösterilmez. Language 1/Language 2 announcement sırası UI'da düzenlenebilir; gerçek runtime audio arbitration firmware'e aittir. [1] [12]
 
@@ -355,13 +355,13 @@ Asset Browser, Asset Depot/library görünümünü sağlayan dockable tool windo
 | Warning Signs / semantic categories | Profile tarafından ilan edilen kategoriler |
 | Unsupported Files | Normal preview/widget/export akışına kapalı teknik alan |
 
-**Fonts Asset Browser'da bağımsız asset kategorisi değildir.** Normal Text, firmware font reference kullanır; Digit/Floor widget font/glyph sistemi kullanmaz. Profile açıkça farklı bir capability sunmadıkça UI'da Font asset browser kategorisi eklenmez. [1] [8]
+**Fonts Asset Browser'da bağımsız asset kategorisi değildir.** Normal Text, firmware font reference kullanır; Digit/Floor widget font/glyph sistemi kullanmaz ve Asset Browser font/glyph kategorisi sunmaz. [1] [8]
 
 Asset preview playback'i template widget playback policy'den bağımsızdır. Asset metadata'da display name, stable ID, file, type, format, size, duration, resolution ve color format gösterilebilir. Used/default/profile asset'ler badge veya `Used By` bilgisiyle işaretlenebilir.
 
-Windows Explorer'dan gelen dosyalar yalnız Project Explorer/Theme Resources hedeflerine bırakılır. Supported dosya uygun resource kategorisine, unsupported dosya `Unsupported Files` alanına gider. Unsupported Files widget olarak kullanılamaz ve normal export'a dahil edilmez. Export yalnızca used/referenced assetleri, export kurallarına dahil kaynakları ve gerekli profile/default assetleri alır. [1] [9]
+Windows Explorer'dan gelen dosyalar yalnız Project Explorer/Theme Resources hedeflerine bırakılır. Supported dosya uygun resource kategorisine, unsupported dosya `Unsupported Files` alanına gider. Unsupported Files widget olarak kullanılamaz ve normal export'a dahil edilmez. V1 export kapsamı açıkça **Resources + Used assets + Default assets** kümesidir; Asset Depot'un kullanılmayan içeriği export edilmez. [1] [9]
 
-Stable ID, display name ve physical filename'dan ayrıdır. UI display name'i kullanıcı dostu biçimde gösterir; stable ID salt okunur teknik metadata olarak sunulur. Rename veya safe replacement stable ID'yi değiştirmez. Dependency'li asset silinmek istenirse Used By ve replacement/removal seçenekleri gösterilir.
+Stable ID, display name ve physical filename'dan ayrıdır. UI display name'i kullanıcı dostu biçimde gösterir; stable ID salt okunur teknik metadata olarak sunulur. Rename veya safe replacement stable ID'yi değiştirmez. Stable ID gerektiğinde Theme/Project/Rotation gibi hiyerarşik context'leri deterministik biçimde encode edebilir; exact string formatı ayrı implementation detail'dir. Aynı asset farklı Theme'lerde duplicate/reference edilebilir ve bu tek başına hata değildir; yalnızca deployment scope içinde collision oluşmamalıdır. Dependency'li asset silinmek istenirse Used By ve replacement/removal seçenekleri gösterilir.
 
 ## 15. Simulator
 
@@ -599,7 +599,7 @@ Aşağıdaki kararlar bu UI specification içinde **CONFIRMED** kabul edilir:
 | Format conversion | Full conversion V1 Designer özelliği değildir |
 | Localization | Text/audio/floor/media content etkilenebilir; Language 1/2 sequence mümkündür |
 | Background Music | Theme-level persistent/looping audio katmanıdır |
-| Audio priority | Policy metadata profile destekliyorsa `0–100`; gerçek arbitration firmware'e aittir |
+| Audio priority | Kesin `0–100`; gerçek arbitration firmware'e aittir |
 | Simulator | Aynı canonical domain evaluation motorunu kullanır |
 | Shift+S | Scene switching shortcut'ı değildir |
 
