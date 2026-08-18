@@ -13,10 +13,19 @@ describe("Program settings persistence (INT-13 remediation)", () => {
     const backing = new MemoryStorage();
     const storage = new LocalStorageProgramSettings(backing);
     expect(storage.load()).toEqual(defaultProgramSettings);
-    const next = { compactDensity: false, showGrid: false, confirmDestructive: false, snapGridSize: 20 };
+    const next = { compactDensity: false, showGrid: false, confirmDestructive: false, snapGridSize: 20, restoreSession: false };
     storage.save(next);
     expect(backing.getItem(PROGRAM_SETTINGS_STORAGE_KEY)).not.toBeNull();
     expect(new LocalStorageProgramSettings(backing).load()).toEqual(next);
+  });
+
+  it("upgrades a settings record written before a field existed", () => {
+    const backing = new MemoryStorage();
+    // A record from an older build has no `restoreSession`; it must be
+    // normalized to the default, not discarded along with the other settings.
+    backing.setItem(PROGRAM_SETTINGS_STORAGE_KEY, JSON.stringify({ compactDensity: false, showGrid: false, confirmDestructive: false, snapGridSize: 25 }));
+    const loaded = new LocalStorageProgramSettings(backing).load();
+    expect(loaded).toEqual({ compactDensity: false, showGrid: false, confirmDestructive: false, snapGridSize: 25, restoreSession: defaultProgramSettings.restoreSession });
   });
 
   it("falls back to defaults on corrupt or invalid payloads", () => {

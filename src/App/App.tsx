@@ -9,6 +9,7 @@ import { validateProject } from "../Core/validation";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource } from "../Infrastructure/asset-import";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
+import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
 import type { Asset, Binding, Condition, ConditionMode, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
@@ -473,6 +474,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const projectStorage = useMemo(() => typeof window === "undefined" ? undefined : new LocalStorageProjectStorage(window.localStorage), []);
   const assetImportSource = useMemo(() => typeof document === "undefined" ? undefined : createAssetImportSource(document), []);
   const projectFileGateway = useMemo(() => typeof document === "undefined" ? undefined : createProjectFileGateway(document), []);
+  const workspaceSessionStorage = useMemo(() => typeof window === "undefined" ? undefined : new LocalStorageWorkspaceSession(window.localStorage), []);
   // Boot outcome is captured, not swallowed: a stored project that failed the
   // load gate must be REPORTED, with its raw payload preserved, instead of
   // silently becoming a blank scaffold (D3-10).
@@ -486,9 +488,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const documentSnapshotReader = useMemo(() => () => documentStore.getSnapshot(), [documentStore]);
   const documentSnapshot = useSyncExternalStore(documentSubscribe, documentSnapshotReader, documentSnapshotReader);
   const project = documentSnapshot.project ?? createEmptyProject();
+  const bootSession = workspaceSessionStorage?.load(project.id);
+  const restoredSessionZoom = bootSession && bootSession.zoom >= 50 && bootSession.zoom <= 200 ? bootSession.zoom : 100;
   const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
-  const [leftDockTab, setLeftDockTab] = useState<"explorer" | "assets">("explorer");
-  const [rightDockTab, setRightDockTab] = useState<"properties" | "simulator">("properties");
+  const [leftDockTab, setLeftDockTab] = useState<"explorer" | "assets">(bootSession?.leftDockTab ?? "explorer");
+  const [rightDockTab, setRightDockTab] = useState<"properties" | "simulator">(bootSession?.rightDockTab ?? "properties");
   const clampPanelWidth = (preferred: number) => {
     const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
     return Math.round(Math.min(preferred, Math.max(220, viewportWidth * 0.18)));
@@ -505,13 +509,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [settingsDraft, setSettingsDraft] = useState<ProgramSettings>(() => settingsStorage?.load() ?? { ...defaultProgramSettings });
   const [savedSettings, setSavedSettings] = useState<ProgramSettings>(() => settingsStorage?.load() ?? { ...defaultProgramSettings });
   const [gridVisible, setGridVisible] = useState(() => settingsStorage?.load().showGrid ?? true);
-  const [zoom, setZoom] = useState(100);
+  const [zoom, setZoom] = useState(restoredSessionZoom);
   const [pan, setPan] = useState<CanvasPoint>({ x: 0, y: 0 });
   const [consoleTab, setConsoleTab] = useState<"console" | "validation">("console");
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([
     { level: "INFO", message: "Foundation shell initialized", time: new Date().toLocaleTimeString([], { hour12: false }) },
   ]);
-  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
+  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>(() => Object.fromEntries((bootSession?.expandedNodeIds ?? []).map((id) => [id, true])));
   const [assetCategory, setAssetCategory] = useState<AssetCategory>("depot");
   const [assetSearch, setAssetSearch] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -538,9 +542,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // selection did not resolve to one (L-11), and left Scene switching with no
   // control surface at all (L-09/L-10). Navigation is UI state — it never
   // enters the document — but it is now explicit, switchable and reconciled.
-  const [activeThemeId, setActiveThemeId] = useState<string | null>(null);
-  const [activeRotationAngle, setActiveRotationAngle] = useState<RotationAngle>(0);
-  const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
+  // The restored session applies only to the SAME project, so a different
+  const [activeThemeId, setActiveThemeId] = useState<string | null>(bootSession?.activeThemeId ?? null);
+  const [activeRotationAngle, setActiveRotationAngle] = useState<RotationAngle>(bootSession?.activeRotationAngle ?? 0);
+  const [activeSceneId, setActiveSceneId] = useState<string | null>(bootSession?.activeSceneId ?? null);
   const [renameRequestId, setRenameRequestId] = useState<string | null>(null);
   const [newProjectDraft, setNewProjectDraft] = useState<{ name: string; profileId: string } | null>(null);
   const [sceneConditionDraft, setSceneConditionDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean }>({ stateId: "", operator: "equals", value: "", negated: false });
@@ -696,34 +701,39 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
   };
 
-  const openProject = (): boolean => {
-    if (!projectStorage) {
-      logAction("Open Project is unavailable in this build", "WARN");
+  const performOpenProject = (): boolean => {
+    if (!projectStorage) return false;
+    const outcome = projectStorage.read();
+    if (outcome.status === "empty") {
+      logAction("Revert to Saved: no saved project found in local storage", "WARN");
       return false;
     }
-    if (documentSnapshot.isDirty) {
-      logAction("Open Project blocked: unsaved changes exist — Save or undo first", "WARN");
+    if (outcome.status === "rejected") {
+      logAction(`Revert to Saved refused: ${outcome.reason}${outcome.backupKey ? ` (payload preserved under '${outcome.backupKey}')` : ""}`, "ERROR");
       return false;
     }
-    const restored = projectStorage.load();
-    if (!restored) {
-      logAction("Open Project: no saved project found", "WARN");
-      return false;
-    }
-    cancelCanvasInteraction();
-    documentStore.open(restored);
-    setSelection(null);
-    setSelectedIds([]);
-    setViewMode("design");
-    setExpandedNodes({});
-    setRuntimeValues({});
-    setRuntimeSettings({});
-    setSimulationStatus("idle");
-    setDeploymentStatus("Not built");
-    setClipboard(null);
-    clearGeometryPreview();
-    logAction("Project opened from storage", "EVENT");
+    applyOpenedProject(outcome.project, "Project reverted to the last saved state");
+    // The reverted document IS the persisted one, so it is clean again.
+    documentStore.save();
     return true;
+  };
+
+  const openProject = (): boolean => {
+    if (blockedInPreview("Revert to Saved")) return false;
+    if (!projectStorage) {
+      logAction("Revert to Saved is unavailable in this build", "WARN");
+      return false;
+    }
+    if (documentSnapshot.isDirty && savedSettings.confirmDestructive) {
+      setConfirmState({
+        title: "Revert to Saved",
+        message: "Reload the last saved project from local storage? Every change since the last Save is discarded.",
+        confirmLabel: "Discard & Revert",
+        onConfirm: () => { performOpenProject(); },
+      });
+      return true;
+    }
+    return performOpenProject();
   };
 
   // ---- Asset lifecycle -----------------------------------------------------
@@ -1517,6 +1527,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const executeEditorDescriptor = (commandId: EditorCommandId) => {
     let changed = false;
     if (commandId === "project.add-theme-project") changed = addThemeProject();
+    else if (commandId === "project.add-theme-group") changed = addThemeProjectGroupCommand();
+    else if (commandId === "theme.duplicate") changed = duplicateThemeCommand(resolvedSelection?.theme?.id ?? activeTheme?.id);
+    else if (commandId === "theme.delete") changed = deleteNodeCommand(resolvedSelection?.theme?.id ?? activeTheme?.id, "Theme Project");
+    else if (commandId === "scene.duplicate") changed = duplicateSceneCommand(resolvedSelection?.scene?.id ?? activeSceneNode?.id);
+    else if (commandId === "scene.delete") changed = deleteNodeCommand(resolvedSelection?.scene?.id ?? activeSceneNode?.id, "Scene");
+    else if (commandId === "scene.move-earlier") changed = moveActiveScene(-1);
+    else if (commandId === "scene.move-later") changed = moveActiveScene(1);
+    else if (commandId === "asset.import") { setContextMenu(null); void importAssets(); return; }
+    else if (commandId === "asset.delete") changed = deleteAssetsCommand(selectedAssetIds.length ? selectedAssetIds : resolvedSelection?.asset ? [resolvedSelection.asset.id] : []);
+    else if (commandId === "node.rename") { requestRename(); setContextMenu(null); return; }
     else if (commandId === "rotation.add-scene") changed = addScene();
     else if (commandId.startsWith("scene.add-widget:")) changed = addWidget(commandId.slice("scene.add-widget:".length));
     else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
@@ -2339,6 +2359,27 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Saved project restored from local storage", "EVENT");
     }
   }, [bootOutcome]);
+  // Workspace session persistence: the designer's context (Theme / Rotation /
+  // Scene, zoom, panel tabs, expanded nodes) survives a reload. It is keyed by
+  // project id and never enters the canonical document (D3-06).
+  useEffect(() => {
+    if (!workspaceSessionStorage) return;
+    if (!savedSettings.restoreSession) {
+      workspaceSessionStorage.clear();
+      return;
+    }
+    workspaceSessionStorage.save({
+      projectId: project.id,
+      activeThemeId: activeTheme?.id ?? null,
+      activeRotationAngle: activeRotationNode?.angle ?? 0,
+      activeSceneId: activeSceneNode?.id ?? null,
+      zoom,
+      leftDockTab,
+      rightDockTab,
+      expandedNodeIds: Object.entries(expandedNodes).filter(([, open]) => open).map(([id]) => id),
+    });
+  }, [workspaceSessionStorage, savedSettings.restoreSession, project.id, activeTheme?.id, activeRotationNode?.angle, activeSceneNode?.id, zoom, leftDockTab, rightDockTab, expandedNodes]);
+
   // Program settings consumers (ST-02/INT-11/12): every saved setting is
   // wired to a real effect.
   useEffect(() => { setGridVisible(savedSettings.showGrid); }, [savedSettings.showGrid]);
@@ -3062,11 +3103,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     <>
       {renderPanelHeader("simulator", "TEST STUDIO", "Simulator")}
       {renderDockTabs("right")}
-      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); traceRuntime(); }}>▶ Run</button><button type="button" className="sim-button" disabled={simulationStatus !== "running"} onClick={() => { setSimulationStatus("paused"); logAction("Simulator paused", "EVENT"); }}>Ⅱ Pause</button><button type="button" className="sim-button" onClick={traceRuntime}>Step</button><button type="button" className="sim-button" onClick={resetSimulator}>↺ Reset</button><span className="sim-status">{simulationStatus.toUpperCase()}</span></div>
+      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); traceRuntime(); }} title="Re-evaluate Scene activation and bindings against the current inputs and write the trace to the Console">Evaluate</button><button type="button" className="sim-button" onClick={resetSimulator} title="Clear every runtime state and reseed DeviceProfile setting defaults">Reset</button><span className="sim-status">{runtime.activeScene ? "ACTIVE" : "NO MATCH"}</span><span className="sim-note">V1 evaluates rules; timed media playback is device-runtime behaviour and is not simulated.</span></div>
       <div className="simulator-scroll">
         <section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id}><span>{state.displayName}<small>{state.type}</small></span>{renderRuntimeInput(state, current, (value) => setRuntimeValues((values) => value === null ? (() => { const next = { ...values }; delete next[state.id]; return next; })() : { ...values, [state.id]: value }))}</label>; })}</section>
         <section className="sim-section"><div className="property-section-title">Runtime Settings · DeviceProfile</div>{profileSettings.length === 0 ? <div className="sim-empty">No runtime settings in active DeviceProfile.</div> : profileSettings.map((setting) => { const current = runtimeSettings[setting.id]; return <label className="sim-input-row" key={setting.id}><span>{setting.displayName}<small>{setting.type}</small></span>{renderRuntimeInput(setting, current, (value) => setRuntimeSettings((values) => value === null ? (() => { const next = { ...values }; delete next[setting.id]; return next; })() : { ...values, [setting.id]: value }))}</label>; })}</section>
-        <section className="sim-section"><div className="property-section-title">Active Scene</div><div className="sim-empty">{`Evaluation context: R${runtimeRotation?.angle ?? "—"} · ${runtimeRotation?.scenes.length ?? 0} scene(s)`}</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.map((candidate) => <div className="sim-row" key={candidate.sceneId}><span>{candidate.sceneId}</span><strong>{candidate.matched ? "MATCH" : "skip"}</strong></div>)}</section>
+        <section className="sim-section"><div className="property-section-title">Active Scene</div><div className="sim-empty">{`Evaluation context: R${runtimeRotation?.angle ?? "—"} · ${runtimeRotation?.scenes.length ?? 0} scene(s)`}</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.length === 0 ? <div className="sim-empty">This Rotation / Form has no Scene to evaluate.</div> : runtime.candidates.map((candidate) => { const scene = runtimeRotation?.scenes.find((current) => current.id === candidate.sceneId); const reason = !scene ? "" : scene.enabled === false ? "disabled" : scene.activationConditions.length === 0 ? "always eligible" : candidate.matched ? `${scene.activationConditions.length} condition(s) met` : `${scene.activationConditionMode ?? "all"} of ${scene.activationConditions.length} condition(s) not met`; return <div className={`sim-row ${candidate.sceneId === runtime.activeSceneId ? "is-active-row" : ""}`} key={candidate.sceneId}><span>{scene?.name ?? candidate.sceneId}<small>priority {candidate.priority} · order {candidate.activationOrder} · {reason}</small></span><strong>{candidate.sceneId === runtime.activeSceneId ? "ACTIVE" : candidate.matched ? "MATCH" : "skip"}</strong></div>; })}</section>
         <section className="sim-section"><div className="property-section-title">Active Bindings</div>{activeBindings.length === 0 ? <div className="sim-empty">No bindings in the active Scene.</div> : activeBindings.map((evaluation) => <div className="sim-row" key={evaluation.bindingId}><span>{evaluation.widgetId}</span><strong>{evaluation.action} · {evaluation.matched ? "TRUE" : "FALSE"}</strong></div>)}</section>
       </div>
       <div className="panel-footnote"><span className="footnote-mark">i</span><span>Simulator consumes DeviceProfile, Scene selection and active-scene bindings; it does not invent Custom State.</span></div>
@@ -3085,7 +3126,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const settingsContent: Record<SettingsCategory, ReactNode> = {
     General: <><h3>General</h3><p>Application-level behavior stays separate from Project, Theme and Runtime settings.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.confirmDestructive} onChange={(event) => setSettingsDraft((current) => ({ ...current, confirmDestructive: event.target.checked }))} /> Confirm destructive commands</label></>,
     Appearance: <><h3>Appearance</h3><p>Neutral surfaces, restrained teal accent and compact Windows desktop density are canonical.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.compactDensity} onChange={(event) => setSettingsDraft((current) => ({ ...current, compactDensity: event.target.checked }))} /> Use compact panel density</label></>,
-    Editor: <><h3>Editor</h3><p>Editor defaults apply to the UI shell only; domain geometry remains canonical.</p><div className="settings-value">Shortcut registry <strong>Foundation</strong></div></>,
+    Editor: <><h3>Editor</h3><p>Editor defaults apply to the UI shell only; domain geometry remains canonical.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.restoreSession} onChange={(event) => setSettingsDraft((current) => ({ ...current, restoreSession: event.target.checked }))} /> Restore the last Theme / Rotation / Scene, zoom and panels on reload</label><div className="settings-value">Shortcut registry <strong>Canonical table + Alt navigation family</strong></div></>,
     Canvas: <><h3>Canvas</h3><p>Canvas preferences are application UI defaults and do not change runtime semantics.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.showGrid} onChange={(event) => setSettingsDraft((current) => ({ ...current, showGrid: event.target.checked }))} /> Show grid by default</label><label className="settings-check"><span>Snap grid size</span><input className="settings-number" type="number" min="1" step="1" value={settingsDraft.snapGridSize} onChange={(event) => setSettingsDraft((current) => ({ ...current, snapGridSize: Math.max(1, Number(event.target.value) || DEFAULT_GRID_SIZE) }))} /><small className="settings-unit">scene units</small></label></>,
     Assets: <><h3>Assets</h3><p>Asset Browser is a depot/library view. Resources, Scene Content and Unsupported Files remain separate.</p><div className="settings-value">Preview mode <strong>Profile-supported</strong></div></>,
     Simulator: <><h3>Simulator</h3><p>Simulator consumes canonical DeviceProfile runtime state and settings registries.</p><div className="settings-value">Rule system <strong>Canonical evaluator</strong></div></>,
@@ -3125,7 +3166,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       } else {
         setContextMenu(null);
       }
-    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : activeRotation && !activeScene ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
