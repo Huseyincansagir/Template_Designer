@@ -9,29 +9,33 @@ Firmware Runtime Data
         ↓
      Binding
         ↓
-Widget / Media / Digit / Direction
+Semantic Widget / Media / Presentation
         ↓
 Visibility / Playback / Value / Media selection
 ```
 
+Binding is a cross-cutting presentation mechanism; it is not a Media inheritance hierarchy.
+
 ## Widget-level binding
 
-Digit and Direction widgets are binding-capable widgets just like Media widgets. Their binding can determine which media/style/variant is shown.
+Digit and Direction are binding-capable semantic widgets. Media is also binding-capable. This does **not** mean Digit or Direction inherit from generic Media.
 
 Examples:
 
 ```text
 Direction == Up
-→ show Up media/style
+→ show Up style/variant
 
 Direction == Down
-→ show Down media/style
+→ show Down style/variant
 
 Floor == -2
 → use mapped floor representation P2
 ```
 
-The binding model must therefore not be designed as a Media-only feature.
+A binding may also affect an associated media/presentation reference when the semantic widget's DeviceProfile capability permits it.
+
+The binding model therefore must not be designed as a Media-only feature, but it must also not turn every semantic widget into a generic Media container.
 
 ## Positive and negative bindings
 
@@ -40,7 +44,7 @@ Bindings may be expressed as:
 - **Show/Activate when** — positive condition
 - **Hide/Stop when** — negative condition
 
-Negative bindings are important for mutually exclusive media. Example:
+Negative bindings are important for mutually exclusive media/presentation. Example:
 
 ```text
 Floor == 6
@@ -51,7 +55,7 @@ while another binding activates the floor-6-specific media.
 
 ## Condition model
 
-Conditions support DeviceProfile-defined state/value types and operators. Multiple conditions can be combined with AND/OR and advanced expressions.
+Conditions support DeviceProfile-defined state/value types and operators. Multiple conditions can be combined with AND/OR and advanced expressions where the profile/contract permits them.
 
 Examples:
 
@@ -109,22 +113,22 @@ The exact supported runtime values come from the DeviceProfile. The mapping is a
 
 ## Floor / Digit / Direction bindings
 
-Floor/Digit and Direction widgets participate in the same binding framework as media widgets.
+Floor/Digit and Direction widgets participate in the same binding framework as media widgets, but remain distinct semantic widget types.
 
 Examples:
 
 ```text
 Floor == -2
 → Digit representation P2
-→ select corresponding digit/style media
+→ select corresponding digit style/content reference
 ```
 
 ```text
 Direction == Up
-→ select Up style/media
+→ select Up style/variant
 ```
 
-A floor/digit widget can also use bindings to control associated media behavior.
+A floor/digit widget can also use a profile-supported binding to control associated media/presentation behavior. This is a binding relationship, not inheritance from Media.
 
 ## Parametric text
 
@@ -149,7 +153,7 @@ The architecture should allow future parameter sources such as CSV-backed reside
 
 ## Binding actions
 
-Actions are type-dependent. Image-like widgets primarily use visibility/selection. Media widgets may support:
+Actions are type-dependent. Image-like presentation primarily uses visibility/selection. Media widgets may support:
 
 ```text
 Show
@@ -161,7 +165,7 @@ Restart
 Continue
 ```
 
-Generic arbitrary runtime mutation of every widget property is not assumed.
+Digit/Direction actions are semantic and profile-dependent, for example style/variant/content selection. Generic arbitrary runtime mutation of every widget property is not assumed.
 
 ## Scene + Widget binding
 
