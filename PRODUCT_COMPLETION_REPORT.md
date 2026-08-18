@@ -124,7 +124,7 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 137/137 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
+| `npm test` | **PASS** — 140/140 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
 | Live browser acceptance | **PASS** — 158 checks across 6 scripted runs, **0 console errors** |
@@ -153,7 +153,9 @@ Live runs: **run 5** (19) align/distribute, enable toggle, deselect, zoom-to-fit
 | Asset thumbnail preview | The browser transport holds no bytes and the V1 package carries logical records only. Belongs with the native adapter. |
 | Binary media in the package | Deliberate boundary: `*.asset.json` with `binary: false`; materialization is the deployment adapter's job. |
 | Explorer filter/search at 12+ scenes | The scene switcher removed the acute pain; tree search is not built. |
-| Audio channel / priority authoring | Blocked upstream: the specification contradicts itself on runtime-setting defaults and channel counts. Deciding it here would be invention. |
+| Audio channel / priority authoring | Blocked upstream: the specification contradicts itself on runtime-setting defaults, channel counts, and where override rules live (C10b). Deciding it here would be invention. |
+| Sequential media inside one Media Slide | Blocked upstream: `MEDIA_ASSET_BROWSER_QUESTIONNAIRE_V1` says a slide plays one media at `:203` and describes sequential media inside a slide at `:247`/`:270`. The largest remaining V1 domain gap; needs one product decision. |
+| Deterministic stable IDs | Required by `WIDGET_SYSTEM_QUESTIONNAIRE_V1:219`, but the composition it serves is contradictory and the package/ID model is explicitly undecided (C10a). Generation is now unified and shape-stable; determinism awaits the firmware contract. |
 
 **P3**
 

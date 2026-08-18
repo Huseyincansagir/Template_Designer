@@ -8,6 +8,7 @@ import { SDCardTarget } from "../Infrastructure/sd-card-target";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import { stableSerialize } from "../Core/serialize";
+import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource } from "../Infrastructure/asset-import";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
@@ -1599,7 +1600,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return extended.changed;
     }
     const binding: Binding = {
-      id: `binding-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
+      id: createStableId("binding"),
       widgetId: widget.id,
       conditions: [condition],
       conditionMode: bindingDraft.conditionMode,

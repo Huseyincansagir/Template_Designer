@@ -79,4 +79,26 @@ describe("architecture boundaries", () => {
       expect(descriptor).not.toMatch(/id:\s*"(canvas\.delete-selection|theme\.delete|scene\.delete|[a-z.]*duplicate[a-z.]*)"/);
     }
   });
+
+  /**
+   * Identity is generated in exactly one module. There were three inline
+   * generators - Core used `crypto.randomUUID()` bare (which throws where it is
+   * unavailable), Domain guarded it with one fallback and the UI with another -
+   * so a single document could carry ids in three shapes and one path could
+   * hard-crash where the others degraded.
+   */
+  it("generates stable IDs in exactly one module", () => {
+    const identityModule = join(process.cwd(), "src/Domain/identity.ts");
+    const others = [
+      ...sourceFiles(join(process.cwd(), "src/Domain")),
+      ...sourceFiles(join(process.cwd(), "src/Core")),
+      ...sourceFiles(join(process.cwd(), "src/App")),
+      ...sourceFiles(join(process.cwd(), "src/Infrastructure")),
+    ].filter((file) => file !== identityModule);
+
+    const offenders = others.filter((file) => /crypto\s*\.\s*randomUUID|Math\s*\.\s*random\s*\(\s*\)\s*\.\s*toString\s*\(\s*36/.test(readFileSync(file, "utf8")));
+    expect(offenders.map((file) => file.replace(process.cwd(), "")), "inline id generation outside Domain/identity.ts").toEqual([]);
+    // And the one module that may do it, does.
+    expect(readFileSync(identityModule, "utf8")).toMatch(/randomUUID/);
+  });
 });

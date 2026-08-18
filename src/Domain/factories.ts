@@ -1,3 +1,4 @@
+import { createStableId, type IdPrefix } from "./identity";
 import type { DeviceProfile, Project, Rotation, RotationAngle, ThemeProject, ThemeProjectGroup } from "./models";
 
 /**
@@ -79,8 +80,8 @@ export const compactDeviceProfile: DeviceProfile = {
   },
 };
 
-function newId(prefix: string): string {
-  return `${prefix}-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
+function newId(prefix: IdPrefix): string {
+  return createStableId(prefix);
 }
 
 function rotationDimensions(display: DeviceProfile["display"], angle: RotationAngle): Pick<Rotation, "width" | "height"> {

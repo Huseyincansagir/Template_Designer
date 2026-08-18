@@ -10,6 +10,7 @@ import { LocalStorageProjectStorage, PROJECT_STORAGE_KEY } from "../src/Infrastr
 import { displayNameOf, extensionOf, inferMediaType, toAssetDraft } from "../src/Infrastructure/asset-import";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../src/Infrastructure/project-file";
 import { describeSelectionRefusal } from "../src/App/editor-commands";
+import { createStableId } from "../src/Domain/identity";
 import { createDeploymentService } from "../src/Core/deployment-service";
 import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import type { Project, Widget } from "../src/Domain/models";
@@ -628,5 +629,38 @@ describe("Deployment goes through the application service (F16)", () => {
     expect(outcome.reason.length).toBeGreaterThan(0);
     // With no adapter configured, that is a reportable state, not a crash.
     expect(service.targets()).toEqual([]);
+  });
+});
+describe("Stable identity (C10a)", () => {
+  it("is prefix-scoped, uniformly shaped and collision-free across layers", () => {
+    const ids = Array.from({ length: 500 }, () => createStableId("widget"));
+    expect(new Set(ids).size).toBe(ids.length);
+    // One shape everywhere: prefix + a well-formed v4 UUID.
+    for (const id of ids.slice(0, 20)) {
+      expect(id).toMatch(/^widget-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+    // Domain and Core now draw from the same generator, so ids created by a
+    // factory and by a command are indistinguishable in shape.
+    const scaffold = createEmptyProject("Shape");
+    const { editor, store } = setup(scaffold);
+    const createdByCommand = editor.addScene(scaffold.themeProjectGroups[0].themeProjects[0].rotations[0].id, "S").createdIds?.[0] as string;
+    const createdByFactory = scaffold.themeProjectGroups[0].themeProjects[0].rotations[0].id;
+    const shape = (id: string) => id.replace(/^[a-z-]+-/, "").replace(/[0-9a-f]/g, "x");
+    expect(shape(createdByCommand)).toBe(shape(createdByFactory));
+    expect(current(store).themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].id).toBe(createdByCommand);
+  });
+
+  it("does not require crypto.randomUUID to be present", () => {
+    const original = globalThis.crypto.randomUUID;
+    try {
+      // Non-secure contexts and older engines expose crypto without randomUUID.
+      // The Core path used to throw here while the Domain path degraded.
+      Reflect.deleteProperty(globalThis.crypto, "randomUUID");
+      const id = createStableId("asset");
+      expect(id).toMatch(/^asset-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(createStableId("asset")).not.toBe(id);
+    } finally {
+      Object.defineProperty(globalThis.crypto, "randomUUID", { value: original, configurable: true, writable: true });
+    }
   });
 });

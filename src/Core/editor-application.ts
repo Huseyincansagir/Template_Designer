@@ -1,5 +1,9 @@
 import type { Asset, Binding, Condition, DeviceProfile, Geometry, MediaType, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import { createStableId, type IdPrefix } from "../Domain/identity";
 import { InMemoryDocumentStore } from "./document-store";
+
+/** Identity comes from the single Domain generator; see Domain/identity.ts. */
+function newId(prefix: IdPrefix): string { return createStableId(prefix); }
 
 export type ProjectMutation = (project: Project) => Project;
 export type MutationResult = { readonly changed: boolean; readonly createdIds?: readonly string[] };
@@ -16,7 +20,7 @@ export type AssetDraft = {
 export type WidgetConfigurationPatch = Partial<Pick<Widget, "widgetType" | "mediaType" | "assetIds" | "audioAssetId" | "mediaSlide" | "content" | "style">>;
 
 function clone<T>(value: T): T { return structuredClone(value); }
-function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
+
 function equalProject(left: Project, right: Project): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 
 function isValidGeometry(value: unknown): value is Geometry {
