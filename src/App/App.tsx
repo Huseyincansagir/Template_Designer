@@ -1646,11 +1646,25 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     let unlisten: (() => void) | undefined;
+    // Guards the user-confirmed destroy from re-triggering the request.
+    const allowCloseRef = { current: false };
     (async () => {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
-        unlisten = await getCurrentWindow().onCloseRequested(async (event) => {
-          if (documentSnapshot.isDirty) event.preventDefault();
+        const appWindow = getCurrentWindow();
+        unlisten = await appWindow.onCloseRequested(async (event) => {
+          if (allowCloseRef.current) return;
+          if (!documentSnapshot.isDirty) return;
+          event.preventDefault();
+          setConfirmState({
+            title: "Unsaved changes",
+            message: "The project has unsaved changes. Closing the application discards them.",
+            confirmLabel: "Discard & Close",
+            onConfirm: () => {
+              allowCloseRef.current = true;
+              void appWindow.destroy();
+            },
+          });
         });
       } catch {
         // Not running under a Tauri shell.

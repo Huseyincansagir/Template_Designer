@@ -63,6 +63,40 @@ describe("Project persistence adapter (C-02 remediation)", () => {
     expect(new LocalStorageProjectStorage(backing).load()).toBeNull();
   });
 
+  it("rejects structurally broken nested payloads instead of crashing the editor (S5-04)", () => {
+    const backing = new MemoryStorage();
+    const storage = new LocalStorageProjectStorage(backing);
+    // Build a canonical project that actually contains a scene + widget.
+    const { store, editor } = setup(backing);
+    const project = store.getCurrent()!;
+    const rotationId = project.themeProjectGroups[0].themeProjects[0].rotations[0].id;
+    expect(editor.addScene(rotationId, "Scene A").changed).toBe(true);
+    const sceneId = store.getCurrent()!.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].id;
+    expect(editor.addWidget(sceneId, "media").changed).toBe(true);
+    const scaffold = store.getCurrent()!;
+
+    const missingGeometry = structuredClone(scaffold);
+    const sceneA = missingGeometry.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0] as unknown as { widgets: unknown[] };
+    sceneA.widgets.push({ id: "w-broken", name: "Broken", widgetType: "media" });
+
+    const missingWidgets = structuredClone(scaffold);
+    const sceneB = missingWidgets.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0] as unknown as { widgets?: unknown };
+    sceneB.widgets = undefined;
+
+    const badRotation = structuredClone(scaffold);
+    const rotation = badRotation.themeProjectGroups[0].themeProjects[0].rotations[0] as unknown as { width: unknown };
+    rotation.width = "720";
+
+    for (const [name, crafted] of [["missing geometry", missingGeometry], ["missing widgets", missingWidgets], ["non-numeric dims", badRotation]] as const) {
+      backing.setItem(PROJECT_STORAGE_KEY, JSON.stringify(crafted));
+      expect(storage.load(), name).toBeNull();
+    }
+
+    backing.setItem(PROJECT_STORAGE_KEY, JSON.stringify(scaffold));
+    expect(storage.load()?.name).toBe("Persisted");
+    expect(storage.load()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets).toHaveLength(1);
+  });
+
   it("clears the persisted project on demand", () => {
     const backing = new MemoryStorage();
     const { store, adapter } = setup(backing);

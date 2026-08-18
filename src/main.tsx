@@ -23,7 +23,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
       return (
         <div style={{ padding: 24, fontFamily: "Segoe UI, sans-serif", color: "#1b2c33", background: "#e9eef0", minHeight: "100vh" }}>
           <h2>Template Designer stopped</h2>
-          <p>The editor hit an unexpected error. Your document state is preserved in the browser storage; reload to continue.</p>
+          <p>The editor hit an unexpected error. Unsaved work since the last Save may be lost — reload to continue.</p>
           <pre style={{ whiteSpace: "pre-wrap", color: "#b64c4c" }}>{this.state.error.message}</pre>
           <button type="button" onClick={() => window.location.reload()} style={{ padding: "8px 14px" }}>Reload</button>
         </div>

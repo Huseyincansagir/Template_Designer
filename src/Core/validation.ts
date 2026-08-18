@@ -150,6 +150,13 @@ function validateWidget(
     issue(issues, "UNSUPPORTED_WIDGET_TYPE", `Widget type '${widget.widgetType}' is not supported by the active DeviceProfile.`, `${path}.widgetType`, "Choose a supported widget type or switch DeviceProfile.");
   }
 
+  // Defense in depth (S5-04): malformed persisted data must surface as a
+  // validation issue, never as a render-phase crash.
+  if (!widget.geometry || !Number.isFinite(widget.geometry.x) || !Number.isFinite(widget.geometry.y) || !Number.isFinite(widget.geometry.width) || !Number.isFinite(widget.geometry.height)) {
+    issue(issues, "INVALID_WIDGET_GEOMETRY", "Widget geometry must contain finite x/y/width/height values.", `${path}.geometry`, "Restore or re-create the widget geometry.");
+    return;
+  }
+
   if (widget.geometry.width <= 0 || widget.geometry.height <= 0) {
     issue(issues, "INVALID_WIDGET_GEOMETRY", "Widget width and height must be greater than zero.", `${path}.geometry`, "Set positive width and height values.");
   }
@@ -162,7 +169,7 @@ function validateWidget(
     issue(issues, "UNSUPPORTED_MEDIA_TYPE", `Media type '${widget.mediaType}' is not supported by the active DeviceProfile.`, `${path}.mediaType`, "Choose a supported media type.");
   }
 
-  widget.assetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.assetIds[${index}]`, issues));
+  (Array.isArray(widget.assetIds) ? widget.assetIds : []).forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.assetIds[${index}]`, issues));
 
   if (widget.audioAssetId) {
     const audioAsset = assets.get(widget.audioAssetId);
@@ -205,7 +212,7 @@ function validateWidget(
     }
   }
 
-  widget.bindings.forEach((binding, index) => validateBinding(binding, widget, profile, assetIds, `${path}.bindings[${index}]`, issues));
+  (Array.isArray(widget.bindings) ? widget.bindings : []).forEach((binding, index) => validateBinding(binding, widget, profile, assetIds, `${path}.bindings[${index}]`, issues));
 }
 
 function validateScene(
@@ -219,8 +226,8 @@ function validateScene(
     issue(issues, "SCENE_PRIORITY_INVALID", "Scene priority must be an integer from 0 through 10.", `${path}.priority`, "Set a Scene priority between 0 and 10.");
   }
 
-  scene.activationConditions.forEach((condition, index) => validateCondition(condition, profile, `${path}.activationConditions[${index}]`, issues));
-  scene.widgets.forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues));
+  (Array.isArray(scene.activationConditions) ? scene.activationConditions : []).forEach((condition, index) => validateCondition(condition, profile, `${path}.activationConditions[${index}]`, issues));
+  (Array.isArray(scene.widgets) ? scene.widgets : []).forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues));
 
   const maxConcurrentDecode = profile.videoCapabilities?.maxConcurrentDecode;
   if (maxConcurrentDecode !== undefined && maxConcurrentDecode > 0) {
@@ -336,7 +343,7 @@ export function validateProject(project: Project, profile?: DeviceProfile): Vali
     group.themeProjects.forEach((theme, themeIndex) => {
       if (themeIds.has(theme.id)) issue(issues, "DUPLICATE_THEME_ID", `Theme Project ID '${theme.id}' is duplicated in the project scope.`, `themeProjectGroups[${groupIndex}].themeProjects[${themeIndex}].id`, "Assign a unique stable Theme ID.");
       themeIds.add(theme.id);
-      theme.rotations.forEach((rotation) => rotation.scenes.forEach((scene) => scene.widgets.forEach((widget) => {
+      theme.rotations.forEach((rotation) => (Array.isArray(rotation.scenes) ? rotation.scenes : []).forEach((scene) => (Array.isArray(scene.widgets) ? (scene.widgets as readonly Widget[]) : []).forEach((widget) => {
         if (widgetIds.has(widget.id)) issue(issues, "DUPLICATE_WIDGET_ID", `Widget ID '${widget.id}' is duplicated in the project scope.`, "widgets", "Assign a unique stable Widget ID.");
         widgetIds.add(widget.id);
       })));
