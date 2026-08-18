@@ -84,6 +84,19 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(current(store)).toEqual(after);
   });
 
+  it("creates menu-added Theme Projects with the canonical four rotations (S2-05)", () => {
+    const { store, editor } = setup();
+    const groupId = current(store).themeProjectGroups[0].id;
+    expect(editor.addThemeProject(groupId, "Theme B", foundationDeviceProfile.display).changed).toBe(true);
+    const added = current(store).themeProjectGroups[0].themeProjects[1];
+    expect(added.rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
+    expect(added.rotations[0]).toMatchObject({ width: 720, height: 1280 });
+    expect(added.rotations[1]).toMatchObject({ width: 1280, height: 720 });
+    expect(added.rotations.every((rotation) => rotation.scenes.length === 0)).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(current(store).themeProjectGroups[0].themeProjects).toHaveLength(1);
+  });
+
   it("adds a Rotation without changing the Theme Project parent", () => {
     const { project, themeId } = hierarchyProject();
     const { store, editor } = setup(project);

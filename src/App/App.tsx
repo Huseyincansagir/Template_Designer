@@ -629,7 +629,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const addThemeProject = (): boolean => {
     const groupId = resolvedSelection?.group?.id ?? group?.id;
     if (!groupId) return false;
-    const result = editorApplication.addThemeProject(groupId);
+    const result = editorApplication.addThemeProject(groupId, undefined, activeProfile?.display);
     if (result.changed) {
       const createdId = result.createdIds?.[0];
       if (createdId) {

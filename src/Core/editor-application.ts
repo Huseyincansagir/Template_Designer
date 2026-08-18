@@ -164,11 +164,17 @@ export class EditorApplication {
     return { changed: true };
   }
 
-  addThemeProject(groupId: string, name = "New Theme Project"): MutationResult {
+  addThemeProject(groupId: string, name = "New Theme Project", display?: DeviceProfile["display"]): MutationResult {
     const id = newId("theme");
+    // Canonical shape (S2-05): when the DeviceProfile display is known, the
+    // new Theme Project is born with exactly R0/R90/R180/R270 sourced from
+    // the profile — a menu-created theme must be as valid as the scaffold.
+    const rotations: Rotation[] = display && Number.isFinite(display.width) && Number.isFinite(display.height) && display.width > 0 && display.height > 0
+      ? ([0, 90, 180, 270] as const).map((angle) => ({ id: newId("rotation"), angle, ...rotationDimensions(display, angle), scenes: [] }))
+      : [];
     const result = this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
       ...group,
-      themeProjects: [...group.themeProjects, { id, name, rotations: [], resources: [] }],
+      themeProjects: [...group.themeProjects, { id, name, rotations, resources: [] }],
     } : group));
     return result.changed ? { changed: true, createdIds: [id] } : result;
   }
