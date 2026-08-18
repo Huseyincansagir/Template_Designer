@@ -166,6 +166,15 @@ function collectTreeNodeIds(project: Project): string[] {
   return ids;
 }
 
+/** Default names stay unique so identically-named scenes/widgets never
+ *  make the runtime context ambiguous (final-workflow finding). */
+function uniqueDefaultName(base: string, existing: readonly string[]): string {
+  if (!existing.includes(base)) return base;
+  let counter = 2;
+  while (existing.includes(`${base} ${counter}`)) counter += 1;
+  return `${base} ${counter}`;
+}
+
 type GeometryFieldProps = {  label: string;
   field: keyof Geometry;
   value: string | number;
@@ -652,13 +661,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const addScene = (): boolean => {
     const rotationId = resolvedSelection?.rotation?.id;
     if (!rotationId) return false;
-    const result = editorApplication.addScene(rotationId);
+    const rotation = resolveCanonicalNode(project, rotationId)?.rotation;
+    const name = uniqueDefaultName("New Scene", rotation?.scenes.map((scene) => scene.name) ?? []);
+    const result = editorApplication.addScene(rotationId, name);
     if (result.changed) {
       const createdId = result.createdIds?.[0];
       if (createdId) {
         setExpandedNodes((current) => ({ ...current, [rotationId]: true }));
         setSelectedIds([createdId]);
-        setSelection({ id: createdId, label: "New Scene", kind: "scene", detail: "Priority 0" });
+        setSelection({ id: createdId, label: name, kind: "scene", detail: "Priority 0" });
       }
       logAction("Scene added", "EVENT");
     }
@@ -683,7 +694,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const cascade = (activeScene?.widgets.length ?? 0) % 8;
     const x = Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * snapGridSize) / snapGridSize) * snapGridSize);
     const y = Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * snapGridSize) / snapGridSize) * snapGridSize);
-    const result = editorApplication.addWidget(sceneId, widgetType, { x, y, width, height });
+    const name = uniqueDefaultName(defaultWidgetName(widgetType), activeScene.widgets.map((widget) => widget.name));
+    const result = editorApplication.addWidget(sceneId, widgetType, { x, y, width, height }, name);
     if (!result.changed) {
       logAction("Add Widget failed", "WARN");
       return false;
@@ -700,7 +712,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         ...(parent?.rotation ? { [parent.rotation.id]: true } : {}),
       }));
       setSelectedIds([createdId]);
-      setSelection({ id: createdId, label: defaultWidgetName(widgetType), kind: "widget", nodeType: widgetType, detail: "Visible" });
+      setSelection({ id: createdId, label: name, kind: "widget", nodeType: widgetType, detail: "Visible" });
     }
     logAction(`Widget added: ${widgetType}`, "EVENT");
     return true;
@@ -1991,7 +2003,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       } else {
         setContextMenu(null);
       }
-    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={() => addWidget(activeProfile.supportedWidgetTypes[0])}>Add Widget</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}

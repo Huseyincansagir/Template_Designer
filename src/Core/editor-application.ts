@@ -199,18 +199,20 @@ export class EditorApplication {
    * the top of the Scene's z-order (max zIndex + 1). Profile capability
    * filtering happens at the UI layer where the DeviceProfile lives.
    */
-  addWidget(sceneId: string, widgetType: string, geometry?: Geometry): MutationResult {
+  addWidget(sceneId: string, widgetType: string, geometry?: Geometry, name?: string): MutationResult {
     const current = this.documents.getCurrent();
     if (!current || widgetType.trim().length === 0 || !findUniqueScene(current, sceneId)) return { changed: false };
+    if (name !== undefined && name.trim().length === 0) return { changed: false };
     const base = geometry ?? { x: 0, y: 0, width: 120, height: 80 };
     if (!isValidGeometry(base)) return { changed: false };
     const id = newId("widget");
+    const widgetName = name?.trim() || defaultWidgetName(widgetType);
     const result = this.execute(`Add Widget: ${widgetType}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
       if (scene.id !== sceneId) return scene;
       const maxZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
       const widget: Widget = {
         id,
-        name: defaultWidgetName(widgetType),
+        name: widgetName,
         widgetType,
         enabled: true,
         visible: true,
