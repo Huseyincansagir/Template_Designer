@@ -604,3 +604,6 @@ body.relaxed-density .sim-input-row { min-height: 36px; }
 .sim-row span { display: grid; gap: 1px; min-width: 0; }
 .sim-row span small { color: var(--text-muted); font-size: var(--micro-label); }
 .sim-row.is-active-row { border-color: var(--accent); background: var(--accent-muted); }
+
+.validation-goto { padding: 0 var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--accent-hover); font-family: inherit; font-size: var(--micro-label); font-weight: 650; }
+.validation-goto:hover { border-color: var(--accent); background: var(--accent-muted); }

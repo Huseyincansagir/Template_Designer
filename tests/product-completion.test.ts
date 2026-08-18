@@ -471,3 +471,50 @@ describe("Second DeviceProfile is real (L-17)", () => {
     expect(validateProject(created, compactDeviceProfile).issues.some((issue) => issue.severity === "error")).toBe(false);
   });
 });
+
+describe("Load gate rejects documents the editor cannot repair (D3-11/D3-12)", () => {
+  it("refuses a project with duplicated widget or scene stable IDs", () => {
+    const raw = new MemoryStorage();
+    const storage = new LocalStorageProjectStorage(raw);
+
+    const base = createEmptyProject("Duplicate IDs");
+    const theme = base.themeProjectGroups[0].themeProjects[0];
+    const [first, ...rest] = theme.rotations;
+    const duplicated: Project = {
+      ...base,
+      themeProjectGroups: [{
+        ...base.themeProjectGroups[0],
+        themeProjects: [{
+          ...theme,
+          rotations: [
+            { ...first, scenes: [{ id: "scene-1", name: "A", widgets: [widget("w1"), widget("w1")], priority: 0, activationConditions: [] }] },
+            ...rest,
+          ],
+        }],
+      }],
+    };
+    raw.setItem(PROJECT_STORAGE_KEY, JSON.stringify(duplicated));
+    // Every scoped command refuses an id that appears twice, so the document
+    // would render but never be editable.
+    expect(storage.read().status).toBe("rejected");
+
+    const duplicateScenes: Project = {
+      ...duplicated,
+      themeProjectGroups: [{
+        ...duplicated.themeProjectGroups[0],
+        themeProjects: [{
+          ...duplicated.themeProjectGroups[0].themeProjects[0],
+          rotations: duplicated.themeProjectGroups[0].themeProjects[0].rotations.map((rotation, index) => index === 0
+            ? { ...rotation, scenes: [{ id: "scene-1", name: "A", widgets: [], priority: 0, activationConditions: [] }, { id: "scene-1", name: "B", widgets: [], priority: 0, activationConditions: [] }] }
+            : rotation),
+        }],
+      }],
+    };
+    raw.setItem(PROJECT_STORAGE_KEY, JSON.stringify(duplicateScenes));
+    expect(storage.read().status).toBe("rejected");
+
+    // A structurally sound project with unique ids still loads.
+    raw.setItem(PROJECT_STORAGE_KEY, JSON.stringify(createEmptyProject("Sound")));
+    expect(storage.read().status).toBe("loaded");
+  });
+});

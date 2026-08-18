@@ -69,6 +69,27 @@ export function isLoadableProject(value: unknown): value is Project {
       }
     }
   }
+  // Stable-ID uniqueness is not cosmetic: every scoped command
+  // (validScopedWidgetIds) refuses to act on an id that appears twice, so a
+  // document with duplicated ids renders but can never be edited or repaired,
+  // and React reports duplicate keys (D3-11/D3-12). Such a payload is rejected
+  // so the boot path can report it instead of half-loading it.
+  const widgetIds = new Set<string>();
+  const sceneIds = new Set<string>();
+  for (const group of candidate.themeProjectGroups) {
+    for (const theme of (group as Record<string, unknown>).themeProjects as readonly Record<string, unknown>[]) {
+      for (const rotation of theme.rotations as readonly Record<string, unknown>[]) {
+        for (const scene of rotation.scenes as readonly Record<string, unknown>[]) {
+          if (sceneIds.has(scene.id as string)) return false;
+          sceneIds.add(scene.id as string);
+          for (const widget of scene.widgets as readonly Record<string, unknown>[]) {
+            if (widgetIds.has(widget.id as string)) return false;
+            widgetIds.add(widget.id as string);
+          }
+        }
+      }
+    }
+  }
   return true;
 }
 
