@@ -165,26 +165,32 @@ export class EditorApplication {
   }
 
   addThemeProject(groupId: string, name = "New Theme Project"): MutationResult {
-    return this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
+    const id = newId("theme");
+    const result = this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
       ...group,
-      themeProjects: [...group.themeProjects, { id: newId("theme"), name, rotations: [], resources: [] }],
+      themeProjects: [...group.themeProjects, { id, name, rotations: [], resources: [] }],
     } : group));
+    return result.changed ? { changed: true, createdIds: [id] } : result;
   }
 
   addRotation(themeId: string, angle: RotationAngle = 0, display?: DeviceProfile["display"]): MutationResult {
     if (!display || !Number.isFinite(display.width) || !Number.isFinite(display.height) || display.width <= 0 || display.height <= 0) return { changed: false };
     const dimensions = rotationDimensions(display, angle);
-    return this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
+    const id = newId("rotation");
+    const result = this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
       ...theme,
-      rotations: [...theme.rotations, { id: newId("rotation"), angle, ...dimensions, scenes: [] }],
+      rotations: [...theme.rotations, { id, angle, ...dimensions, scenes: [] }],
     } : theme)));
+    return result.changed ? { changed: true, createdIds: [id] } : result;
   }
 
   addScene(rotationId: string, name = "New Scene"): MutationResult {
-    return this.execute(`Add Scene: ${name}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => rotation.id === rotationId ? {
+    const id = newId("scene");
+    const result = this.execute(`Add Scene: ${name}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => rotation.id === rotationId ? {
       ...rotation,
-      scenes: [...rotation.scenes, { id: newId("scene"), name, widgets: [], priority: 0, activationConditions: [] }],
+      scenes: [...rotation.scenes, { id, name, widgets: [], priority: 0, activationConditions: [] }],
     } : rotation))));
+    return result.changed ? { changed: true, createdIds: [id] } : result;
   }
 
   /**

@@ -410,7 +410,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const canvasScreenRef = useRef<HTMLDivElement>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const geometryOverridesRef = useRef<Record<string, Geometry>>({});
-  const suppressCanvasClickRef = useRef(false);
+  const suppressCanvasClicksUntilRef = useRef(0);
 
   const availableProfiles = profileRegistry.list();
   const activeProfile = profileRegistry.get(project.deviceProfileId);
@@ -541,7 +541,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const groupId = resolvedSelection?.group?.id ?? group?.id;
     if (!groupId) return false;
     const result = editorApplication.addThemeProject(groupId);
-    if (result.changed) logAction("Theme Project added", "EVENT");
+    if (result.changed) {
+      const createdId = result.createdIds?.[0];
+      if (createdId) {
+        setExpandedNodes((current) => ({ ...current, [groupId]: true, [createdId]: true }));
+        setSelectedIds([createdId]);
+        setSelection({ id: createdId, label: "New Theme Project", kind: "theme" });
+      }
+      logAction("Theme Project added", "EVENT");
+    }
     return result.changed;
   };
 
@@ -549,7 +557,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const themeId = resolvedSelection?.theme?.id;
     if (!themeId || !activeProfile) return false;
     const result = editorApplication.addRotation(themeId, 0, activeProfile.display);
-    if (result.changed) logAction("Rotation added", "EVENT");
+    if (result.changed) {
+      const createdId = result.createdIds?.[0];
+      if (createdId) {
+        setExpandedNodes((current) => ({ ...current, [themeId]: true, [createdId]: true }));
+        setSelectedIds([createdId]);
+        setSelection({ id: createdId, label: "R0", kind: "rotation", detail: `${activeProfile.display.width} × ${activeProfile.display.height}` });
+      }
+      logAction("Rotation added", "EVENT");
+    }
     return result.changed;
   };
 
@@ -557,7 +573,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const rotationId = resolvedSelection?.rotation?.id;
     if (!rotationId) return false;
     const result = editorApplication.addScene(rotationId);
-    if (result.changed) logAction("Scene added", "EVENT");
+    if (result.changed) {
+      const createdId = result.createdIds?.[0];
+      if (createdId) {
+        setExpandedNodes((current) => ({ ...current, [rotationId]: true }));
+        setSelectedIds([createdId]);
+        setSelection({ id: createdId, label: "New Scene", kind: "scene", detail: "Priority 0" });
+      }
+      logAction("Scene added", "EVENT");
+    }
     return result.changed;
   };
 
@@ -1085,8 +1109,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     } catch { /* Pointer capture may already be released. */ }
   };
 
-  const resetCanvasClickSuppression = () => {
-    window.setTimeout(() => { suppressCanvasClickRef.current = false; }, 0);
+  // Click suppression is timestamp-based so it is immune to click-vs-timer
+  // ordering races: a gesture suppresses the click that ends it no matter
+  // when the browser dispatches that click.
+  const suppressCanvasClick = () => {
+    suppressCanvasClicksUntilRef.current = Date.now() + 600;
+  };
+  const isCanvasClickSuppressed = () => Date.now() < suppressCanvasClicksUntilRef.current;
+  const consumeCanvasClickSuppression = () => {
+    suppressCanvasClicksUntilRef.current = 0;
   };
 
   const setGeometryPreview = (updates: Record<string, Geometry>) => {
@@ -1116,8 +1147,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (active.mode === "panning") setPan(active.initialPan);
     clearGeometryPreview();
     updateCanvasPointer({ mode: "idle" });
-    suppressCanvasClickRef.current = true;
-    resetCanvasClickSuppression();
+    suppressCanvasClick();
   };
 
   const beginCanvasMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1195,7 +1225,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (pointer.mode === "idle" || event.pointerId !== pointer.pointerId) return;
     if (pointer.mode === "panning") {
       const distance = Math.hypot(event.clientX - pointer.start.x, event.clientY - pointer.start.y);
-      if (exceedsPointerDragThreshold(distance)) suppressCanvasClickRef.current = true;
+      if (exceedsPointerDragThreshold(distance)) suppressCanvasClick();
       // pan is stored in §4.2 Canvas units; the screen delta is divided by
       // fitScale so the content follows the cursor 1:1.
       const frameScale = canvasFrame?.scale;
@@ -1208,7 +1238,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (pointer.mode === "marquee") {
       if (!exceedsPointerDragThreshold(screenDistance)) return;
       updateCanvasPointer({ ...pointer, rect: normalizeRect(pointer.start, current) });
-      suppressCanvasClickRef.current = true;
+      suppressCanvasClick();
       return;
     }
     const delta = { x: current.x - pointer.start.x, y: current.y - pointer.start.y };
@@ -1234,7 +1264,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       setSnapGuides(snapped.guides);
     }
     setGeometryPreview(updates);
-    suppressCanvasClickRef.current = true;
+    suppressCanvasClick();
   };
 
   const handleCanvasPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -1247,8 +1277,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         setSelectedIds(nextIds);
         const first = nextIds[0] ? canvasWidgets.find((widget) => widget.id === nextIds[0]) : undefined;
         setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
-        suppressCanvasClickRef.current = true;
-        resetCanvasClickSuppression();
+        suppressCanvasClick();
       }
       // Commit to idle BEFORE releasing capture: the synchronous
       // lostpointercapture event then sees an idle interaction and cannot
@@ -1260,7 +1289,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (pointer.mode === "panning") {
       updateCanvasPointer({ mode: "idle" });
       releaseCanvasPointer(event.pointerId);
-      resetCanvasClickSuppression();
       return;
     }
     const finalPoint = toCanvasPoint(event);
@@ -1285,14 +1313,30 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     updateCanvasPointer({ mode: "idle" });
     releaseCanvasPointer(event.pointerId);
-    resetCanvasClickSuppression();
   };
 
   const handleCanvasPointerCancel = () => cancelCanvasInteraction();
 
+  /**
+   * Capture-loss handling (INT-41): a capture loss AFTER a committed
+   * pointerup sees an idle interaction and no-ops. A capture loss while the
+   * gesture is still active first tries to RE-ACQUIRE capture (spurious
+   * browser releases); only if re-acquisition fails is the gesture cancelled.
+   */
+  const handleCanvasPointerCaptureLost = () => {
+    const active = canvasPointerRef.current;
+    if (active.mode === "idle") return;
+    const element = canvasScreenRef.current;
+    const pointerId = activePointerIdRef.current;
+    if (element && pointerId !== null) {
+      try { element.setPointerCapture(pointerId); } catch { /* re-acquire failed */ }
+    }
+    if (!element || pointerId === null || !element.hasPointerCapture(pointerId)) cancelCanvasInteraction();
+  };
+
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (suppressCanvasClickRef.current || canvasTool === "pan") {
-      suppressCanvasClickRef.current = false;
+    if (isCanvasClickSuppressed() || canvasTool === "pan") {
+      consumeCanvasClickSuppression();
       return;
     }
     if (duplicateMode) {
@@ -1524,7 +1568,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const selected = selectedIds.includes(widget.id);
     const style = { left: `${(geometry.x / canvasWidth) * 100}%`, top: `${(geometry.y / canvasHeight) * 100}%`, width: `${(geometry.width / canvasWidth) * 100}%`, height: `${(geometry.height / canvasHeight) * 100}%`, zIndex: widget.zIndex };
     const handles: ResizeHandle[] = ["n", "e", "s", "w", "nw", "ne", "sw", "se"];
-    return <div key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (!suppressCanvasClickRef.current) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }, event.shiftKey || isCanonicalModifier(event)); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }); }}><span>{widget.name}</span><small>{widget.widgetType}{widget.locked ? " · locked" : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>{selected && selectedWidgetIds.length === 1 && !widget.locked && !previewActive && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
+    return <div key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (isCanvasClickSuppressed()) { consumeCanvasClickSuppression(); return; } selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }, event.shiftKey || isCanonicalModifier(event)); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }); }}><span>{widget.name}</span><small>{widget.widgetType}{widget.locked ? " · locked" : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>{selected && selectedWidgetIds.length === 1 && !widget.locked && !previewActive && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
   };
 
   const shortcutFor = (id: string): string | undefined => {
@@ -1768,7 +1812,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" aria-orientation="vertical" aria-valuenow={leftWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 10))}>+</button></div></div>
-            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel} onContextMenu={(event) => {
+            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!isCanvasClickSuppressed()) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCaptureLost} onContextMenu={(event) => {
       event.preventDefault();
       event.stopPropagation();
       const point = toCanvasPoint(event);
