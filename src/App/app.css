@@ -331,6 +331,11 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .console-level.event { color: #9f9bd4; }
 .console-info { color: #a8cdd0; }
 .console-muted { color: var(--text-on-dark-muted); }
+.validation-issue { align-items: flex-start; }
+.validation-issue .console-info { display: flex; flex-wrap: wrap; gap: 6px; line-height: 1.5; }
+.validation-code { color: #e3f1f1; font-weight: 700; }
+.validation-path { color: #86b6ba; font-size: var(--micro-label); }
+.validation-remediation { color: #b8cccd; font-style: normal; }
 .validation-dot.ok { background: #45b77b; }
 .validation-dot.error { background: #d66b6b; }
 
