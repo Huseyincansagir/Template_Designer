@@ -130,6 +130,37 @@ describe("Duplicate integrity (INT-56 remediation)", () => {
   });
 });
 
+describe("Clipboard paste (clipboard capability remediation)", () => {
+  it("inserts fresh copies with re-parented bindings at the top of the target z-order", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const template = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0];
+    expect(template).toBeDefined();
+    const result = editor.insertWidgetCopies(sceneId, [template!]);
+    expect(result.changed).toBe(true);
+    expect(result.createdIds).toHaveLength(1);
+    const widgets = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets ?? [];
+    expect(widgets).toHaveLength(2);
+    const copy = widgets[1];
+    expect(copy.id).toBe(result.createdIds?.[0]);
+    expect(copy.bindings[0]?.widgetId).toBe(copy.id);
+    expect(copy.zIndex).toBe(6); // above the existing max (5)
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets).toHaveLength(1);
+  });
+
+  it("rejects paste into missing scenes and malformed templates without history", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const template = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0]!;
+    expect(editor.insertWidgetCopies("missing-scene", [template]).changed).toBe(false);
+    expect(editor.insertWidgetCopies(sceneId, []).changed).toBe(false);
+    expect(editor.insertWidgetCopies(sceneId, [{ ...template, geometry: { x: 0, y: 0, width: -1, height: 10 } }]).changed).toBe(false);
+    expect(store.getSnapshot().history.undoCount).toBe(0);
+    expect(store.getCurrent()).toEqual(project);
+  });
+});
+
 describe("Foundation profile runtime registries (M-10/INT-61 remediation)", () => {
   it("ships profile-defined runtime states and settings", () => {
     expect(foundationDeviceProfile.runtimeStates.length).toBeGreaterThan(0);

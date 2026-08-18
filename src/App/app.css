@@ -360,3 +360,29 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .editor-context-menu button:disabled { color: var(--text-muted); cursor: not-allowed; }
 .editor-context-menu kbd { color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; }
 .context-menu-empty { padding: 8px 9px; color: var(--text-muted); font-size: 10px; }
+
+/* Phase 4 functional surfaces */
+.geometry-field { display: grid; gap: 3px; min-width: 0; color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.geometry-field-label { display: flex; justify-content: space-between; gap: 4px; }
+.geometry-field-label small { text-transform: none; font-size: 8px; letter-spacing: 0; }
+.geometry-field input { min-width: 0; width: 100%; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 5px 6px; font: inherit; font-size: 10px; }
+.geometry-field input:focus { border-color: var(--accent); outline: 2px solid rgba(25, 137, 143, .14); }
+.geometry-field input:disabled { background: #edf2f3; color: var(--text-muted); cursor: not-allowed; }
+.geometry-field input::placeholder { color: var(--text-muted); }
+.geometry-feedback { grid-column: 1 / -1; color: var(--warning); font-size: 9px; text-transform: none; }
+.geometry-field.has-feedback input { border-color: #d5ad63; }
+.status-led.is-error { background: var(--error); }
+.context-runtime-note { margin-left: 8px; color: var(--warning); font-weight: 700; }
+.sim-status { margin-left: auto; color: var(--text-secondary); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.sim-input-row select { min-width: 110px; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 4px 6px; font: inherit; font-size: 10px; }
+.sim-input-row input[type="number"], .sim-input-row input[type="text"] { min-width: 90px; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 4px 6px; font: inherit; font-size: 10px; }
+.settings-unit { margin-left: 6px; color: var(--text-muted); font-size: 9px; }
+.mode-chip.is-dirty { color: var(--warning); }
+.mode-chip.is-clean { color: var(--text-secondary); }
+.console-body { align-items: stretch; overflow: auto; padding: 6px 13px; }
+.confirm-dialog { display: grid; grid-template-rows: 66px minmax(90px, 1fr) 61px; width: min(440px, calc(100vw - 80px)); border: 1px solid #aebfc3; background: var(--surface); box-shadow: 0 20px 52px rgba(13, 29, 36, .3); }
+.confirm-body { display: flex; align-items: center; padding: 18px 22px; color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.confirm-body p { margin: 0; }
+body.relaxed-density .tree-row { min-height: 37px; }
+body.relaxed-density .property-row { min-height: 33px; }
+body.relaxed-density .sim-row { min-height: 33px; }

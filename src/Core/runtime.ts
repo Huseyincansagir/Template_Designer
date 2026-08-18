@@ -6,6 +6,7 @@ import type {
   PrimitiveValue,
   RuntimeContext,
   RuntimeEvaluation,
+  RuntimeValueType,
   Scene,
   Widget,
 } from "../Domain/models";
@@ -24,6 +25,22 @@ function valuesEqual(left: PrimitiveValue | null | undefined, right: PrimitiveVa
   return left === right;
 }
 
+/**
+ * Evaluator-boundary coercion: runtime values may arrive as strings from
+ * input surfaces, so integer/number values are normalized to numbers before
+ * comparison against their DeviceProfile definition type. Invalid values
+ * stay as-is and simply never match (they surface in validation instead).
+ */
+export function coerceToDefinitionType(value: PrimitiveValue | null | undefined, type: RuntimeValueType): PrimitiveValue | null | undefined {
+  if (value === null || value === undefined) return value;
+  if (type === "integer" && typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number.parseInt(value, 10);
+  if (type === "number" && typeof value === "string") {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  }
+  return value;
+}
+
 export function conditionMatches(
   condition: Condition,
   context: RuntimeContext,
@@ -33,8 +50,9 @@ export function conditionMatches(
   if (!definition) return false;
 
   const source = condition.source ?? "state";
-  const value = (source === "setting" ? context.settings : context.values)?.[condition.stateId];
-  if (value === undefined || value === null) return false;
+  const rawValue = (source === "setting" ? context.settings : context.values)?.[condition.stateId];
+  if (rawValue === undefined || rawValue === null) return false;
+  const value = coerceToDefinitionType(rawValue, definition.type);
   let matched = false;
 
   switch (condition.operator) {

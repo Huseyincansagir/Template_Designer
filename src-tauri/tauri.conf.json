@@ -5,7 +5,7 @@
   "identifier": "com.huseyincansagir.template-designer",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -15,16 +15,18 @@
         "title": "Template Designer",
         "width": 1440,
         "height": 900,
-        "minWidth": 1000,
+        "minWidth": 1080,
         "minHeight": 650,
         "resizable": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:1420"
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "icon": []
   }
 }

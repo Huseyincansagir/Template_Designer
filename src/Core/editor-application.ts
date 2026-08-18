@@ -346,8 +346,30 @@ export class EditorApplication {
     return result.changed ? { changed: true, createdIds } : result;
   }
 
-  duplicateSelection(ids: readonly string[]): MutationResult {
-    if (!ids.length) return { changed: false };
+  /**
+   * Clipboard paste: inserts fresh copies of the given widget templates into
+   * a Scene (potentially a different Scene than the source). Bindings are
+   * re-parented to the copies; z-order continues at the top of the target
+   * Scene's stack.
+   */
+  insertWidgetCopies(sceneId: string, templates: readonly Widget[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !findUniqueScene(current, sceneId) || templates.length === 0) return { changed: false };
+    if (!templates.every((template) => isValidGeometry(template.geometry))) return { changed: false };
+    const copyIds = templates.map(() => newId("widget"));
+    const result = this.execute("Paste Widgets", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+      if (scene.id !== sceneId) return scene;
+      const baseZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
+      const copies = templates.map((template, index) => ({
+        ...duplicateWidget(template, copyIds[index]),
+        zIndex: baseZ + 1 + index,
+      }));
+      return { ...scene, widgets: [...scene.widgets, ...copies] };
+    })))));
+    return result.changed ? { changed: true, createdIds: copyIds } : result;
+  }
+
+  duplicateSelection(ids: readonly string[]): MutationResult {    if (!ids.length) return { changed: false };
     const current = this.documents.getCurrent();
     const selected = new Set(ids);
     if (!current) return { changed: false };
