@@ -470,7 +470,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 
 /* Canvas interaction (§§4.x) */
 .canvas-widget-layer { position: absolute; display: grid; place-items: center; }
-.canvas-widget { position: absolute; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 2px; overflow: hidden; min-width: 20px; min-height: 16px; border: 1px solid rgba(38, 166, 170, .8); border-radius: var(--radius-sm); background: rgba(25, 137, 143, .18); color: #d7fbfb; padding: 3px; text-align: center; cursor: move; user-select: none; }
+.canvas-widget { position: absolute; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 2px; overflow: hidden; border: 1px solid rgba(38, 166, 170, .8); border-radius: var(--radius-sm); background: rgba(25, 137, 143, .18); color: #d7fbfb; padding: 3px; text-align: center; cursor: move; user-select: none; }
 .canvas-widget:hover, .canvas-widget.is-selected { overflow: visible; border: 2px solid var(--accent-on-dark); background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
 .canvas-widget.is-locked { border-style: dashed; cursor: not-allowed; }
 .canvas-widget span { overflow: hidden; max-width: 100%; font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }

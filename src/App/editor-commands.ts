@@ -2,7 +2,6 @@ import type { SelectionKind } from "./editor-types";
 
 export type EditorCommandId =
   | "project.add-theme-project"
-  | "theme.add-rotation"
   | "rotation.add-scene"
   | `scene.add-widget:${string}`
   | "widget.bring-forward"
@@ -40,7 +39,6 @@ export type EditorCommandOptions = {
  */
 export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "project.add-theme-project", kind: "mutation", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
-  { id: "theme.add-rotation", kind: "mutation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
   { id: "rotation.add-scene", kind: "mutation", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
   { id: "widget.bring-forward", kind: "mutation", label: "Bring Forward", supportedSelectionKinds: ["widget"] },
   { id: "widget.send-backward", kind: "mutation", label: "Send Backward", supportedSelectionKinds: ["widget"] },

@@ -154,7 +154,13 @@ function collectTreeNodeIds(project: Project): string[] {
     ids.push(group.id);
     for (const theme of group.themeProjects) {
       ids.push(theme.id);
-      for (const rotation of theme.rotations) ids.push(rotation.id);
+      for (const rotation of theme.rotations) {
+        ids.push(rotation.id);
+        for (const scene of rotation.scenes) {
+          ids.push(scene.id);
+          for (const widget of scene.widgets) ids.push(widget.id);
+        }
+      }
     }
   }
   return ids;
@@ -439,7 +445,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [pan, setPan] = useState<CanvasPoint>({ x: 0, y: 0 });
   const [consoleTab, setConsoleTab] = useState<"console" | "validation">("console");
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([
-    { level: "INFO", message: "Foundation shell initialized", time: "" },
+    { level: "INFO", message: "Foundation shell initialized", time: new Date().toLocaleTimeString([], { hour12: false }) },
   ]);
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({});
   const [assetCategory, setAssetCategory] = useState<AssetCategory>("depot");
@@ -926,7 +932,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const executeEditorDescriptor = (commandId: EditorCommandId) => {
     let changed = false;
     if (commandId === "project.add-theme-project") changed = addThemeProject();
-    else if (commandId === "theme.add-rotation") changed = addRotation();
     else if (commandId === "rotation.add-scene") changed = addScene();
     else if (commandId.startsWith("scene.add-widget:")) changed = addWidget(commandId.slice("scene.add-widget:".length));
     else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
@@ -1235,8 +1240,24 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setSnapGuides([]);
   };
 
+  const clampGeometryToScene = (geometry: Geometry): Geometry => {
+    if (!activeRotation) return geometry;
+    const width = Math.min(geometry.width, activeRotation.width);
+    const height = Math.min(geometry.height, activeRotation.height);
+    return {
+      ...geometry,
+      width,
+      height,
+      x: Math.min(Math.max(0, geometry.x), Math.max(0, activeRotation.width - width)),
+      y: Math.min(Math.max(0, geometry.y), Math.max(0, activeRotation.height - height)),
+    };
+  };
+
   const commitGeometryCommand = (sceneId: string | undefined, updates: Readonly<Record<string, Geometry>>, label: string) => {
-    const result = sceneId ? editorApplication.setWidgetGeometriesInScene(sceneId, updates, label) : { changed: false };
+    // Scene-bounds clamp (S1-04): a committed geometry can never strand a
+    // widget outside the active Rotation's logical space.
+    const clamped = Object.fromEntries(Object.entries(updates).map(([id, geometry]) => [id, clampGeometryToScene(geometry)]));
+    const result = sceneId ? editorApplication.setWidgetGeometriesInScene(sceneId, clamped, label) : { changed: false };
     if (result.changed) logAction(`${label} committed`, "EVENT");
     clearGeometryPreview();
   };
@@ -1263,7 +1284,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       updateCanvasPointer({ mode: "panning", pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, initialPan: pan });
       return;
     }
-    if ((event.target as HTMLElement).closest(".canvas-widget, .resize-handle")) return;
+    // Interactive elements inside the device surface (widgets, handles and
+    // the empty-state Add Widget button) must receive their own pointer
+    // events; marquee only starts on truly empty canvas (S2-01).
+    if ((event.target as HTMLElement).closest(".canvas-widget, .resize-handle, .canvas-empty-state, button")) return;
     event.preventDefault();
     captureCanvasPointer(event.pointerId);
     const start = toCanvasPoint(event);
@@ -1289,7 +1313,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return;
     }
     if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.visible ? "Visible" : "Hidden" });
-    captureCanvasPointer(event.pointerId);
+    // NOTE: pointer capture is acquired LAZILY when the drag threshold is
+    // crossed (S1-01): capturing on pointerdown retargets the terminating
+    // click to the device screen, which cleared the selection on every
+    // plain widget click.
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, previewGeometry(candidate)]));
     updateCanvasPointer({ mode: "drag", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined });
   };
@@ -1306,7 +1333,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return;
     }
     if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Selected" });
-    captureCanvasPointer(event.pointerId);
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, previewGeometry(candidate)]));
     updateCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
   };
@@ -1317,7 +1343,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     event.stopPropagation();
     const editable = selectedEditableWidgets;
     if (!editable.length) return;
-    captureCanvasPointer(event.pointerId);
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, previewGeometry(candidate)]));
     updateCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
   };
@@ -1347,6 +1372,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const delta = { x: current.x - pointer.start.x, y: current.y - pointer.start.y };
     if (!exceedsPointerDragThreshold(screenDistance)) return;
+    // Lazy capture (S1-01): only a real drag/resize takes pointer capture,
+    // so the click of a plain tap lands on the widget, not the device screen.
+    if (!canvasScreenRef.current?.hasPointerCapture(pointer.pointerId)) captureCanvasPointer(pointer.pointerId);
     const initialBounds = pointer.initialBounds ?? getBounds(Object.values(pointer.initial));
     if (!initialBounds) return;
     const snapConfiguration = { enabled: snapEnabled, gridSize: snapGridSize, threshold: DEFAULT_SNAP_THRESHOLD };
@@ -1411,7 +1439,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           const next = transformGeometryWithinBounds(pointer.initial[widgetId], initialBounds, snapped.geometry);
           return [widgetId, { ...next, width: Math.max(10, next.width), height: Math.max(10, next.height) }];
         }));
-      if (Object.keys(finalGeometry).length) commitGeometryCommand(activeScene?.id, finalGeometry, pointer.mode === "drag" ? "Move widget" : "Resize widget");
+      if (Object.keys(finalGeometry).length) {
+        // A committed gesture suppresses its terminating click even when an
+        // out-of-viewport pointermove was lost (S1-04).
+        suppressCanvasClick();
+        commitGeometryCommand(activeScene?.id, finalGeometry, pointer.mode === "drag" ? "Move widget" : "Resize widget");
+      }
     } else {
       clearGeometryPreview();
     }
@@ -1739,7 +1772,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     ],
     Theme: [
       { label: "Add Theme Project", onClick: addThemeProject },
-      { label: "Add Rotation", disabled: !resolvedSelection?.theme, onClick: addRotation },
     ],
     Scene: [
       { label: "Add Scene", disabled: !resolvedSelection?.rotation, onClick: addScene },
@@ -1825,7 +1857,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     selectedIds.forEach((id) => {
       const widget = resolveCanonicalNode(project, id)?.widget;
       if (!widget || widget.locked) return;
-      updates[id] = { ...canonicalGeometry(widget), [field]: value };
+      updates[id] = clampGeometryToScene({ ...canonicalGeometry(widget), [field]: value });
     });
     if (!Object.keys(updates).length) {
       logAction("Geometry edit blocked: selection is locked or not a Widget", "WARN");
@@ -1960,7 +1992,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         setContextMenu(null);
       }
     }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={() => addWidget(activeProfile.supportedWidgetTypes[0])}>Add Widget</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
-            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && !resolvedSelection?.scene && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
+            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
           {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}
