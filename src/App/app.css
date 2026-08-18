@@ -115,6 +115,7 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .canvas-stage { position: relative; display: grid; place-items: center; min-height: 0; overflow: auto; background-color: var(--canvas-bg); }
 .canvas-stage.show-grid { background-image: linear-gradient(rgba(116, 142, 148, .12) 1px, transparent 1px), linear-gradient(90deg, rgba(116, 142, 148, .12) 1px, transparent 1px); background-size: 18px 18px; }
 .canvas-stage.pan-mode { cursor: grab; }
+.canvas-stage.pan-mode:active { cursor: grabbing; }
 .canvas-rail-label { position: absolute; top: 13px; left: 15px; color: #71868c; font-size: 9px; font-weight: 800; letter-spacing: .15em; }
 .device-canvas-wrap { display: grid; place-items: center; transform-origin: center center; transition: transform .12s ease; }
 .device-frame { display: grid; grid-template-rows: 24px minmax(0, 1fr) 22px; width: clamp(180px, 25vh, 280px); aspect-ratio: 9 / 16; padding: 7px; border: 1px solid #314950; background: var(--dark); box-shadow: 0 16px 30px rgba(28, 50, 57, .23); }
@@ -337,6 +338,14 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
 .handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
 .selection-marquee { position: absolute; z-index: 8; border: 1px dashed #19898f; background: rgba(25, 137, 143, .14); pointer-events: none; }
+.selection-bounds { position: absolute; z-index: 1; border: 1px dashed rgba(98, 223, 224, .8); pointer-events: none; }
+.selection-bounds .resize-handle { pointer-events: auto; }
+.snap-guide { position: absolute; z-index: 9; pointer-events: none; opacity: .85; }
+.snap-guide-x { top: 0; bottom: 0; width: 1px; background: #f0c36a; }
+.snap-guide-y { left: 0; right: 0; height: 1px; background: #f0c36a; }
+.snap-guide-grid { background: rgba(98, 223, 224, .78); }
+.snap-guide-center { background: #df8ad6; }
+.snap-guide-edge { background: #f0c36a; }
 .geometry-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
 .geometry-editor label { display: grid; gap: 3px; color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
 .geometry-editor input { min-width: 0; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 5px 6px; font: inherit; font-size: 10px; }
