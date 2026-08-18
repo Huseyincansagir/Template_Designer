@@ -2,8 +2,18 @@ export type Id = string;
 
 export type RotationAngle = 0 | 90 | 180 | 270;
 export type RuntimeValueType = "boolean" | "integer" | "number" | "string" | "enum";
-export type WidgetType = "background" | "text" | "image" | "video" | "direction" | "floor" | "media-slide";
-export type MediaType = "image" | "video" | "audio" | "font";
+
+// Semantic widget types are intentionally distinct from media types.
+// DeviceProfile may expose additional semantic widget types in future profiles.
+export type WidgetType =
+  | "media"
+  | "digit"
+  | "direction"
+  | "warning"
+  | "text"
+  | (string & {});
+
+export type MediaType = "image" | "video" | "audio";
 
 export interface Geometry {
   x: number;
@@ -40,21 +50,36 @@ export interface DeviceProfile {
   };
   supportedWidgetTypes: readonly WidgetType[];
   supportedMediaTypes: readonly MediaType[];
+  supportedFormats?: readonly string[];
   runtimeStates: readonly RuntimeStateDefinition[];
   runtimeSettings: readonly RuntimeSettingDefinition[];
+  languages?: readonly string[];
+  digitStyles?: readonly string[];
+  directionStyles?: readonly string[];
+  audioCapabilities?: Readonly<Record<string, unknown>>;
+  videoCapabilities?: Readonly<Record<string, unknown>>;
 }
 
 export interface Condition {
   stateId: Id;
   operator: "equals" | "not-equals" | "greater-than" | "less-than" | "contains";
   value: string | number | boolean;
-  priority: number;
 }
 
 export interface Binding {
   id: Id;
   widgetId: Id;
   condition: Condition;
+  action:
+    | "show"
+    | "hide"
+    | "play"
+    | "pause"
+    | "stop"
+    | "restart"
+    | "continue"
+    | "select-content"
+    | "select-style";
   contentId?: Id;
 }
 
@@ -63,10 +88,13 @@ export interface Widget {
   name: string;
   widgetType: WidgetType;
   enabled: boolean;
+  visible: boolean;
+  locked: boolean;
   geometry: Geometry;
   zIndex: number;
   bindings: readonly Binding[];
-  content?: Record<string, unknown>;
+  content?: Readonly<Record<string, unknown>>;
+  style?: Readonly<Record<string, unknown>>;
 }
 
 export interface Scene {
@@ -74,6 +102,7 @@ export interface Scene {
   name: string;
   widgets: readonly Widget[];
   priority: number;
+  activationConditions: readonly Condition[];
 }
 
 export interface Rotation {
@@ -82,6 +111,20 @@ export interface Rotation {
   width: number;
   height: number;
   scenes: readonly Scene[];
+}
+
+export interface ThemeProject {
+  id: Id;
+  name: string;
+  rotations: readonly Rotation[];
+  resources: readonly Id[];
+  themeDefaults?: Readonly<Record<string, unknown>>;
+}
+
+export interface ThemeProjectGroup {
+  id: Id;
+  name: string;
+  themeProjects: readonly ThemeProject[];
 }
 
 export interface Asset {
@@ -95,6 +138,7 @@ export interface Asset {
 export interface FloorMappingEntry {
   firmwareValue: string | number;
   displayValue: string;
+  digitStyleId?: Id;
 }
 
 export interface FloorMapping {
@@ -102,20 +146,14 @@ export interface FloorMapping {
   entries: readonly FloorMappingEntry[];
 }
 
-export interface Theme {
-  id: Id;
-  name: string;
-  rotations: readonly Rotation[];
-  floorMapping?: FloorMapping;
-}
-
 export interface Project {
   id: Id;
   schemaVersion: number;
   name: string;
   deviceProfileId: Id;
-  themes: readonly Theme[];
+  themeProjectGroups: readonly ThemeProjectGroup[];
   assets: readonly Asset[];
+  projectSettings?: Readonly<Record<string, unknown>>;
   metadata: Readonly<Record<string, string>>;
 }
 
@@ -130,7 +168,8 @@ export interface DeploymentPackage {
   };
 }
 
-export type DeploymentTargetKind = "sd-card" | "wifi";
+// V1 has SD Card as the deployment target. Additional transports remain future infrastructure.
+export type DeploymentTargetKind = "sd-card";
 
 export interface DeploymentTarget {
   id: Id;
