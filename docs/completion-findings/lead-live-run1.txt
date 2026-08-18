@@ -1,0 +1,42 @@
+
+== A. Navigator (theme / rotation / scene switchers) ==
+PASS A1 navigator rendered
+PASS A2 theme select present
+PASS A3 exactly four rotation buttons :: R0,R90,R180,R270
+PASS A4 R0 dimensions shown :: got 720 × 1280
+PASS A5 active rotation marked with aria-pressed
+PASS A6 empty rotation explains itself
+PASS A7 Add Scene reachable from the switcher
+PASS A8 first scene created from the switcher :: New Scene
+0 · live
+PASS A9 three scene tabs with unique names :: New Scene|New Scene 2|New Scene 3
+PASS A10 exactly one active scene tab
+PASS A11 one-click scene switch :: New Scene 3 -> New Scene 2
+PASS A12 R90 swaps dimensions :: got 1280 × 720
+PASS A13 device frame header follows rotation :: DISPLAY
+R90 · 1280 × 720
+PASS A14 R90 has its own (empty) scene list
+PASS A15 returning to R0 restores its scenes
+PASS A16 Alt+Right steps to the next scene :: got New Scene 2
+PASS A17 Alt+Down steps rotation
+PASS A18 Alt+Up steps rotation back
+
+== B. Second Theme Project shows its OWN canvas ==
+PASS B1 two themes offered in the switcher :: New Theme Project|New Theme Project 2
+PASS B2 the new theme became active :: got New Theme Project 2
+PASS B3 new theme has NO scenes (not theme 1 scenes) :: this is the L-11 regression
+PASS B4 switching theme restores that theme scenes
+
+== C. Asset lifecycle ==
+PASS C1 asset browser has an Import control
+PASS C2 empty state tells the user what to do :: ▱ / No assets in this project yet
+PASS C3 Import opens a real file chooser :: {"mode":"selectMultiple"}
+PASS C4 supported files imported, unsupported ignored :: 2 row(s): lobby|chime
+PASS C5 Depot count is real (no hardcoded 0) :: ▱ Asset Depot 2 || ▤ Project Resources 0 || ◈ Scene Content 0 || ⊘ Unsupported Files 0
+PASS C6 both assets report as unused
+PASS C7 import created undo history
+PASS C8 Explorer has a real Assets subtree :: ▾ ▱ Assets 2 assets · 0 theme resources
+PASS C9 individual assets appear as tree nodes
+PASS C10 selecting an asset resolves in the inspector :: ◇ / lobbyimage · unused
+PASS C11 asset inspector offers a real Asset section :: IDENTITY|CANONICAL CONTEXT|ASSET
+PASS C12 asset media type and source path are editable

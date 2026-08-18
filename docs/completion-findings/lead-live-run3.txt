@@ -1,0 +1,42 @@
+
+== M. Empty states offer the action that unblocks them ==
+PASS M1 empty rotation canvas offers Add Scene :: ◇ / Select a Scene or Widget
+PASS M2 the CTA created a scene
+PASS M3 empty scene canvas offers Add Widget
+
+== N. Per-node context menus ==
+PASS N1 project context menu offers rename/group/theme/asset :: Rename… | Add Theme Project Group | Add Theme Project | Import Asset…
+PASS N2 theme-group menu can add a theme and rename :: Rename… | Add Theme Project | Import Asset… | Delete Selection
+PASS N3 theme menu offers duplicate and delete :: Rename… | Duplicate Theme Project | Delete Theme Project | Import Asset…
+PASS N4 rotation menu can add a scene :: Add Scene
+PASS N5 rotation menu offers NO delete or duplicate (canonical four) :: Add Scene
+PASS N6 scene menu offers duplicate, reorder, widgets and delete :: Add Media Widget | Add Digit Widget | Add Direction Widget | Add Warning Widget | Add Text Widget | Rename… | Add Scene | Duplicate Scene | Move Scene Earlier | Move Scene Later | Hide All Widgets | Show All Widgets | Delete Scene
+PASS N7 Duplicate Scene from the context menu works :: New Scene|New Scene Copy
+PASS N8 duplicate is undoable
+
+== O. Keyboard: rename and zoom reset ==
+PASS O1 F2 focuses the canonical Name field :: focus aria-label="Display name"
+PASS O2 rename committed through the canonical command :: New Scene|Fire Alarm
+PASS O3 Ctrl+0 resets zoom :: 120% -> 100%
+
+== P. Simulator explains the runtime instead of implying one ==
+PASS P1 no controls imply a stepping runtime that does not exist :: Evaluate|Reset
+PASS P2 the simulator states its own boundary :: V1 evaluates rules; timed media playback is device-runtime behaviour and is not simulated.
+PASS P3 every Scene candidate explains WHY :: New Scene / priority 0 · order 0 · always eligible / MATCH || Fire Alarm / priority 0 · order 1 · always eligible / ACTIVE
+PASS P4 the active Scene row is marked :: 1 active row(s)
+PASS P5 Evaluate writes a real runtime trace :: [Runtime] Fire Alarm active · priority 0
+
+== Q. The designer context survives a reload ==
+PASS Q1 active Rotation / Form restored :: 720 × 1280 -> 720 × 1280
+PASS Q2 zoom restored :: 110% -> 110%
+PASS Q3 active panel tab restored :: Assets -> Assets
+PASS Q4 restore is a real, switchable setting
+PASS Q5 the Editor settings page has a real, wired option :: Restore the last Theme / Rotation / Scene, zoom and panels on reload
+PASS Q6 disabling the setting clears the stored session
+
+== R. Revert to Saved is a real command ==
+PASS R1 an unsaved scene was added to the restored rotation :: 1 tab(s) in the session-restored Rotation / Form
+PASS R2 document is dirty
+PASS R3 revert asks before discarding :: Reload the last saved project from local storage? Every change since the last Save is discarded.
+PASS R4 revert restored the saved scene set :: 2 tab(s)
+PASS R5 the reverted document is clean

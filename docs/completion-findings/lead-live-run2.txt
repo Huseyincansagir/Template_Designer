@@ -1,0 +1,87 @@
+
+== D. Designer setup: scene + widgets + assets ==
+PASS D1 scene created
+PASS D2 text widget added
+PASS D3 imported assets available
+PASS D4 depot holds both assets :: lobby|chime
+
+== E. Widget configuration after creation ==
+PASS E1 text widget gets its own inspector section :: IDENTITY|CANONICAL CONTEXT|WIDGET|GEOMETRY / LAYER|PRESENTATION|TEXT|MEDIA / ASSETS
+PASS E2 widget type is editable
+PASS E3 every profile widget type offered :: media,digit,direction,warning,text
+PASS E4 text content field present
+PASS E5 canvas renders the authored text :: got "LOBBY 1"
+PASS E6 per-language text fields follow the DeviceProfile :: 2 language field(s)
+PASS E7 changing type warns before discarding configuration
+PASS E8 digit inspector replaces the text section :: IDENTITY|CANONICAL CONTEXT|WIDGET|GEOMETRY / LAYER|PRESENTATION|DIGIT|MEDIA / ASSETS
+PASS E9 digit style choices come from the profile
+PASS E10 digit value source offers runtime states
+  setSelect digit style: ok:digit-default
+  setSelect value source: ok:floor
+PASS E11 digit widget renders its bound source in design mode :: got "[floor]"
+PASS E12 media widget gets Media / Assets section :: IDENTITY|CANONICAL CONTEXT|WIDGET|GEOMETRY / LAYER|PRESENTATION|MEDIA / ASSETS
+  visual type: ok:image
+  slide asset: ok:asset-dd7311b5-8026-4b3f-9b5e-fa35ae5a584c
+PASS E13 media slide duration editable
+PASS E14 slide audio restricted to audio assets
+  slide audio: ok:asset-51dfa30d-7794-4295-83b0-6016f1c06ac1
+PASS E15 media widget renders its asset name :: "▧\nlobby\nimage · 5s"
+PASS E16 asset reference list editable
+  add reference: ok:asset-dd7311b5-8026-4b3f-9b5e-fa35ae5a584c
+PASS E17 asset reference appears with a remove control
+PASS E18 Scene Content category reflects real references :: ▱ Asset Depot 2 || ▤ Project Resources 0 || ◈ Scene Content 2 || ⊘ Unsupported Files 0
+PASS E19 asset usage badge shows the reference count :: ×2,×1
+
+== F. Scene activation rule ==
+PASS F1 scene inspector offers Scene Activation :: IDENTITY|CANONICAL CONTEXT|SCENE RUNTIME|SCENE ACTIVATION
+PASS F2 activation mode selectable
+  ref: ok:fire
+  op: ok:equals
+PASS F3 activation condition added :: Fire equals true
+×
+PASS F4 the always-eligible note is replaced by the real rule
+  simulator active-scene card: null
+  setting ref: ok:language
+  setting value: ok:tr
+PASS F5 a runtime SETTING condition is labelled as a setting :: Fire equals true × || Language equals tr · setting ×
+PASS F6 no UNKNOWN_RUNTIME_REFERENCE from the setting condition :: setting source recorded correctly
+
+== G. Theme resources drive the export scope ==
+PASS G1 theme inspector offers Theme Resources :: IDENTITY|CANONICAL CONTEXT|THEME RESOURCES
+PASS G2 every project asset is offered as a resource :: 2 checkbox(es)
+PASS G3 Project Resources category now non-empty :: ▱ Asset Depot 2 || ▤ Project Resources 1 || ◈ Scene Content 2 || ⊘ Unsupported Files 0
+
+== H. Build and validation honesty ==
+PASS H1 build reports a verified checksum :: No blocking foundation issues
+Foundation Device Profile · 2 profiles registered · Selection: New Theme Project · Zoom 100% · Snap on · Grid on
+Built · checksum verified · Document: dirty · Browser core · Tauri shell reserved
+PASS H2 validation surfaces the new warning codes :: WARNING / ROTATION_WITHOUT_SCENE / WARNING / ROTATION_WITHOUT_SCENE
+PASS H3 warnings do not block the build
+
+== I. Device profile switch re-dimensions the template ==
+PASS I1 profile switch explains its consequences :: Every Rotation / Form is re-dimensioned to 480 × 800 (R90/R270 swapped) and widgets are clamped back inside the display. This is undoable.
+PASS I2 rotation dimensions follow the new display :: 720 × 1280 -> 480 × 800
+PASS I3 the canvas frame reports the new geometry :: DISPLAY R0 · 480 × 800
+PASS I4 profile switch is undoable
+
+== J. Preview is an inspection surface ==
+  preview note: No Scene activates with the current runtime inputs / 1 Scene(s) were evaluated and none matched. Set the runtime states in the Simulator, or relax a Scene Activation rule. / The canvas below still shows the Design Mode layout; it is not a runtime result.
+PASS J1 preview states whether a Scene activates :: 2 design tag(s) while no Scene activates
+PASS J2 preview refuses document mutation and explains why :: Delete is not available in Preview Mode - switch to Design Mode to edit
+PASS J3 design mode restored
+
+== K. Project file and persistence ==
+PASS K1 export reports the written file name :: Project exported to untitled-project.tdproj.json
+PASS K2 save clears the dirty state :: Design Mode
+Saved
+New Project
+Undo
+Redo
+⚙ Settings
+PASS K3 reload restores the saved project and says so :: 13 tree rows
+PASS K4 imported assets survived the reload :: lobby|chime
+
+== L. Corrupt-storage recovery is reported, not silent ==
+PASS L1 rejected storage is reported with a reason :: Stored project not loaded: the stored project is not valid JSON. A new blank project was created; the rejected data is preserved under 'template-desig
+PASS L2 the rejected payload is preserved
+PASS L3 the editor boots to a usable scaffold

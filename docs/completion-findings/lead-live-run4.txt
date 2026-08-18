@@ -1,0 +1,23 @@
+
+== S. Nothing selected still answers the basic questions ==
+PASS S1 the inspector shows Document properties :: DOCUMENT / Project Name / Device Profile / Foundation Device Profile · 720×1280 / Compact Display Profile · 480×800 / Display
+PASS S2 the project can be renamed without hunting the tree
+PASS S3 the device can be chosen without hunting the tree
+PASS S4 the panel states the next step ::  / Add a Scene to the active Rotation / Form to start placing widgets.
+
+== T. Validation issues are navigable ==
+PASS T0 geometry field reachable
+PASS T1 validation rows expose a navigable target :: 3 navigable issue(s)
+PASS T2 issue text carries code, target, message and remedy :: WARNING ROTATION_WITHOUT_SCENE R90 Rotation / Form R90 of 'New Theme Project' has no Scene and would render nothing in that orientation. → Add at least one Scene to this Rotation / Form.
+PASS T3 clicking a validation target selects it in the editor :: ◇ / R901280 × 720
+
+== U. An unregistered DeviceProfile is recoverable ==
+PASS U1 the canvas explains the missing profile :: ◇ / DeviceProfile unavailable / The saved DeviceProfile is not registered in this build. Choose a registered profile to continue.
+PASS U2 the canvas offers every registered profile as a fix :: Use Foundation Device Profile|Use Compact Display Profile
+PASS U3 the recovery action restores a working canvas :: 1280 × 720
+
+== V. Duplicated stable IDs are rejected, not half-loaded ==
+PASS V1 the duplicate-id document is refused with a reason :: Stored project not loaded: the stored project is structurally incomplete. A new blank project was created; the rejected data is preserved under 'template-design
+PASS V2 the payload is preserved for inspection
+PASS V3 the editor is usable after the refusal
+PASS V4 no duplicate-key render errors :: 0 key error(s)
