@@ -12,10 +12,10 @@ describe("UI Phase 2 foundations", () => {
     expect(registry.list()).toHaveLength(1);
   });
 
-  it("keeps panel layout state separate and activates sibling dock tabs", () => {
+  it("keeps panel layout state separate and docks panels without destroying siblings", () => {
     const next = activateDockedPanel(defaultPanelLayout, "assets");
     expect(next.assets).toBe("docked");
-    expect(next.explorer).toBe("collapsed");
+    expect(next.explorer).toBe("docked"); // real tab stack: the sibling stays docked
     expect(floatingPanels({ ...next, simulator: "floating" })).toEqual(["simulator"]);
   });
 
