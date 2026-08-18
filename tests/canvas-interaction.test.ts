@@ -7,16 +7,21 @@ import {
   calculateNudgeStep,
   calculateZOrderUpdates,
   canvasToScreen,
+  detectKeyboardPlatform,
   containsPoint,
   exceedsPointerDragThreshold,
+  getCanvasViewFrame,
   getBounds,
   hitTest,
   intersects,
+  isCanonicalModifier,
+  isCanvasKeyboardExcludedTarget,
   marqueeSelection,
   normalizeRect,
   orderSelectionIds,
   resizeGeometry,
   screenToCanvas,
+  snapGeometry,
   snapGeometryWithTargets,
   transformGeometryWithinBounds,
 } from "../src/App/canvas-interaction";
@@ -53,6 +58,24 @@ describe("Canvas interaction foundation", () => {
     expect(screenToCanvas(canvasToScreen(point, viewport, transform), viewport, transform)).toEqual(point);
   });
 
+  it("uses the same centered frame for horizontal and vertical letterboxing", () => {
+    const horizontal = getCanvasViewFrame({ left: 0, top: 0, width: 1000, height: 400 }, { zoom: 1, pan: { x: 0, y: 0 }, sceneWidth: 500, sceneHeight: 250 });
+    expect(horizontal).toEqual({ x: 100, y: 0, width: 800, height: 400, scale: 1.6 });
+    const vertical = getCanvasViewFrame({ left: 0, top: 0, width: 800, height: 1000 }, { zoom: 1, pan: { x: 0, y: 0 }, sceneWidth: 500, sceneHeight: 250 });
+    expect(vertical).toEqual({ x: 0, y: 300, width: 800, height: 400, scale: 1.6 });
+  });
+
+  it("round-trips scene points at zoom 2 and zoom 0.5 with fractional pan", () => {
+    const viewport = { left: 15, top: 25, width: 901, height: 733 };
+    const point = { x: 173.25, y: 492.75 };
+    for (const zoom of [2, 0.5]) {
+      const transform = { zoom, pan: { x: 12.5, y: -7.25 }, sceneWidth: 720, sceneHeight: 1280 };
+      const screen = canvasToScreen(point, viewport, transform);
+      expect(screenToCanvas(screen, viewport, transform).x).toBeCloseTo(point.x, 10);
+      expect(screenToCanvas(screen, viewport, transform).y).toBeCloseTo(point.y, 10);
+    }
+  });
+
   it("uses inclusive hit-test boundaries and topmost z-order", () => {
     const widgets = [
       widget("bottom", { x: 10, y: 10, width: 50, height: 50 }, { zIndex: 1 }),
@@ -84,12 +107,35 @@ describe("Canvas interaction foundation", () => {
     ];
     const marquee = normalizeRect({ x: 0, y: 0 }, { x: 20, y: 30 });
     expect(intersects(marquee, widgets[0].geometry)).toBe(true);
-    expect(marqueeSelection(widgets, marquee)).toEqual(["touching"]);
+    expect(marqueeSelection(widgets, marquee, { mode: "intersect" })).toEqual(["touching"]);
+  });
+
+  it("supports intersect/contains marquee modes, edge touch, additive selection, and rejects unknown modes", () => {
+    const widgets = [
+      widget("contained", { x: 10, y: 10, width: 20, height: 20 }),
+      widget("partial", { x: 25, y: 10, width: 20, height: 20 }),
+      widget("corner", { x: 30, y: 30, width: 10, height: 10 }),
+      widget("base", { x: 80, y: 80, width: 10, height: 10 }),
+    ];
+    const marquee = { x: 10, y: 10, width: 20, height: 20 };
+    expect(marqueeSelection(widgets, marquee)).toEqual(["contained", "partial", "corner"]);
+    expect(marqueeSelection(widgets, { x: 0, y: 0, width: 10, height: 10 }, { mode: "intersect" })).toEqual(["contained"]);
+    expect(marqueeSelection(widgets, marquee, { mode: "contains" })).toEqual(["contained"]);
+    expect(marqueeSelection(widgets, marquee, { mode: "contains", baseSelection: ["base"], additive: true })).toEqual(["contained", "base"]);
+    expect(() => marqueeSelection(widgets, marquee, { mode: "unsupported" as "intersect" })).toThrow(RangeError);
   });
 
   it("resizes from every direction without negative dimensions", () => {
     const initial = { x: 20, y: 30, width: 40, height: 50 };
+    expect(resizeGeometry(initial, "n", { x: 0, y: 10 })).toEqual({ x: 20, y: 40, width: 40, height: 40 });
+    expect(resizeGeometry(initial, "e", { x: 10, y: 0 })).toEqual({ x: 20, y: 30, width: 50, height: 50 });
+    expect(resizeGeometry(initial, "s", { x: 0, y: 10 })).toEqual({ x: 20, y: 30, width: 40, height: 60 });
+    expect(resizeGeometry(initial, "w", { x: 10, y: 0 })).toEqual({ x: 30, y: 30, width: 30, height: 50 });
     expect(resizeGeometry(initial, "se", { x: 10, y: 20 })).toEqual({ x: 20, y: 30, width: 50, height: 70 });
+    expect(resizeGeometry(initial, "nw", { x: 10, y: 10 })).toEqual({ x: 30, y: 40, width: 30, height: 40 });
+    expect(resizeGeometry(initial, "ne", { x: 10, y: 10 })).toEqual({ x: 20, y: 40, width: 50, height: 40 });
+    expect(resizeGeometry(initial, "sw", { x: 10, y: 10 })).toEqual({ x: 30, y: 30, width: 30, height: 60 });
+    expect(resizeGeometry(initial, "se", { x: 100, y: 100 })).toEqual({ x: 20, y: 30, width: 140, height: 150 });
     expect(resizeGeometry(initial, "nw", { x: 100, y: 100 })).toEqual({ x: 50, y: 70, width: 10, height: 10 });
   });
 
@@ -160,6 +206,26 @@ describe("Canvas canonical remediation regressions", () => {
     expect(calculateNudgeStep(10, { shift: false, modifier: true })).toBe(1);
     expect(calculateNudgeStep(10, { shift: true, modifier: true })).toBe(50);
     expect(calculateNudgeStep(10, { shift: true, modifier: false })).toBeNull();
+    expect(calculateNudgeStep(12, { shift: false, modifier: false })).toBe(12);
+    expect(calculateNudgeStep(12, { shift: false, modifier: true })).toBe(1.2);
+    expect(calculateNudgeStep(12, { shift: true, modifier: true })).toBe(60);
+    expect(calculateNudgeStep(12, { shift: false, modifier: true, alt: true })).toBeNull();
+    expect(snapGeometry({ x: 13, y: 25, width: 24, height: 26 }, true, 12)).toEqual({ x: 12, y: 24, width: 24, height: 24 });
+  });
+
+  it("normalizes platform Mod semantics without treating both modifiers as interchangeable", () => {
+    expect(detectKeyboardPlatform("MacIntel")).toBe("mac");
+    expect(detectKeyboardPlatform("Win32")).toBe("windows");
+    expect(detectKeyboardPlatform("Linux x86_64")).toBe("linux");
+    expect(isCanonicalModifier({ metaKey: true, ctrlKey: false }, "mac")).toBe(true);
+    expect(isCanonicalModifier({ metaKey: false, ctrlKey: true }, "mac")).toBe(false);
+    expect(isCanonicalModifier({ metaKey: false, ctrlKey: true }, "windows")).toBe(true);
+    expect(isCanonicalModifier({ metaKey: true, ctrlKey: false }, "linux")).toBe(false);
+    expect(isCanvasKeyboardExcludedTarget({ tagName: "input" })).toBe(true);
+    expect(isCanvasKeyboardExcludedTarget({ tagName: "TEXTAREA" })).toBe(true);
+    expect(isCanvasKeyboardExcludedTarget({ tagName: "select" })).toBe(true);
+    expect(isCanvasKeyboardExcludedTarget({ tagName: "div", isContentEditable: true })).toBe(true);
+    expect(isCanvasKeyboardExcludedTarget({ tagName: "div", isContentEditable: false })).toBe(false);
   });
 
   it("excludes invisible widgets from hit acquisition while retaining them in bounds-capable data", () => {
@@ -168,7 +234,7 @@ describe("Canvas canonical remediation regressions", () => {
       widget("invisible", { x: 0, y: 0, width: 40, height: 40 }, { visible: false, zIndex: 2 }),
     ];
     expect(hitTest({ x: 20, y: 20 }, widgets)).toBe("visible");
-    expect(marqueeSelection(widgets, { x: 0, y: 0, width: 40, height: 40 })).toEqual(["visible"]);
+    expect(marqueeSelection(widgets, { x: 0, y: 0, width: 40, height: 40 }, { mode: "intersect" })).toEqual(["visible"]);
     expect(getBounds(widgets.map((candidate) => candidate.geometry))).toEqual({ x: 0, y: 0, width: 40, height: 40 });
   });
 

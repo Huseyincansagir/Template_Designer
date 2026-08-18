@@ -24,6 +24,8 @@ export type CanvasViewTransform = {
   sceneHeight: number;
 };
 
+export type CanvasViewFrame = CanvasRect & { scale: number };
+
 export type SnapConfiguration = {
   enabled: boolean;
   gridSize: number;
@@ -77,8 +79,25 @@ export function exceedsPointerDragThreshold(distance: number): boolean {
   return Number.isFinite(distance) && distance > POINTER_DRAG_THRESHOLD;
 }
 
-export function calculateNudgeStep(gridSize: number, modifiers: { readonly shift: boolean; readonly modifier: boolean }): number | null {
-  if (!Number.isFinite(gridSize) || gridSize <= 0 || (modifiers.shift && !modifiers.modifier)) return null;
+export type KeyboardPlatform = "mac" | "windows" | "linux";
+
+export function detectKeyboardPlatform(platformHint?: string): KeyboardPlatform {
+  const value = platformHint ?? (typeof navigator === "undefined" ? "" : `${navigator.platform} ${navigator.userAgent}`);
+  if (/mac|iphone|ipad|ipod/i.test(value)) return "mac";
+  if (/win/i.test(value)) return "windows";
+  return "linux";
+}
+
+export function isCanonicalModifier(event: { readonly metaKey: boolean; readonly ctrlKey: boolean }, platform = detectKeyboardPlatform()): boolean {
+  return platform === "mac" ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}
+
+export function isCanvasKeyboardExcludedTarget(target: { readonly tagName?: string; readonly isContentEditable?: boolean }): boolean {
+  return Boolean(target.isContentEditable) || ["INPUT", "TEXTAREA", "SELECT"].includes((target.tagName ?? "").toUpperCase());
+}
+
+export function calculateNudgeStep(gridSize: number, modifiers: { readonly shift: boolean; readonly modifier: boolean; readonly alt?: boolean }): number | null {
+  if (!Number.isFinite(gridSize) || gridSize <= 0 || modifiers.alt || (modifiers.shift && !modifiers.modifier)) return null;
   if (modifiers.shift) return gridSize * 5;
   return modifiers.modifier ? gridSize / 10 : gridSize;
 }
@@ -101,7 +120,7 @@ function compareCandidates(left: { distance: number; guide: SnapGuide }, right: 
   return (left.guide.widgetId ?? "").localeCompare(right.guide.widgetId ?? "");
 }
 
-function sceneViewportRect(viewport: CanvasViewport, transform: CanvasViewTransform): CanvasRect & { scale: number } {
+export function getCanvasViewFrame(viewport: CanvasViewport, transform: CanvasViewTransform): CanvasViewFrame {
   const sceneWidth = safePositive(transform.sceneWidth);
   const sceneHeight = safePositive(transform.sceneHeight);
   const zoom = safePositive(transform.zoom);
@@ -119,7 +138,7 @@ function sceneViewportRect(viewport: CanvasViewport, transform: CanvasViewTransf
 
 /** Convert a CSS/screen point into Canvas coordinates while preserving scene aspect ratio. */
 export function screenToCanvas(point: CanvasPoint, viewport: CanvasViewport, transform: CanvasViewTransform): CanvasPoint {
-  const frame = sceneViewportRect(viewport, transform);
+  const frame = getCanvasViewFrame(viewport, transform);
   return {
     x: (point.x - frame.x) / frame.scale,
     y: (point.y - frame.y) / frame.scale,
@@ -128,7 +147,7 @@ export function screenToCanvas(point: CanvasPoint, viewport: CanvasViewport, tra
 
 /** Convert a Canvas point into CSS/screen coordinates using the same view transform. */
 export function canvasToScreen(point: CanvasPoint, viewport: CanvasViewport, transform: CanvasViewTransform): CanvasPoint {
-  const frame = sceneViewportRect(viewport, transform);
+  const frame = getCanvasViewFrame(viewport, transform);
   return {
     x: frame.x + point.x * frame.scale,
     y: frame.y + point.y * frame.scale,
@@ -238,9 +257,27 @@ export function orderSelectionIds(widgets: readonly Widget[], ids: readonly stri
   return [...ordered, ...ids.filter((id) => !known.has(id))];
 }
 
-export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect, baseSelection: readonly string[] = [], additive = false): string[] {
-  const hits = widgets.filter((widget) => widget.visible && widget.enabled && intersects(marquee, widget.geometry)).map((widget) => widget.id);
-  return orderSelectionIds(widgets, additive ? [...baseSelection, ...hits] : hits);
+export type MarqueeSelectionMode = "intersect" | "contains";
+
+export type MarqueeSelectionOptions = {
+  readonly baseSelection?: readonly string[];
+  readonly additive?: boolean;
+  readonly mode?: MarqueeSelectionMode;
+};
+
+function containsRect(outer: CanvasRect, inner: CanvasRect): boolean {
+  return inner.x >= outer.x
+    && inner.y >= outer.y
+    && inner.x + inner.width <= outer.x + outer.width
+    && inner.y + inner.height <= outer.y + outer.height;
+}
+
+export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect, options: MarqueeSelectionOptions = {}): string[] {
+  const mode = options.mode ?? "intersect";
+  if (mode !== "intersect" && mode !== "contains") throw new RangeError(`Unsupported marquee selection mode: ${String(mode)}`);
+  const predicate = mode === "intersect" ? (geometry: Geometry) => intersects(marquee, geometry) : (geometry: Geometry) => containsRect(marquee, geometry);
+  const hits = widgets.filter((widget) => widget.visible && widget.enabled && predicate(widget.geometry)).map((widget) => widget.id);
+  return orderSelectionIds(widgets, options.additive ? [...(options.baseSelection ?? []), ...hits] : hits);
 }
 
 /** Highest z-order wins; equal z-order uses later Scene document order, then stable ID. */

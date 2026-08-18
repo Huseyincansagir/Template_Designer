@@ -120,7 +120,7 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .device-canvas-wrap { display: grid; place-items: center; transform-origin: center center; transition: transform .12s ease; }
 .device-frame { display: grid; grid-template-rows: 24px minmax(0, 1fr) 22px; width: clamp(180px, 25vh, 280px); aspect-ratio: 9 / 16; padding: 7px; border: 1px solid #314950; background: var(--dark); box-shadow: 0 16px 30px rgba(28, 50, 57, .23); }
 .device-frame-header, .device-frame-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 5px; color: #9bb0b3; font-size: 7px; font-weight: 800; letter-spacing: .08em; }
-.device-screen { display: grid; place-items: center; min-height: 0; border: 1px solid #304950; background: var(--dark-3); }
+.device-screen { position: relative; display: grid; place-items: center; min-height: 0; overflow: hidden; border: 1px solid #304950; background: var(--dark-3); }
 .canvas-empty-state { display: grid; justify-items: center; gap: 8px; max-width: 155px; padding: 20px; color: #789296; text-align: center; }
 .canvas-empty-state strong { color: #bdd0d0; font-size: 11px; font-weight: 650; }
 .canvas-empty-state span:last-child { color: #668085; font-size: 9px; line-height: 1.45; }
@@ -289,9 +289,9 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 }
 
 /* QA correction surfaces: canonical widget canvas and binding editor */
-.canvas-widget-layer { position: relative; width: 100%; height: 100%; }
+.canvas-widget-layer { position: absolute; display: grid; place-items: center; }
 .canvas-widget { position: absolute; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 2px; overflow: hidden; min-width: 20px; min-height: 16px; border: 1px solid rgba(38, 166, 170, .8); background: rgba(25, 137, 143, .18); color: #d7fbfb; padding: 3px; text-align: center; }
-.canvas-widget:hover, .canvas-widget.is-selected { z-index: 4; border: 2px solid #62dfe0; background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
+.canvas-widget:hover, .canvas-widget.is-selected { z-index: 4; overflow: visible; border: 2px solid #62dfe0; background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
 .canvas-widget.is-locked { border-style: dashed; }
 .canvas-widget.is-invisible { border-style: dotted; background: rgba(70, 96, 101, .12); color: #89a4a7; opacity: .65; pointer-events: none; }
 .canvas-widget span { overflow: hidden; max-width: 100%; font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -333,6 +333,10 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .canvas-widget.is-locked { cursor: not-allowed; }
 .canvas-widget.is-invisible { outline: 1px dotted rgba(98, 223, 224, .8); }
 .resize-handle { position: absolute; z-index: 6; width: 7px; height: 7px; border: 1px solid #0d5e67; background: #eafefe; padding: 0; }
+.handle-n { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.handle-e { top: 50%; right: -5px; transform: translateY(-50%); cursor: ew-resize; }
+.handle-s { bottom: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.handle-w { top: 50%; left: -5px; transform: translateY(-50%); cursor: ew-resize; }
 .handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
 .handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
 .handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
@@ -351,6 +355,7 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .geometry-editor input { min-width: 0; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 5px 6px; font: inherit; font-size: 10px; }
 .geometry-editor input:focus { border-color: var(--accent); outline: 2px solid rgba(25, 137, 143, .14); }
 .geometry-editor input:disabled { background: #edf2f3; color: var(--text-muted); cursor: not-allowed; }
+.settings-number { width: 88px; margin-left: auto; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 5px 6px; font: inherit; font-size: 10px; }
 .editor-context-menu { position: fixed; z-index: 120; display: grid; min-width: 190px; border: 1px solid #aebfc3; background: #fff; box-shadow: 0 10px 28px rgba(13, 29, 36, .18); padding: 4px; }
 .editor-context-menu button { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 0; background: transparent; color: var(--text); padding: 7px 9px; font-size: 10px; text-align: left; }
 .editor-context-menu button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-dark); }
