@@ -9,6 +9,12 @@ export type EditorCommandId =
   | "widget.send-backward"
   | "widget.bring-to-front"
   | "widget.send-to-back"
+  | "widget.lock-toggle"
+  | "widget.hide-toggle"
+  | "widget.duplicate-mode"
+  | "widget.add-binding"
+  | "scene.hide-all"
+  | "scene.show-all"
   | "canvas.delete-selection"
   | "widget.open-properties";
 
@@ -40,6 +46,12 @@ export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "widget.send-backward", kind: "mutation", label: "Send Backward", supportedSelectionKinds: ["widget"] },
   { id: "widget.bring-to-front", kind: "mutation", label: "Bring To Front", supportedSelectionKinds: ["widget"] },
   { id: "widget.send-to-back", kind: "mutation", label: "Send To Back", supportedSelectionKinds: ["widget"] },
+  { id: "widget.lock-toggle", kind: "mutation", label: "Lock / Unlock", supportedSelectionKinds: ["widget"] },
+  { id: "widget.hide-toggle", kind: "mutation", label: "Hide / Show", supportedSelectionKinds: ["widget"] },
+  { id: "widget.duplicate-mode", kind: "mutation", label: "Duplicate Mode (click to place)", supportedSelectionKinds: ["widget"] },
+  { id: "widget.add-binding", kind: "navigation", label: "Binding Editor", supportedSelectionKinds: ["widget"] },
+  { id: "scene.hide-all", kind: "mutation", label: "Hide All Widgets", supportedSelectionKinds: ["scene"] },
+  { id: "scene.show-all", kind: "mutation", label: "Show All Widgets", supportedSelectionKinds: ["scene"] },
   { id: "canvas.delete-selection", kind: "mutation", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group"] },
   { id: "widget.open-properties", kind: "navigation", label: "Open Properties", supportedSelectionKinds: ["widget"] },
 ];

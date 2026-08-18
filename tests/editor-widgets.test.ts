@@ -161,6 +161,88 @@ describe("Clipboard paste (clipboard capability remediation)", () => {
   });
 });
 
+describe("Phase 5 command surfaces", () => {
+  it("renames any canonical node without touching stable ids", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.renameNode(sceneId, "Renamed Scene").changed).toBe(true);
+    expect(editor.renameNode("w1", "Renamed Widget").changed).toBe(true);
+    expect(editor.renameNode("w1", "   ").changed).toBe(false);
+    const after = store.getCurrent()!;
+    const scene = after.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0];
+    expect(scene.name).toBe("Renamed Scene");
+    expect(scene.widgets[0]).toMatchObject({ id: "w1", name: "Renamed Widget" });
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].name).toBe("w1");
+  });
+
+  it("edits Scene properties with priority validation", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.setSceneProperties(sceneId, { priority: 7, enabled: false }).changed).toBe(true);
+    expect(editor.setSceneProperties(sceneId, { priority: 11 }).changed).toBe(false);
+    expect(editor.setSceneProperties(sceneId, { priority: 1.5 }).changed).toBe(false);
+    expect(editor.setSceneProperties(sceneId, { name: "  " }).changed).toBe(false);
+    const scene = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0];
+    expect(scene).toMatchObject({ priority: 7, enabled: false });
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0]).toMatchObject({ priority: 0 });
+  });
+
+  it("toggles visibility and lock in bulk without touching geometry", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const beforeGeometry = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry;
+    expect(editor.setWidgetsVisibilityInScene(sceneId, ["w1"], false).changed).toBe(true);
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { locked: true, zIndex: 42 }).changed).toBe(true);
+    const widget = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0];
+    expect(widget).toMatchObject({ visible: false, locked: true, zIndex: 42, geometry: beforeGeometry });
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { zIndex: Number.NaN }).changed).toBe(false);
+    expect(editor.setWidgetsVisibilityInScene("wrong-scene", ["w1"], true).changed).toBe(false);
+    expect(store.undo()).toBe(true);
+  });
+
+  it("places duplicate-mode copies centered at the click point in one command", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    // w1 bounds: x=10..110, y=10..50 → center (60, 30).
+    const result = editor.duplicateWidgetsAt(sceneId, ["w1"], { x: 160, y: 130 });
+    expect(result.changed).toBe(true);
+    const copy = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[1];
+    expect(copy?.geometry).toEqual({ x: 110, y: 110, width: 100, height: 40 });
+    expect(copy?.bindings[0]?.widgetId).toBe(copy?.id);
+    expect(store.getSnapshot().history.undoCount).toBe(1);
+    expect(store.undo()).toBe(true);
+  });
+
+  it("replaces widget bindings atomically with validation", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const binding: Binding = {
+      id: "b2",
+      widgetId: "w1",
+      conditions: [{ stateId: "fire", operator: "equals", value: false }],
+      action: "hide",
+    };
+    expect(editor.replaceWidgetBindings(sceneId, "w1", [binding]).changed).toBe(true);
+    expect(editor.replaceWidgetBindings(sceneId, "w1", [{ ...binding, conditions: [] }]).changed).toBe(false);
+    expect(editor.replaceWidgetBindings(sceneId, "w1", [{ ...binding, widgetId: "w2" }]).changed).toBe(false);
+    const bindings = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].bindings;
+    expect(bindings).toHaveLength(1);
+    expect(bindings?.[0].action).toBe("hide");
+    expect(store.undo()).toBe(true);
+  });
+
+  it("switches the project Device Profile undoably", () => {
+    const { project } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.setProjectDeviceProfile("another-profile").changed).toBe(true);
+    expect(store.getCurrent()?.deviceProfileId).toBe("another-profile");
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.deviceProfileId).toBe("foundation-profile");
+  });
+});
+
 describe("Foundation profile runtime registries (M-10/INT-61 remediation)", () => {
   it("ships profile-defined runtime states and settings", () => {
     expect(foundationDeviceProfile.runtimeStates.length).toBeGreaterThan(0);

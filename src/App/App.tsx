@@ -235,6 +235,11 @@ function coerceRuntimeInput(raw: string, type: RuntimeValueType): PrimitiveValue
   return raw;
 }
 
+function coerceBindingDraftValue(raw: string, type: RuntimeValueType): PrimitiveValue | null {
+  if (type === "boolean") return raw === "true";
+  return coerceRuntimeInput(raw, type);
+}
+
 function renderRuntimeInput(
   definition: RuntimeStateDefinition | RuntimeSettingDefinition,
   current: PrimitiveValue | null | undefined,
@@ -258,6 +263,91 @@ function renderRuntimeInput(
       value={current == null ? "" : String(current)}
       placeholder="Unset"
       onChange={(event) => onChange(coerceRuntimeInput(event.target.value, definition.type))}
+    />
+  );
+}
+
+type DraftNumberFieldProps = {
+  value: string | number;
+  disabled: boolean;
+  min: number;
+  max: number;
+  ariaLabel: string;
+  onCommit: (value: number) => void;
+};
+
+/** Draft-per-field numeric input shared by non-geometry properties (zIndex, priority). */
+function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: DraftNumberFieldProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    const parsed = Number(draft);
+    if (draft.trim() === "" || !Number.isFinite(parsed)) {
+      setFeedback("invalid — reverted");
+      return;
+    }
+    const clamped = Math.min(max, Math.max(min, parsed));
+    setFeedback(clamped !== parsed ? `clamped to ${clamped}` : null);
+    onCommit(clamped);
+  };
+  return (
+    <span className={`draft-number-field ${feedback ? "has-feedback" : ""}`}>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={draft ?? String(value)}
+        disabled={disabled}
+        aria-label={ariaLabel}
+        onChange={(event) => { setDraft(event.target.value); setFeedback(null); }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape") { setDraft(null); setFeedback(null); (event.target as HTMLInputElement).blur(); }
+        }}
+      />
+      {feedback && <small className="geometry-feedback" role="status">{feedback}</small>}
+    </span>
+  );
+}
+
+type DraftTextFieldProps = {
+  value: string;
+  disabled: boolean;
+  placeholder?: string;
+  ariaLabel: string;
+  onCommit: (value: string) => void;
+};
+
+/** Draft-per-field text input for rename surfaces: commit once on blur/Enter, Escape reverts. */
+function DraftTextField({ value, disabled, placeholder, ariaLabel, onCommit }: DraftTextFieldProps) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    setDraft(null);
+    const trimmed = draft.trim();
+    if (trimmed.length === 0 || trimmed === value) return;
+    onCommit(trimmed);
+  };
+  return (
+    <input
+      type="text"
+      value={draft ?? value}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape") { setDraft(null); (event.target as HTMLInputElement).blur(); }
+      }}
     />
   );
 }
@@ -301,6 +391,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [bindingModal, setBindingModal] = useState<BindingModalState>(null);
   const [clipboard, setClipboard] = useState<{ widgets: Widget[]; cut: boolean } | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmRequest | null>(null);
+  const [duplicateMode, setDuplicateMode] = useState(false);
+  const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show" });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
   const [runtimeValues, setRuntimeValues] = useState<Record<string, PrimitiveValue | null>>({});
@@ -343,6 +435,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
   const profileStates = activeProfile?.runtimeStates ?? [];
   const profileSettings = activeProfile?.runtimeSettings ?? [];
+  const bindingDraftDefinition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === bindingDraft.stateId);
   const bindingEvaluations = useMemo(() => bindingWidget && activeProfile ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
   const activeLeftPanel = panelModes.explorer === "docked" ? "explorer" : panelModes.assets === "docked" ? "assets" : null;
   const activeRightPanel = panelModes.properties === "docked" ? "properties" : panelModes.simulator === "docked" ? "simulator" : null;
@@ -604,8 +697,96 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return true;
   };
 
-  const changeWidgetZOrder = (operation: ZOrderOperation): boolean => {
-    const node = resolvedSelection;
+  const setDeviceProfile = (profileId: string): boolean => {
+    const result = editorApplication.setProjectDeviceProfile(profileId);
+    if (result.changed) logAction(`Device Profile switched to ${profileId}`, "EVENT");
+    return result.changed;
+  };
+
+  const toggleWidgetProperty = (property: "locked" | "visible" | "enabled"): boolean => {
+    const sceneId = activeScene?.id;
+    const selected = activeScene?.widgets.filter((widget) => selectedWidgetIds.includes(widget.id)) ?? [];
+    if (!sceneId || !selected.length) {
+      logAction("Toggle requires a selected widget in the active Scene", "WARN");
+      return false;
+    }
+    const allSet = selected.every((widget) => widget[property]);
+    const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selected.map((widget) => widget.id), { [property]: !allSet });
+    if (result.changed) logAction(`${property === "locked" ? (allSet ? "Unlock" : "Lock") : property === "visible" ? (allSet ? "Show" : "Hide") : allSet ? "Disable" : "Enable"} applied to ${selected.length} widget(s)`, "EVENT");
+    return result.changed;
+  };
+
+  const setAllWidgetsVisibility = (visible: boolean): boolean => {
+    const sceneId = activeScene?.id;
+    if (!sceneId || !canvasWidgets.length) {
+      logAction("Hide/Show All requires a Scene with widgets", "WARN");
+      return false;
+    }
+    const result = editorApplication.setWidgetsVisibilityInScene(sceneId, canvasWidgets.map((widget) => widget.id), visible);
+    if (result.changed) logAction(visible ? "Show All executed" : "Hide All executed", "EVENT");
+    return result.changed;
+  };
+
+  const renameSelectedNode = (name: string): boolean => {
+    if (!selection) return false;
+    const result = editorApplication.renameNode(selection.id, name);
+    if (result.changed) logAction(`Renamed to ${name.trim()}`, "EVENT");
+    return result.changed;
+  };
+
+  const enterDuplicateMode = (): boolean => {
+    if (!selectedWidgetIds.length || !activeScene?.id) {
+      logAction("Duplicate Mode requires a selected widget in the active Scene", "WARN");
+      return false;
+    }
+    setDuplicateMode(true);
+    logAction("Duplicate Mode: click the canvas to place copies · Esc exits", "EVENT");
+    return true;
+  };
+
+  const addBinding = (): boolean => {
+    const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
+    const sceneId = resolved?.scene?.id;
+    const widget = resolved?.widget;
+    if (!sceneId || !widget || !bindingDraft.stateId) {
+      logAction("Add Binding: select a DeviceProfile state and a widget first", "WARN");
+      return false;
+    }
+    const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === bindingDraft.stateId);
+    if (!definition) {
+      logAction("Add Binding: the selected state is not defined by the active DeviceProfile", "WARN");
+      return false;
+    }
+    const value = coerceBindingDraftValue(bindingDraft.value, definition.type);
+    if (value === null) {
+      logAction("Add Binding: the condition value does not match its DeviceProfile type", "WARN");
+      return false;
+    }
+    const binding: Binding = {
+      id: `binding-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
+      widgetId: widget.id,
+      conditions: [{ stateId: bindingDraft.stateId, operator: bindingDraft.operator as Binding["conditions"][number]["operator"], value, negated: bindingDraft.negated || undefined }],
+      action: bindingDraft.action as Binding["action"],
+    };
+    const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, [...widget.bindings, binding]);
+    if (result.changed) {
+      logAction(`Binding added: ${bindingDraft.stateId} → ${bindingDraft.action}`, "EVENT");
+      setBindingDraft({ stateId: "", operator: "equals", value: "", negated: false, action: "show" });
+    }
+    return result.changed;
+  };
+
+  const removeBinding = (bindingId: string): boolean => {
+    const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
+    const sceneId = resolved?.scene?.id;
+    const widget = resolved?.widget;
+    if (!sceneId || !widget) return false;
+    const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, widget.bindings.filter((binding) => binding.id !== bindingId));
+    if (result.changed) logAction("Binding removed", "EVENT");
+    return result.changed;
+  };
+
+  const changeWidgetZOrder = (operation: ZOrderOperation): boolean => {    const node = resolvedSelection;
     if (!node?.widget || !node.scene || activeScene?.id !== node.scene.id) return false;
     if (node.widget.locked) {
       logAction(`${node.widget.name} is locked; z-order command blocked`, "WARN");
@@ -625,9 +806,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     else if (commandId === "rotation.add-scene") changed = addScene();
     else if (commandId.startsWith("scene.add-widget:")) changed = addWidget(commandId.slice("scene.add-widget:".length));
     else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
+    else if (commandId === "widget.lock-toggle") changed = toggleWidgetProperty("locked");
+    else if (commandId === "widget.hide-toggle") changed = toggleWidgetProperty("visible");
+    else if (commandId === "widget.duplicate-mode") changed = enterDuplicateMode();
+    else if (commandId === "scene.hide-all") changed = setAllWidgetsVisibility(false);
+    else if (commandId === "scene.show-all") changed = setAllWidgetsVisibility(true);
     else if (commandId === "canvas.delete-selection") changed = deleteSelectionCommand();
-    else if (commandId === "widget.open-properties") {
+    else if (commandId === "widget.open-properties" || commandId === "widget.add-binding") {
       activatePanel("properties");
+      if (commandId === "widget.add-binding" && resolvedSelection?.widget) setBindingModal({ widgetId: resolvedSelection.widget.id });
       logAction("Properties panel opened", "EVENT");
       setContextMenu(null);
       return;
@@ -738,7 +925,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const toggleExpanded = (nodeId: string) => setExpandedNodes((current) => ({ ...current, [nodeId]: !current[nodeId] }));
 
   const renderTreeNode = (node: TreeNode, depth = 0): ReactNode => {
-    const expanded = expandedNodes[node.id] ?? depth < 2;
+    const expanded = expandedNodes[node.id] ?? depth < 3;
     const isSelected = selectedIds.includes(node.id);
     const icon = node.kind === "Scene" ? "◈" : node.kind === "Widget" ? "◇" : node.kind === "Rotation / Form" ? "▧" : node.kind === "Project" ? "▣" : node.kind === "Resources" ? "▤" : "▱";
     return (
@@ -818,6 +1005,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return { left: bounds.left + borderLeft, top: bounds.top + borderTop, width: Math.max(0, bounds.width - borderLeft - borderRight), height: Math.max(0, bounds.height - borderTop - borderBottom) };
   };
   const selectedWidgetIds = selectedIds.filter((id) => canvasWidgets.some((widget) => widget.id === id));
+  const selectedSceneWidgets = activeScene?.widgets.filter((widget) => selectedWidgetIds.includes(widget.id)) ?? [];
+  const selectedWidgetsAllLocked = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.locked);
+  const selectedWidgetsAllVisible = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.visible);
   const selectedEditableWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id) && !widget.locked);
   const canvasTransform = { zoom: zoom / 100, pan, sceneWidth: canvasWidth, sceneHeight: canvasHeight };
   const canvasFrame = canvasViewportSize.width > 0 && canvasViewportSize.height > 0
@@ -1076,9 +1266,24 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const handleCanvasPointerCancel = () => cancelCanvasInteraction();
 
-  const handleCanvasClick = () => {
+  const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (suppressCanvasClickRef.current || canvasTool === "pan") {
       suppressCanvasClickRef.current = false;
+      return;
+    }
+    if (duplicateMode) {
+      const sceneId = activeScene?.id;
+      if (!sceneId || !selectedWidgetIds.length) return;
+      const point = toCanvasPoint(event);
+      const result = editorApplication.duplicateWidgetsAt(sceneId, selectedWidgetIds, point);
+      if (result.changed) {
+        const createdIds = result.createdIds ?? [];
+        if (createdIds.length) {
+          setSelectedIds([...createdIds]);
+          setSelection({ id: createdIds[0], label: createdIds.length > 1 ? `${createdIds.length} items selected` : "Placed copy", kind: "widget", nodeType: activeScene.widgets.find((widget) => widget.id === createdIds[0])?.widgetType });
+        }
+        logAction("Duplicate placed at click point", "EVENT");
+      }
       return;
     }
     clearSelection();
@@ -1141,6 +1346,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      if (duplicateMode) {
+        setDuplicateMode(false);
+        logAction("Duplicate mode exited", "EVENT");
+        return;
+      }
       if (canvasPointerRef.current.mode !== "idle") cancelCanvasInteraction();
       else if (contextMenu) setContextMenu(null);
       return;
@@ -1323,6 +1533,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     ],
     Project: [
       { label: "Validate Project", onClick: () => { if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
+      ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name}`, disabled: profile.id === project.deviceProfileId, onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
     ],
     Theme: [
@@ -1331,12 +1542,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     ],
     Scene: [
       { label: "Add Scene", disabled: !resolvedSelection?.rotation, onClick: addScene },
+      { label: "Hide All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(false) },
+      { label: "Show All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(true) },
       { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
       { label: "Test Scene", onClick: () => activatePanel("simulator") },
     ],
     Widget: [
       ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, onClick: () => addWidget(widgetType) })),
+      { label: selectedWidgetsAllLocked ? "Unlock Selection" : "Lock Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("locked") },
+      { label: selectedWidgetsAllVisible ? "Hide Selection" : "Show Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("visible") },
       { label: "Duplicate Selection", disabled: !selectedIds.length, onClick: duplicateSelectionCommand },
+      { label: "Duplicate Mode (click to place)", disabled: !selectedWidgetIds.length, onClick: enterDuplicateMode },
       { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
       { label: "Binding Editor", disabled: !resolvedSelection?.widget, onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
     ],
@@ -1380,7 +1596,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     <>
       {renderPanelHeader("assets", "LIBRARY", "Asset Browser")}
       {renderDockTabs("assets")}
-      <div className="asset-search"><input aria-label="Search assets" placeholder="Search depot" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /><button type="button" className="small-action" disabled title="Asset import command is a later phase">Import</button></div>
+      <div className="asset-search"><input aria-label="Search assets" placeholder="Search depot" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></div>
       <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{category.id === "depot" ? 0 : category.id === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)).length : category.id === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)).length : 0}</small></button>)}</div>
       <div className="asset-list">
         {filteredAssets.length > 0 ? filteredAssets.map((asset) => <button type="button" className="asset-row" key={asset.id} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: asset.mediaType })}><span className="asset-type">{asset.mediaType === "audio" ? "♫" : asset.mediaType === "video" ? "▶" : "▧"}</span><span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.id}</small></span></button>) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Unsupported Files is empty" : "No assets in this scope"}</strong><span>{assetCategory === "depot" ? "Depot library content is not Project Resources and unused depot assets are not exported." : assetCategory === "unsupported" ? "Unsupported files cannot become widgets or enter normal export." : "Project Resources and Scene Content are derived from canonical references."}</span></div>}
@@ -1436,17 +1652,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         {renderDockTabs("properties")}
         <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{selection?.detail ?? "Nothing selected · Project context"}</small></div></div>
         {selection && node ? <div className="properties-scroll">
-          <section className="property-section"><div className="property-section-title">Identity</div><PropertyRow label="Name" value={multi ? valueFor((current) => "name" in current.node ? String(current.node.name) : undefined) : selection.label} /><PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
-          <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><PropertyRow label="Device Profile" value={project.deviceProfileId} muted /><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
+          <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField value={String(node.node.name)} disabled={false} ariaLabel="Display name" onCommit={renameSelectedNode} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
+          <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
-            <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Enabled" value={multi ? valueFor((current) => current.widget?.enabled) : String(widget.enabled)} /><PropertyRow label="Geometry Lock" value={multi ? valueFor((current) => current.widget?.locked ? "Locked" : "Editable") : widget.locked ? "Locked" : "Editable"} /></section>
-            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /></div><PropertyRow label="Locked" value={multi ? valueFor((current) => current.widget?.locked) : String(widget.locked)} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Z-order" value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} /></section>
+            <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
+            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
             <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {widget.widgetType === "digit" && <section className="property-section"><div className="property-section-title">Digit</div><PropertyRow label="Style" value={String(widget.style?.digitStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Floor Mapping" value={String(widget.content?.floorMappingId ?? "Not selected")} /></section>}
             {widget.widgetType === "direction" && <section className="property-section"><div className="property-section-title">Direction</div><PropertyRow label="Style" value={String(widget.style?.directionStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Variant" value={String(widget.content?.variant ?? "Profile-defined")} /></section>}
             {widget.widgetType === "media" && <section className="property-section"><div className="property-section-title">Media</div><PropertyRow label="Visual" value={widget.mediaType ?? "Not selected"} /><PropertyRow label="Attached Audio" value={widget.audioAssetId ?? "None"} muted /></section>}
           </>}
-          {node.scene && <section className="property-section"><div className="property-section-title">Scene Runtime</div><PropertyRow label="Priority" value={`${node.scene.priority} / 10`} /><PropertyRow label="Enabled" value={String(node.scene.enabled !== false)} /><PropertyRow label="Activation Conditions" value={`${node.scene.activationConditions.length} · ${node.scene.activationConditionMode ?? "all"}`} /><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>}
+          {node.scene && <section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField value={String(node.scene.priority)} disabled={false} min={0} max={10} ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Activation Conditions" value={`${node.scene.activationConditions.length} · ${node.scene.activationConditionMode ?? "all"}`} /><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>}
           {node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /></section>}
           {node.theme && <section className="property-section"><div className="property-section-title">Theme Project</div><PropertyRow label="Rotations" value={String(node.theme.rotations.length)} /><PropertyRow label="Resources" value={String(node.theme.resources.length)} /><PropertyRow label="Floor Mappings" value={String(node.theme.floorMappings?.length ?? 0)} /></section>}
           {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><PropertyRow label="Media Type" value={node.asset.mediaType} /><PropertyRow label="Source" value={node.asset.sourcePath} /><PropertyRow label="Stable ID" value={node.asset.id} muted /></section>}
@@ -1527,7 +1743,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.max(50, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.min(200, current + 10))}>+</button></div></div>
-            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={handleCanvasClick} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel} onContextMenu={(event) => {
+            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel} onContextMenu={(event) => {
       event.preventDefault();
       event.stopPropagation();
       const point = toCanvasPoint(event);
@@ -1542,7 +1758,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         setContextMenu(null);
       }
     }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
-            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && !resolvedSelection?.scene && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
+            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && !resolvedSelection?.scene && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" onPointerDown={(event) => beginResize("right", event)} />}
           {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}
@@ -1555,7 +1771,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
       <footer className="statusbar"><span><span className={`status-led ${validation.valid ? "" : "is-error"}`} aria-hidden="true" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 
-      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Binding authoring is a later phase; this editor evaluates and inspects existing bindings.</span></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{["equals", "not-equals", "greater-than", "less-than", "contains"].map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId} onClick={addBinding}>Add Binding</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation"><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={cancelSettings}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={cancelSettings}>Cancel</button><button type="button" className="settings-button-primary" onClick={saveSettings}>Save / Apply &amp; Close</button></div></footer></section></div>}
 
       {confirmState && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CONFIRMATION</span><h2 id="confirm-title">{confirmState.title}</h2></div></header><div className="confirm-body"><p>{confirmState.message}</p></div><footer className="settings-footer"><div><button type="button" className="settings-button-secondary" onClick={() => setConfirmState(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { const action = confirmState.onConfirm; setConfirmState(null); action(); }}>{confirmState.confirmLabel}</button></div></footer></section></div>}

@@ -386,3 +386,18 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 body.relaxed-density .tree-row { min-height: 37px; }
 body.relaxed-density .property-row { min-height: 33px; }
 body.relaxed-density .sim-row { min-height: 33px; }
+
+/* Phase 5 property editing surfaces */
+.property-row-edit { grid-template-columns: 1fr minmax(95px, 1.25fr); }
+.property-row-edit input[type="text"], .property-row-edit input[type="number"], .property-row-edit select, .draft-number-field input { min-width: 0; width: 100%; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 4px 6px; font: inherit; font-size: 10px; text-align: right; }
+.property-row-edit input:focus, .property-row-edit select:focus, .draft-number-field input:focus { border-color: var(--accent); outline: 2px solid rgba(25, 137, 143, .14); }
+.property-row-edit input[type="checkbox"] { justify-self: end; width: 14px; height: 14px; accent-color: var(--accent); }
+.draft-number-field { display: grid; gap: 2px; justify-items: end; }
+.draft-number-field .geometry-feedback { text-align: right; }
+.binding-authoring { display: grid; gap: 7px; padding: 10px; border: 1px dashed var(--border-strong); }
+.binding-field { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; align-items: center; color: var(--text-secondary); font-size: 10px; }
+.binding-field select, .binding-field input[type="text"], .binding-field input[type="number"] { min-width: 0; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 4px 6px; font: inherit; font-size: 10px; }
+.binding-field-check { grid-template-columns: 92px auto; }
+.binding-card-actions { display: flex; align-items: center; gap: 8px; }
+.binding-remove { border: 0; background: transparent; color: var(--text-muted); padding: 0 3px; font-size: 13px; }
+.binding-remove:hover { color: var(--error); }

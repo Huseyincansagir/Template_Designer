@@ -1,4 +1,4 @@
-import type { DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { Binding, DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 import { InMemoryDocumentStore } from "./document-store";
 
 export type ProjectMutation = (project: Project) => Project;
@@ -231,6 +231,102 @@ export class EditorApplication {
     }))));
   }
 
+  /**
+   * Undoable rename for any canonical node (Project, Group, Theme, Rotation,
+   * Scene, Widget, Asset). Stable IDs never change; empty names are refused.
+   */
+  renameNode(id: string, name: string): MutationResult {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) return { changed: false };
+    return this.execute(`Rename to ${trimmed}`, (project) => {
+      if (project.id === id) return { ...project, name: trimmed };
+      if (project.assets.some((asset) => asset.id === id)) {
+        return { ...project, assets: project.assets.map((asset) => asset.id === id ? { ...asset, name: trimmed } : asset) };
+      }
+      return mapProjectGroups(project, (group) => {
+        if (group.id === id) return { ...group, name: trimmed };
+        return mapThemeProjects(group, (theme) => {
+          if (theme.id === id) return { ...theme, name: trimmed };
+          return mapRotations(theme, (rotation) => {
+            // Rotations carry no display name in the Domain model; only their
+            // children are renameable.
+            if (rotation.id === id) return rotation;
+            return mapScenes(rotation, (scene) => {
+              if (scene.id === id) return { ...scene, name: trimmed };
+              if (!scene.widgets.some((widget) => widget.id === id)) return scene;
+              return { ...scene, widgets: scene.widgets.map((widget) => widget.id === id ? { ...widget, name: trimmed } : widget) };
+            });
+          });
+        });
+      });
+    });
+  }
+
+  setSceneProperties(sceneId: string, patch: Partial<Pick<Scene, "name" | "priority" | "enabled" | "activationConditionMode">>): MutationResult {
+    if (patch.name !== undefined && patch.name.trim().length === 0) return { changed: false };
+    if (patch.priority !== undefined && (!Number.isInteger(patch.priority) || patch.priority < 0 || patch.priority > 10)) return { changed: false };
+    const current = this.documents.getCurrent();
+    if (!current || !findUniqueScene(current, sceneId)) return { changed: false };
+    return this.execute("Edit Scene Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, ...clone(patch), ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) } : scene)))));
+  }
+
+  setWidgetsVisibilityInScene(sceneId: string, ids: readonly string[], visible: boolean): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+    const selected = new Set(ids);
+    return this.execute(visible ? "Show Widgets" : "Hide Widgets", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => selected.has(widget.id) ? { ...widget, visible } : widget) } : scene)))));
+  }
+
+  /** Duplicate-mode placement: copies centered at the given Scene point, one undoable command. */
+  duplicateWidgetsAt(sceneId: string, ids: readonly string[], center: { x: number; y: number }): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+    const scene = findUniqueScene(current, sceneId);
+    const selectedWidgets = scene?.widgets.filter((widget) => ids.includes(widget.id)) ?? [];
+    if (!selectedWidgets.length) return { changed: false };
+    const bounds = selectedWidgets.reduce(
+      (accumulator, widget) => ({
+        left: Math.min(accumulator.left, widget.geometry.x),
+        top: Math.min(accumulator.top, widget.geometry.y),
+        right: Math.max(accumulator.right, widget.geometry.x + widget.geometry.width),
+        bottom: Math.max(accumulator.bottom, widget.geometry.y + widget.geometry.height),
+      }),
+      { left: Number.POSITIVE_INFINITY, top: Number.POSITIVE_INFINITY, right: Number.NEGATIVE_INFINITY, bottom: Number.NEGATIVE_INFINITY },
+    );
+    const offset = {
+      x: center.x - (bounds.left + (bounds.right - bounds.left) / 2),
+      y: center.y - (bounds.top + (bounds.bottom - bounds.top) / 2),
+    };
+    const selected = new Set(ids);
+    const copyIds = buildDuplicateIdMap(current, selected);
+    const createdIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
+    const result = this.execute("Duplicate Widgets at Point", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (candidate) => {
+      if (candidate.id !== sceneId) return candidate;
+      return { ...candidate, widgets: candidate.widgets.flatMap((widget) => {
+        const copyId = copyIds.get(widget.id);
+        if (!copyId) return [widget];
+        const copy = duplicateWidget(widget, copyId);
+        // Duplicate-mode placement centers the copy exactly on the click
+        // point; the fixed +10/+10 copy offset is not applied here.
+        return [widget, { ...copy, geometry: { ...widget.geometry, x: widget.geometry.x + offset.x, y: widget.geometry.y + offset.y } }];
+      }) };
+    })))));
+    return result.changed ? { changed: true, createdIds } : result;
+  }
+
+  /** Binding editor: replaces the widget's binding list in one undoable command. */
+  replaceWidgetBindings(sceneId: string, widgetId: string, bindings: readonly Binding[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, [widgetId])) return { changed: false };
+    if (!bindings.every((binding) => binding.id.trim().length > 0 && binding.widgetId === widgetId && binding.conditions.length > 0)) return { changed: false };
+    return this.execute("Edit Widget Bindings", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => widget.id === widgetId ? { ...widget, bindings: clone(bindings) } : widget) } : scene)))));
+  }
+
+  setProjectDeviceProfile(profileId: string): MutationResult {
+    if (profileId.trim().length === 0) return { changed: false };
+    return this.execute("Switch Device Profile", (project) => ({ ...project, deviceProfileId: profileId }));
+  }
+
   moveWidget(sceneId: string, widgetId: string, toIndex: number): MutationResult {
     return this.execute("Move Widget", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
       if (scene.id !== sceneId || toIndex < 0 || toIndex >= scene.widgets.length) return scene;
@@ -273,6 +369,27 @@ export class EditorApplication {
         return { ...widget, ...editablePatch, ...(widget.locked || geometry === undefined ? {} : { geometry }) };
       }),
     } : scene)))));
+  }
+
+  /**
+   * Bulk non-geometry property patch (name/enabled/visible/locked/zIndex)
+   * for multi-selection apply-to-all. Geometry is deliberately excluded so
+   * locked widgets can never have their geometry mutated through this path.
+   */
+  setWidgetsPropertiesInScene(sceneId: string, ids: readonly string[], patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "zIndex">>): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+    if (patch.zIndex !== undefined && !Number.isFinite(patch.zIndex)) return { changed: false };
+    if (patch.name !== undefined && patch.name.trim().length === 0) return { changed: false };
+    const selected = new Set(ids);
+    const cleanPatch: Partial<Widget> = {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+      ...(patch.visible !== undefined ? { visible: patch.visible } : {}),
+      ...(patch.locked !== undefined ? { locked: patch.locked } : {}),
+      ...(patch.zIndex !== undefined ? { zIndex: patch.zIndex } : {}),
+    };
+    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => selected.has(widget.id) ? { ...widget, ...clone(cleanPatch) } : widget) } : scene)))));
   }
 
   deleteSelection(ids: readonly string[]): MutationResult {
