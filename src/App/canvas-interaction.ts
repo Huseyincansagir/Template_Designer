@@ -45,9 +45,43 @@ export type SnapResult = {
   guides: readonly SnapGuide[];
 };
 
+export type ZOrderOperation = "bring-forward" | "send-backward" | "bring-to-front" | "send-to-back";
+
+export function calculateZOrderUpdates(widgets: readonly Widget[], widgetId: string, operation: ZOrderOperation): Readonly<Record<string, number>> | null {
+  const targetIndex = widgets.findIndex((widget) => widget.id === widgetId);
+  if (targetIndex < 0) return null;
+  const ordered = widgets.map((widget, index) => ({ widget, index })).sort((left, right) => left.widget.zIndex - right.widget.zIndex || left.index - right.index || left.widget.id.localeCompare(right.widget.id));
+  const orderedIndex = ordered.findIndex((entry) => entry.widget.id === widgetId);
+  const target = ordered[orderedIndex];
+  if (!target) return null;
+  if (operation === "bring-to-front") {
+    const max = Math.max(...widgets.map((widget) => widget.zIndex));
+    return { [widgetId]: max + 1 };
+  }
+  if (operation === "send-to-back") {
+    const min = Math.min(...widgets.map((widget) => widget.zIndex));
+    return { [widgetId]: min - 1 };
+  }
+  const neighbor = operation === "bring-forward" ? ordered[orderedIndex + 1] : ordered[orderedIndex - 1];
+  if (!neighbor) return null;
+  if (neighbor.widget.zIndex === target.widget.zIndex) return { [widgetId]: target.widget.zIndex + (operation === "bring-forward" ? 1 : -1) };
+  return { [widgetId]: neighbor.widget.zIndex, [neighbor.widget.id]: target.widget.zIndex };
+}
+
 export const DEFAULT_GRID_SIZE = 10;
 export const DEFAULT_SNAP_THRESHOLD = 6;
+export const POINTER_DRAG_THRESHOLD = 4;
 export const MIN_WIDGET_SIZE = 10;
+
+export function exceedsPointerDragThreshold(distance: number): boolean {
+  return Number.isFinite(distance) && distance > POINTER_DRAG_THRESHOLD;
+}
+
+export function calculateNudgeStep(gridSize: number, modifiers: { readonly shift: boolean; readonly modifier: boolean }): number | null {
+  if (!Number.isFinite(gridSize) || gridSize <= 0 || (modifiers.shift && !modifiers.modifier)) return null;
+  if (modifiers.shift) return gridSize * 5;
+  return modifiers.modifier ? gridSize / 10 : gridSize;
+}
 
 const SNAP_KIND_PRIORITY: Record<SnapGuide["kind"], number> = {
   grid: 0,
@@ -75,8 +109,8 @@ function sceneViewportRect(viewport: CanvasViewport, transform: CanvasViewTransf
   const width = sceneWidth * scale;
   const height = sceneHeight * scale;
   return {
-    x: viewport.left + (viewport.width - width) / 2 + transform.pan.x * scale,
-    y: viewport.top + (viewport.height - height) / 2 + transform.pan.y * scale,
+    x: viewport.left + (viewport.width - width) / 2 + transform.pan.x,
+    y: viewport.top + (viewport.height - height) / 2 + transform.pan.y,
     width,
     height,
     scale,
@@ -226,12 +260,15 @@ function candidateForAxis(
 ): { value: number; guide: SnapGuide; distance: number } | null {
   const sourceStart = axis === "x" ? candidate.x : candidate.y;
   const sourceSize = axis === "x" ? candidate.width : candidate.height;
-  const candidates: { value: number; guide: SnapGuide; distance: number }[] = [];
   const threshold = Math.max(0, configuration.threshold);
+  const gridCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+  const edgeCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+  const centerCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
 
   if (configuration.grid !== false && configuration.gridSize > 0) {
     const gridValue = snapValue(sourceStart, true, configuration.gridSize);
-    candidates.push({ value: gridValue, distance: Math.abs(gridValue - sourceStart), guide: { axis, position: gridValue, kind: "grid" } });
+    const distance = Math.abs(gridValue - sourceStart);
+    if (distance <= threshold) gridCandidates.push({ value: gridValue, distance, guide: { axis, position: gridValue, kind: "grid" } });
   }
 
   if (configuration.edges !== false || configuration.centers !== false) {
@@ -239,16 +276,11 @@ function candidateForAxis(
       const start = axis === "x" ? other.geometry.x : other.geometry.y;
       const size = axis === "x" ? other.geometry.width : other.geometry.height;
       const end = start + size;
-      const targetEdges = [start, end];
       if (configuration.edges !== false) {
-        for (const target of targetEdges) {
-          const options = [
-            { value: target, guide: target },
-            { value: target - sourceSize, guide: target },
-          ];
-          for (const option of options) {
-            const distance = Math.abs(option.value - sourceStart);
-            if (distance <= threshold) candidates.push({ value: option.value, distance, guide: { axis, position: option.guide, kind: "edge", widgetId: other.id } });
+        for (const target of [start, end]) {
+          for (const value of [target, target - sourceSize]) {
+            const distance = Math.abs(value - sourceStart);
+            if (distance <= threshold) edgeCandidates.push({ value, distance, guide: { axis, position: target, kind: "edge", widgetId: other.id } });
           }
         }
       }
@@ -256,12 +288,15 @@ function candidateForAxis(
         const targetCenter = start + size / 2;
         const value = targetCenter - sourceSize / 2;
         const distance = Math.abs(value - sourceStart);
-        if (distance <= threshold) candidates.push({ value, distance, guide: { axis, position: targetCenter, kind: "center", widgetId: other.id } });
+        if (distance <= threshold) centerCandidates.push({ value, distance, guide: { axis, position: targetCenter, kind: "center", widgetId: other.id } });
       }
     }
   }
 
-  return candidates.sort((left, right) => compareCandidates(left, right)).at(0) ?? null;
+  for (const pass of [gridCandidates, edgeCandidates, centerCandidates]) {
+    if (pass.length) return pass.sort((left, right) => compareCandidates(left, right))[0];
+  }
+  return null;
 }
 
 export function snapGeometryWithTargets(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): SnapResult {

@@ -4,9 +4,10 @@ export type EditorCommandId =
   | "project.add-theme-project"
   | "theme.add-rotation"
   | "rotation.add-scene"
-  | "scene.reorder"
-  | "scene.move"
-  | "widget.reorder"
+  | "widget.bring-forward"
+  | "widget.send-backward"
+  | "widget.bring-to-front"
+  | "widget.send-to-back"
   | "canvas.delete-selection"
   | "widget.open-properties";
 
@@ -29,9 +30,10 @@ export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "project.add-theme-project", kind: "mutation", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
   { id: "theme.add-rotation", kind: "mutation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
   { id: "rotation.add-scene", kind: "mutation", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
-  { id: "scene.reorder", kind: "mutation", label: "Reorder Scene", supportedSelectionKinds: ["scene"] },
-  { id: "scene.move", kind: "mutation", label: "Move Scene", supportedSelectionKinds: ["scene"] },
-  { id: "widget.reorder", kind: "mutation", label: "Reorder Widget", supportedSelectionKinds: ["widget"] },
+  { id: "widget.bring-forward", kind: "mutation", label: "Bring Forward", supportedSelectionKinds: ["widget"] },
+  { id: "widget.send-backward", kind: "mutation", label: "Send Backward", supportedSelectionKinds: ["widget"] },
+  { id: "widget.bring-to-front", kind: "mutation", label: "Bring To Front", supportedSelectionKinds: ["widget"] },
+  { id: "widget.send-to-back", kind: "mutation", label: "Send To Back", supportedSelectionKinds: ["widget"] },
   { id: "canvas.delete-selection", kind: "mutation", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group"] },
   { id: "widget.open-properties", kind: "navigation", label: "Open Properties", supportedSelectionKinds: ["widget"] },
 ];

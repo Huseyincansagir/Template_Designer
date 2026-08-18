@@ -1,4 +1,4 @@
-import type { Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 import { InMemoryDocumentStore } from "./document-store";
 
 export type ProjectMutation = (project: Project) => Project;
@@ -7,6 +7,58 @@ export type MutationResult = { readonly changed: boolean };
 function clone<T>(value: T): T { return structuredClone(value); }
 function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
 function equalProject(left: Project, right: Project): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+
+function isValidGeometry(value: unknown): value is Geometry {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return Object.keys(candidate).length === 4
+    && ["x", "y", "width", "height"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]))
+    && (candidate.width as number) > 0
+    && (candidate.height as number) > 0;
+}
+
+function rotationDimensions(display: DeviceProfile["display"], angle: RotationAngle): Pick<Rotation, "width" | "height"> {
+  return angle === 90 || angle === 270
+    ? { width: display.height, height: display.width }
+    : { width: display.width, height: display.height };
+}
+
+function findUniqueScene(project: Project, sceneId: string): Scene | undefined {
+  let found: Scene | undefined;
+  let count = 0;
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      for (const rotation of theme.rotations) {
+        for (const scene of rotation.scenes) {
+          if (scene.id === sceneId) {
+            found = scene;
+            count += 1;
+          }
+        }
+      }
+    }
+  }
+  return count === 1 ? found : undefined;
+}
+
+function countWidgetOccurrences(project: Project, widgetId: string): number {
+  return project.themeProjectGroups.reduce((groupCount, group) => groupCount + group.themeProjects.reduce((themeCount, theme) => themeCount + theme.rotations.reduce((rotationCount, rotation) => rotationCount + rotation.scenes.reduce((sceneCount, scene) => sceneCount + scene.widgets.filter((widget) => widget.id === widgetId).length, 0), 0), 0), 0);
+}
+
+function validScopedWidgetIds(project: Project, sceneId: string, ids: readonly string[]): boolean {
+  const scene = findUniqueScene(project, sceneId);
+  if (!scene || !ids.length || new Set(ids).size !== ids.length) return false;
+  return ids.every((id) => countWidgetOccurrences(project, id) === 1 && scene.widgets.filter((widget) => widget.id === id).length === 1);
+}
+
+function validGlobalGeometryUpdates(project: Project, updates: Readonly<Record<string, Geometry>>): boolean {
+  const ids = Object.keys(updates);
+  return ids.length > 0 && ids.every((id) => countWidgetOccurrences(project, id) === 1 && isValidGeometry(updates[id]));
+}
+
+function mapSceneWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
+  return { ...scene, widgets: scene.widgets.map(map) };
+}
 
 function mapProjectGroups(project: Project, map: (group: ThemeProjectGroup) => ThemeProjectGroup): Project {
   return { ...project, themeProjectGroups: project.themeProjectGroups.map(map) };
@@ -93,10 +145,12 @@ export class EditorApplication {
     } : group));
   }
 
-  addRotation(themeId: string, angle: RotationAngle = 0): MutationResult {
+  addRotation(themeId: string, angle: RotationAngle = 0, display?: DeviceProfile["display"]): MutationResult {
+    if (!display || !Number.isFinite(display.width) || !Number.isFinite(display.height) || display.width <= 0 || display.height <= 0) return { changed: false };
+    const dimensions = rotationDimensions(display, angle);
     return this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
       ...theme,
-      rotations: [...theme.rotations, { id: newId("rotation"), angle, width: 720, height: 1280, scenes: [] }],
+      rotations: [...theme.rotations, { id: newId("rotation"), angle, ...dimensions, scenes: [] }],
     } : theme)));
   }
 
@@ -132,13 +186,27 @@ export class EditorApplication {
   }
 
   setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
-    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapWidgets(scene, (widget) => {
+    const current = this.documents.getCurrent();
+    if (!current || !validGlobalGeometryUpdates(current, updates)) return { changed: false };
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapSceneWidgets(scene, (widget) => {
       const geometry = updates[widget.id];
       return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
     }))))));
   }
 
+  setWidgetGeometriesInScene(sceneId: string, updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
+    const current = this.documents.getCurrent();
+    const ids = Object.keys(updates);
+    if (!current || !validScopedWidgetIds(current, sceneId, ids) || !ids.every((id) => isValidGeometry(updates[id]))) return { changed: false };
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? mapSceneWidgets(scene, (widget) => {
+      const geometry = updates[widget.id];
+      return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
+    }) : scene)))));
+  }
+
   editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, [widgetId]) || (patch.geometry !== undefined && !isValidGeometry(patch.geometry))) return { changed: false };
     return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? {
       ...scene,
       widgets: scene.widgets.map((widget) => {
@@ -173,6 +241,27 @@ export class EditorApplication {
             })),
         })),
     }));
+  }
+
+  deleteSelectionInScene(sceneId: string, ids: readonly string[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+    const selected = new Set(ids);
+    return this.execute("Delete Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) } : scene)))));
+  }
+
+  setWidgetZIndicesInScene(sceneId: string, updates: Readonly<Record<string, number>>, label = "Change Widget Z-order"): MutationResult {
+    const current = this.documents.getCurrent();
+    const ids = Object.keys(updates);
+    if (!current || !validScopedWidgetIds(current, sceneId, ids) || !ids.every((id) => Number.isFinite(updates[id]))) return { changed: false };
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => ids.includes(widget.id) ? { ...widget, zIndex: updates[widget.id] } : widget) } : scene)))));
+  }
+
+  duplicateSelectionInScene(sceneId: string, ids: readonly string[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+    const selected = new Set(ids);
+    return this.execute("Duplicate Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.flatMap((widget) => selected.has(widget.id) ? [widget, duplicateWidget(widget)] : [widget]) } : scene)))));
   }
 
   duplicateSelection(ids: readonly string[]): MutationResult {

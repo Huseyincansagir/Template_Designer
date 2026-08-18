@@ -6,7 +6,7 @@ import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export"
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import type { Asset, Geometry, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
-import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, getBounds, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type ResizeHandle, type SnapGuide } from "./canvas-interaction";
+import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, type EditorCommandId } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
@@ -63,8 +63,8 @@ type ConsoleEntry = {
 
 type CanvasInteractionState =
   | { mode: "idle" }
-  | { mode: "marquee"; pointerId: number; start: CanvasPoint; rect: CanvasRect; additive: boolean; baseSelection: string[] }
-  | { mode: "drag" | "resize"; pointerId: number; widgetIds: string[]; start: CanvasPoint; initial: Record<string, Geometry>; initialBounds?: CanvasRect; handle?: ResizeHandle }
+  | { mode: "marquee"; pointerId: number; start: CanvasPoint; screenStart: CanvasPoint; rect: CanvasRect; additive: boolean; baseSelection: string[] }
+  | { mode: "drag" | "resize"; pointerId: number; widgetIds: string[]; start: CanvasPoint; screenStart: CanvasPoint; initial: Record<string, Geometry>; initialBounds?: CanvasRect; handle?: ResizeHandle }
   | { mode: "panning"; pointerId: number; start: CanvasPoint; initialPan: CanvasPoint };
 
 const POINTER_DRAG_THRESHOLD = 4;
@@ -184,6 +184,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; kind: SelectionKind } | null>(null);
   const canvasScreenRef = useRef<HTMLDivElement>(null);
   const activePointerIdRef = useRef<number | null>(null);
+  const geometryOverridesRef = useRef<Record<string, Geometry>>({});
   const suppressCanvasClickRef = useRef(false);
 
   const availableProfiles = profileRegistry.list();
@@ -227,6 +228,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const createProject = () => {
+    cancelCanvasInteraction();
     const nextProject = createEmptyProject("Untitled Project");
     documentStore.create(nextProject);
     setSelection(null);
@@ -234,7 +236,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setViewMode("design");
     setOpenDocuments(["Project Overview"]);
     setActiveDocument("Project Overview");
-    setGeometryOverrides({});
+    clearGeometryPreview();
     logAction("New document created", "EVENT");
   };
 
@@ -253,8 +255,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const addRotation = (): boolean => {
     const themeId = resolvedSelection?.theme?.id;
-    if (!themeId) return false;
-    const result = editorApplication.addRotation(themeId);
+    if (!themeId || !activeProfile) return false;
+    const result = editorApplication.addRotation(themeId, 0, activeProfile.display);
     if (result.changed) logAction("Rotation added", "EVENT");
     return result.changed;
   };
@@ -269,7 +271,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const deleteSelectionCommand = (): boolean => {
     if (!selectedIds.length) return false;
-    const result = editorApplication.deleteSelection(selectedIds);
+    const widgetSelection = selectedIds.every((id) => resolveCanonicalNode(project, id)?.kind === "widget");
+    const result = widgetSelection
+      ? activeScene?.id ? editorApplication.deleteSelectionInScene(activeScene.id, selectedWidgetIds) : { changed: false }
+      : editorApplication.deleteSelection(selectedIds);
     if (!result.changed) return false;
     setSelection(null);
     setSelectedIds([]);
@@ -279,22 +284,31 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const duplicateSelectionCommand = (): boolean => {
     if (!selectedIds.length) return false;
-    const result = editorApplication.duplicateSelection(selectedIds);
+    const widgetSelection = selectedIds.every((id) => resolveCanonicalNode(project, id)?.kind === "widget");
+    const result = widgetSelection
+      ? activeScene?.id ? editorApplication.duplicateSelectionInScene(activeScene.id, selectedWidgetIds) : { changed: false }
+      : editorApplication.duplicateSelection(selectedIds);
     if (result.changed) logAction("Selection duplicated", "EVENT");
     return result.changed;
   };
 
-  const executeEditorDescriptor = (commandId: EditorCommandId) => {
+  const changeWidgetZOrder = (operation: ZOrderOperation): boolean => {
     const node = resolvedSelection;
+    if (!node?.widget || !node.scene || activeScene?.id !== node.scene.id) return false;
+    const updates = calculateZOrderUpdates(node.scene.widgets, node.widget.id, operation);
+    if (!updates) return false;
+    const result = editorApplication.setWidgetZIndicesInScene(node.scene.id, updates, `Widget ${operation}`);
+    if (result.changed) logAction(`Widget ${operation} executed`, "EVENT");
+    return result.changed;
+  };
+
+  const executeEditorDescriptor = (commandId: EditorCommandId) => {
     let changed = false;
     if (commandId === "project.add-theme-project") changed = addThemeProject();
     else if (commandId === "theme.add-rotation") changed = addRotation();
     else if (commandId === "rotation.add-scene") changed = addScene();
-    else if (commandId === "scene.reorder" || commandId === "scene.move") {
-      if (node?.scene && node.rotation) changed = editorApplication.moveScene(node.rotation.id, node.scene.id, 0).changed;
-    } else if (commandId === "widget.reorder") {
-      if (node?.widget && node.scene) changed = editorApplication.moveWidget(node.scene.id, node.widget.id, 0).changed;
-    } else if (commandId === "canvas.delete-selection") changed = deleteSelectionCommand();
+    else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
+    else if (commandId === "canvas.delete-selection") changed = deleteSelectionCommand();
     else if (commandId === "widget.open-properties") {
       activatePanel("properties");
       logAction("Properties panel opened", "EVENT");
@@ -456,7 +470,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const effectiveGeometry = (widget: Widget): Geometry => geometryOverrides[widget.id] ?? widget.geometry;
   const selectedWidgetIds = selectedIds.filter((id) => canvasWidgets.some((widget) => widget.id === id));
   const selectedEditableWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id) && !widget.locked);
-  const canvasTransform = { zoom: 1, pan: { x: 0, y: 0 }, sceneWidth: canvasWidth, sceneHeight: canvasHeight };
+  const canvasTransform = { zoom: zoom / 100, pan, sceneWidth: canvasWidth, sceneHeight: canvasHeight };
 
   const toCanvasPoint = (event: { clientX: number; clientY: number }): CanvasPoint => {
     const bounds = canvasScreenRef.current?.getBoundingClientRect();
@@ -480,19 +494,31 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     window.setTimeout(() => { suppressCanvasClickRef.current = false; }, 0);
   };
 
-  const commitGeometryCommand = (updates: Readonly<Record<string, Geometry>>, label: string) => {
-    const result = editorApplication.setWidgetGeometries(updates, label);
-    if (result.changed) logAction(`${label} committed`, "EVENT");
+  const setGeometryPreview = (updates: Record<string, Geometry>) => {
+    geometryOverridesRef.current = updates;
+    setGeometryOverrides(updates);
+  };
+
+  const clearGeometryPreview = () => {
+    geometryOverridesRef.current = {};
     setGeometryOverrides({});
     setSnapGuides([]);
   };
 
+  const commitGeometryCommand = (sceneId: string | undefined, updates: Readonly<Record<string, Geometry>>, label: string) => {
+    const result = sceneId ? editorApplication.setWidgetGeometriesInScene(sceneId, updates, label) : { changed: false };
+    if (result.changed) logAction(`${label} committed`, "EVENT");
+    clearGeometryPreview();
+  };
+
   const cancelCanvasInteraction = () => {
-    if (canvasPointer.mode === "idle" || activePointerIdRef.current === null) return;
-    releaseCanvasPointer(canvasPointer.pointerId);
+    if (canvasPointer.mode === "idle") {
+      clearGeometryPreview();
+      return;
+    }
+    if (activePointerIdRef.current !== null) releaseCanvasPointer(canvasPointer.pointerId);
     if (canvasPointer.mode === "panning") setPan(canvasPointer.initialPan);
-    setGeometryOverrides({});
-    setSnapGuides([]);
+    clearGeometryPreview();
     setCanvasPointer({ mode: "idle" });
     suppressCanvasClickRef.current = true;
     resetCanvasClickSuppression();
@@ -510,7 +536,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     event.preventDefault();
     captureCanvasPointer(event.pointerId);
     const start = toCanvasPoint(event);
-    setCanvasPointer({ mode: "marquee", pointerId: event.pointerId, start, rect: { x: start.x, y: start.y, width: 0, height: 0 }, additive: event.shiftKey || event.ctrlKey || event.metaKey, baseSelection: selectedIds });
+    setCanvasPointer({ mode: "marquee", pointerId: event.pointerId, start, screenStart: { x: event.clientX, y: event.clientY }, rect: { x: start.x, y: start.y, width: 0, height: 0 }, additive: event.shiftKey || event.ctrlKey || event.metaKey, baseSelection: selectedIds });
   };
 
   const beginWidgetMove = (widget: Widget, event: React.PointerEvent<HTMLDivElement>) => {
@@ -527,7 +553,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.visible ? "Visible" : "Hidden" });
     captureCanvasPointer(event.pointerId);
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
-    setCanvasPointer({ mode: "drag", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), initial, initialBounds: getBounds(Object.values(initial)) ?? undefined });
+    setCanvasPointer({ mode: "drag", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined });
   };
 
   const beginWidgetResize = (widget: Widget, handle: ResizeHandle, event: React.PointerEvent<HTMLButtonElement>) => {
@@ -542,7 +568,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Selected" });
     captureCanvasPointer(event.pointerId);
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
-    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
+    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
   };
 
   const beginSelectionResize = (handle: ResizeHandle, event: React.PointerEvent<HTMLButtonElement>) => {
@@ -552,26 +578,27 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (!editable.length) return;
     captureCanvasPointer(event.pointerId);
     const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
-    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
+    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
   };
 
   const handleCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     if (canvasPointer.mode === "idle" || event.pointerId !== canvasPointer.pointerId) return;
     if (canvasPointer.mode === "panning") {
       const distance = Math.hypot(event.clientX - canvasPointer.start.x, event.clientY - canvasPointer.start.y);
-      if (distance >= POINTER_DRAG_THRESHOLD) suppressCanvasClickRef.current = true;
+      if (exceedsPointerDragThreshold(distance)) suppressCanvasClickRef.current = true;
       setPan({ x: canvasPointer.initialPan.x + event.clientX - canvasPointer.start.x, y: canvasPointer.initialPan.y + event.clientY - canvasPointer.start.y });
       return;
     }
     const current = toCanvasPoint(event);
+    const screenDistance = Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y);
     if (canvasPointer.mode === "marquee") {
-      if (Math.hypot(current.x - canvasPointer.start.x, current.y - canvasPointer.start.y) < POINTER_DRAG_THRESHOLD) return;
+      if (!exceedsPointerDragThreshold(screenDistance)) return;
       setCanvasPointer((state) => state.mode === "marquee" ? { ...state, rect: normalizeRect(state.start, current) } : state);
       suppressCanvasClickRef.current = true;
       return;
     }
     const delta = { x: current.x - canvasPointer.start.x, y: current.y - canvasPointer.start.y };
-    if (Math.hypot(delta.x, delta.y) < POINTER_DRAG_THRESHOLD) return;
+    if (screenDistance <= POINTER_DRAG_THRESHOLD) return;
     const initialBounds = canvasPointer.initialBounds ?? getBounds(Object.values(canvasPointer.initial));
     if (!initialBounds) return;
     const snapConfiguration = { enabled: snapEnabled, gridSize: DEFAULT_GRID_SIZE, threshold: DEFAULT_SNAP_THRESHOLD };
@@ -592,7 +619,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       }));
       setSnapGuides(snapped.guides);
     }
-    setGeometryOverrides(updates);
+    setGeometryPreview(updates);
     suppressCanvasClickRef.current = true;
   };
 
@@ -600,9 +627,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (canvasPointer.mode === "idle" || event.pointerId !== canvasPointer.pointerId) return;
     releaseCanvasPointer(event.pointerId);
     if (canvasPointer.mode === "marquee") {
-      const moved = canvasPointer.rect.width >= POINTER_DRAG_THRESHOLD || canvasPointer.rect.height >= POINTER_DRAG_THRESHOLD;
+      const moved = exceedsPointerDragThreshold(Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y));
       if (moved) {
-        const nextIds = marqueeSelection(canvasWidgets, canvasPointer.rect, canvasPointer.baseSelection, canvasPointer.additive);
+        const nextIds = marqueeSelection(canvasWidgets, normalizeRect(canvasPointer.start, toCanvasPoint(event)), canvasPointer.baseSelection, canvasPointer.additive);
         setSelectedIds(nextIds);
         const first = nextIds[0] ? canvasWidgets.find((widget) => widget.id === nextIds[0]) : undefined;
         setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
@@ -617,8 +644,24 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       resetCanvasClickSuppression();
       return;
     }
-    const updates = geometryOverrides;
-    if (Object.keys(updates).length) commitGeometryCommand(updates, canvasPointer.mode === "drag" ? "Move widget" : "Resize widget");
+    const finalPoint = toCanvasPoint(event);
+    const finalDelta = { x: finalPoint.x - canvasPointer.start.x, y: finalPoint.y - canvasPointer.start.y };
+    const initialBounds = canvasPointer.initialBounds ?? getBounds(Object.values(canvasPointer.initial));
+    if (initialBounds && exceedsPointerDragThreshold(Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y))) {
+      const snapConfiguration = { enabled: snapEnabled, gridSize: DEFAULT_GRID_SIZE, threshold: DEFAULT_SNAP_THRESHOLD };
+      const otherWidgets = canvasWidgets.filter((widget) => !canvasPointer.widgetIds.includes(widget.id) && widget.visible && widget.enabled);
+      const previewBounds = canvasPointer.mode === "drag" ? moveGeometry(initialBounds, finalDelta) : resizeGeometry(initialBounds, canvasPointer.handle ?? "se", finalDelta);
+      const snapped = snapGeometryWithTargets(previewBounds, snapConfiguration, otherWidgets);
+      const finalGeometry = canvasPointer.mode === "drag"
+        ? Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => [widgetId, moveGeometry(canvasPointer.initial[widgetId], { x: finalDelta.x + snapped.geometry.x - previewBounds.x, y: finalDelta.y + snapped.geometry.y - previewBounds.y })]))
+        : Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => {
+          const next = transformGeometryWithinBounds(canvasPointer.initial[widgetId], initialBounds, snapped.geometry);
+          return [widgetId, { ...next, width: Math.max(10, next.width), height: Math.max(10, next.height) }];
+        }));
+      if (Object.keys(finalGeometry).length) commitGeometryCommand(activeScene?.id, finalGeometry, canvasPointer.mode === "drag" ? "Move widget" : "Resize widget");
+    } else {
+      clearGeometryPreview();
+    }
     setCanvasPointer({ mode: "idle" });
     resetCanvasClickSuppression();
   };
@@ -652,22 +695,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
       return;
     }
-    if (event.key.toLowerCase() === "d" && modifier) {
-      event.preventDefault();
-      duplicateSelectionCommand();
-      return;
-    }
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       deleteSelectionCommand();
       return;
     }
     if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) || !selectedWidgetIds.length) return;
+    const step = calculateNudgeStep(DEFAULT_GRID_SIZE, { shift: event.shiftKey, modifier });
+    if (step === null) return;
     event.preventDefault();
-    const step = event.shiftKey && modifier ? DEFAULT_GRID_SIZE * 5 : modifier ? DEFAULT_GRID_SIZE : 1;
     const delta = { x: event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0, y: event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0 };
     const updates = Object.fromEntries(selectedEditableWidgets.map((widget) => [widget.id, moveGeometry(widget.geometry, delta)]));
-    if (Object.keys(updates).length) commitGeometryCommand(updates, "Nudge widget");
+    if (Object.keys(updates).length) commitGeometryCommand(activeScene?.id, updates, "Nudge widget");
   };
 
   useEffect(() => {
@@ -676,7 +715,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return () => window.removeEventListener("blur", cancelOnBlur);
   });
 
-  const selectionGeometryWidgets = selectedWidgetIds.length > 1 ? selectedEditableWidgets : canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id));
+  useEffect(() => {
+    if (canvasPointer.mode !== "idle") cancelCanvasInteraction();
+    else clearGeometryPreview();
+    return () => { geometryOverridesRef.current = {}; };
+  }, [activeDocument, activeRotation?.id, activeScene?.id]);
+
+  useEffect(() => () => {
+    geometryOverridesRef.current = {};
+    if (activePointerIdRef.current !== null) releaseCanvasPointer(activePointerIdRef.current);
+  }, []);
+
+  const selectionGeometryWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id));
   const selectionBounds = getBounds(selectionGeometryWidgets.map(effectiveGeometry));
 
   const renderSnapGuide = (guide: SnapGuide) => <div key={`${guide.axis}-${guide.kind}-${guide.position}-${guide.widgetId ?? "grid"}`} className={`snap-guide snap-guide-${guide.axis} snap-guide-${guide.kind}`} style={guide.axis === "x" ? { left: `${(guide.position / canvasWidth) * 100}%` } : { top: `${(guide.position / canvasHeight) * 100}%` }} aria-hidden="true" />;
@@ -779,6 +829,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   );
 
   const commitSelectionGeometryField = (field: keyof Geometry, value: number) => {
+    const selectedScenes = selectedIds.map((id) => resolveCanonicalNode(project, id)?.scene?.id);
+    const sceneId = selectedScenes[0];
+    if (!sceneId || selectedScenes.some((candidate) => candidate !== sceneId) || sceneId !== activeScene?.id) {
+      logAction("Geometry edit blocked: selection is not scoped to active Scene", "WARN");
+      return;
+    }
     const updates: Record<string, Geometry> = {};
     selectedIds.forEach((id) => {
       const widget = resolveCanonicalNode(project, id)?.widget;
@@ -789,7 +845,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Geometry edit blocked: selection is locked or not a Widget", "WARN");
       return;
     }
-    const result = editorApplication.setWidgetGeometries(updates, `Set widget ${field}`);
+    const result = editorApplication.setWidgetGeometriesInScene(sceneId, updates, `Set widget ${field}`);
     if (result.changed) logAction(`Set widget ${field}`, "EVENT");
   };
 
@@ -879,7 +935,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.max(50, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.min(200, current + 10))}>+</button></div></div>
-            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, kind: selection?.kind ?? "canvas" }); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom / 100})` }} onClick={(event) => event.stopPropagation()}><div className="device-frame"><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={handleCanvasClick} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel}><div className="canvas-widget-layer">{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && canvasWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || canvasWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, kind: selection?.kind ?? "canvas" }); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={handleCanvasClick} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel}><div className="canvas-widget-layer" style={{ transform: `translate(${canvasTransform.pan.x}px, ${canvasTransform.pan.y}px) scale(${canvasTransform.zoom})`, transformOrigin: "top left" }}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && canvasWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || canvasWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}</div><div className="context-actions"><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" onPointerDown={(event) => beginResize("right", event)} />}

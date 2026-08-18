@@ -87,12 +87,12 @@ describe("canonical editor mutation pipeline remediation", () => {
     const { project, themeId } = hierarchyProject();
     const { store, editor } = setup(project);
     const before = structuredClone(current(store));
-    expect(editor.addRotation(themeId, 90).changed).toBe(true);
+    expect(editor.addRotation(themeId, 90, foundationDeviceProfile.display).changed).toBe(true);
     const after = structuredClone(current(store));
     const theme = after.themeProjectGroups[0].themeProjects[0];
     expect(theme.id).toBe(themeId);
     expect(theme.rotations).toHaveLength(2);
-    expect(theme.rotations[1]).toMatchObject({ angle: 90, width: 720, height: 1280, scenes: [] });
+    expect(theme.rotations[1]).toMatchObject({ angle: 90, width: 1280, height: 720, scenes: [] });
     expect(store.undo()).toBe(true);
     expect(current(store)).toEqual(before);
     expect(store.redo()).toBe(true);
