@@ -59,7 +59,26 @@ Filled from specialist reports during integration; each row gets a fix commit or
 
 | ID | Severity | Area | Finding | Decision |
 |---|---|---|---|---|
-| (pending) | | | | |
+| S3-01 | P1 | properties | Escape COMMITTED every draft (Name/X/Y/W/H/zIndex/priority) via blur()/state race | FIXED 0743bf2 (discardRef); live-verified: Escape reverts, no command pushed |
+| S3-02 | P2 | keyboard | Ctrl+Z dead immediately after Enter commit (focus stayed in input) | FIXED 0743bf2 (blur on successful commit); live-verified |
+| S3-03 | P2 | selection | undo of rename left a stale inspector label | FIXED 0743bf2 (label re-derivation on [project]); live-verified |
+| S3-04 | P3 | properties | Name field rejected invalid input silently | FIXED 0743bf2 (feedback state + status message) |
+| S3-05 | P3 | binding editor | dead duplicate footer "Add Binding" with stale title | FIXED 0743bf2 (removed) |
+| S3 lead | P2 | runtime | negated condition on unset input returned FALSE | FIXED 0743bf2 (symmetric NOT semantics + regression test) |
+| S4-01 | P1 | canvas | Add Widget stacked identical boxes (100% occlusion, only top widget reachable) | FIXED 0743bf2 (snap-grid cascade); live-verified boxes at distinct coords |
+| S4-02 | P1 | properties | inspector overflow 379–616 px with no scroll affordance | FIXED 0743bf2 (scrollbar-gutter + scroll shadows + tighter padding) |
+| S4-03 | P2 | contrast | 25 failing text pairs; --text-muted ≤4.26:1 on all surfaces | FIXED 0743bf2 (muted #5c6a70, primary buttons on --accent-hover, dark-surface text raised) |
+| S4-04 | P2 | disabled state | opacity .43 → 1.71:1 effective contrast | FIXED 0743bf2 (explicit token disabled recipe) |
+| S4-05 | P2 | alignment | zoom controls 24/14px inside a 28px toolbar | FIXED 0743bf2 (28px zoom + readout) |
+| S4-06 | P2 | alignment | tree rows 32 vs 37 px | FIXED 0743bf2 (fixed 36px rows) |
+| S4-07 | P2 | targets | 7×7 handles, 14×14 checkboxes | FIXED 0743bf2 (19px hit area, 16px checkboxes) |
+| S4-08 | P2 | layout | panels 3.65× device frame at 1280×720 | FIXED 0743bf2 (viewport-clamped panel widths) |
+| S4-09 | P2 | disabled honesty | disabled controls/menu items without reason | FIXED 0743bf2 (titles/disabledReason) |
+| S4-10 | P2 | truncation | widget ID unreadable, no tooltip | FIXED 0743bf2 (PropertyRow title) |
+| S4-11 | P3 | spacing | 8/13 containers off the 4-scale | FIXED 0743bf2 (normalized) |
+| S4-12 | P3 | sizing | panel actions 27px accidental | FIXED 0743bf2 (24px token) |
+| S4 a11y lead | P2 | a11y | splitter focus-visible removed the outline | FIXED 0743bf2 (focus ring kept) |
+| S4 §6 | P2 | empty states | empty states prose-only, no click target | FIXED 0743bf2 (Add Widget action inside canvas empty state) |
 
 ## Acceptance blockers after lead pass (fixed)
 
