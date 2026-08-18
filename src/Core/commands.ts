@@ -11,10 +11,14 @@ export interface CommandHistorySnapshot {
   readonly redoCount: number;
 }
 
+export const DEFAULT_HISTORY_LIMIT = 100;
+
 export class CommandHistory {
   private readonly undoStack: Command[] = [];
   private readonly redoStack: Command[] = [];
   private readonly listeners = new Set<() => void>();
+
+  constructor(private readonly limit = DEFAULT_HISTORY_LIMIT) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -33,6 +37,9 @@ export class CommandHistory {
   execute(command: Command): void {
     command.execute();
     this.undoStack.push(command);
+    // Bounded memory: each entry retains a full project snapshot, so the
+    // stack is capped and the oldest commands are evicted.
+    while (this.undoStack.length > this.limit) this.undoStack.shift();
     this.redoStack.length = 0;
     this.emit();
   }

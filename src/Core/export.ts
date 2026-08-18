@@ -7,6 +7,7 @@ import type {
   ThemeProject,
   Widget,
 } from "../Domain/models";
+import { stableSerialize } from "./serialize";
 import { validateProject, type ValidationResult } from "./validation";
 
 export class ExportBlockedError extends Error {
@@ -14,13 +15,6 @@ export class ExportBlockedError extends Error {
     super("Export is blocked because the project has validation errors.");
     this.name = "ExportBlockedError";
   }
-}
-
-function stableSerialize(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(",")}}`;
 }
 
 function collectNestedAssetIds(value: unknown, result: Set<string>): void {
@@ -76,22 +70,23 @@ function collectResourceAssetIds(project: Project): Set<string> {
   return result;
 }
 
-function assetExtension(asset: Asset): string {
-  const match = asset.sourcePath.match(/\.([a-z0-9]+)$/i);
-  return match ? `.${match[1].toLowerCase()}` : "";
-}
-
 function assetFile(asset: Asset): DeploymentFile {
   return {
-    path: `assets/${asset.id}${assetExtension(asset)}`,
+    // The V1 package carries a normalized logical asset record, NOT binary
+    // media bytes. Binary materialization belongs to the platform/deployment
+    // adapter (AGENTS.md package boundary). The record is deliberately
+    // labelled `.asset.json` so it can never be mistaken for media content,
+    // and it declares `binary: false`.
+    path: `assets/${asset.id}.asset.json`,
     kind: "asset",
     assetId: asset.id,
-    // The domain package contains a normalized logical asset record. Binary conversion/copying belongs to a later adapter.
     content: stableSerialize({
       id: asset.id,
       name: asset.name,
       mediaType: asset.mediaType,
+      sourcePath: asset.sourcePath,
       metadata: asset.metadata ?? {},
+      binary: false,
     }),
   };
 }
@@ -143,6 +138,7 @@ export async function buildDeploymentPackage(
   const themes = project.themeProjectGroups.flatMap((group) => group.themeProjects);
 
   const manifest = {
+    schemaVersion: project.schemaVersion,
     packageId: `package-${project.id}-${project.schemaVersion}`,
     packageVersion: project.schemaVersion,
     projectId: project.id,
@@ -177,7 +173,11 @@ export async function buildDeploymentPackage(
     files,
     projectId: project.id,
     integrity,
-    verified: true,
+    // A freshly built package is NEVER pre-declared verified. Verification
+    // is a separate step (verifyDeploymentPackage) and, for real targets, a
+    // read-back comparison after writing (AGENTS.md: never claim success
+    // before verification completes).
+    verified: false,
   };
 }
 

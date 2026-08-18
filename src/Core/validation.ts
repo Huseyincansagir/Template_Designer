@@ -154,6 +154,10 @@ function validateWidget(
     issue(issues, "INVALID_WIDGET_GEOMETRY", "Widget width and height must be greater than zero.", `${path}.geometry`, "Set positive width and height values.");
   }
 
+  if (!Number.isFinite(widget.zIndex)) {
+    issue(issues, "WIDGET_Z_INDEX_INVALID", "Widget zIndex must be a finite number.", `${path}.zIndex`, "Assign a finite zIndex value.");
+  }
+
   if (widget.mediaType && !profile.supportedMediaTypes.includes(widget.mediaType)) {
     issue(issues, "UNSUPPORTED_MEDIA_TYPE", `Media type '${widget.mediaType}' is not supported by the active DeviceProfile.`, `${path}.mediaType`, "Choose a supported media type.");
   }
@@ -217,6 +221,20 @@ function validateScene(
 
   scene.activationConditions.forEach((condition, index) => validateCondition(condition, profile, `${path}.activationConditions[${index}]`, issues));
   scene.widgets.forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues));
+
+  const maxConcurrentDecode = profile.videoCapabilities?.maxConcurrentDecode;
+  if (maxConcurrentDecode !== undefined && maxConcurrentDecode > 0) {
+    const videoWidgets = scene.widgets.filter((widget) => widget.mediaType === "video" || widget.mediaSlide?.mediaType === "video");
+    if (videoWidgets.length > maxConcurrentDecode) {
+      issue(
+        issues,
+        "VIDEO_SLOT_LIMIT_EXCEEDED",
+        `Scene uses ${videoWidgets.length} video widgets but the active DeviceProfile allows ${maxConcurrentDecode} concurrent decode slot(s).`,
+        `${path}.widgets`,
+        "Remove excess video widgets or reduce the Scene to the profile's concurrent decode capability.",
+      );
+    }
+  }
 }
 
 function validateFloorMapping(
@@ -301,12 +319,46 @@ export function validateProject(project: Project, profile?: DeviceProfile): Vali
     if (asset.sourcePath.trim().length === 0) issue(issues, "ASSET_SOURCE_REQUIRED", "Asset source path is required.", `assets[${index}].sourcePath`, "Import or locate the source asset.");
   });
 
+  // A project without any Theme Project is not publishable; validation must
+  // never pass on an empty project shell.
+  const themeCount = project.themeProjectGroups.reduce((count, group) => count + group.themeProjects.length, 0);
+  if (themeCount === 0) {
+    issue(issues, "THEME_PROJECT_REQUIRED", "A project must contain at least one Theme Project.", "themeProjectGroups", "Add a Theme Project before publishing.");
+  }
+
+  // Project-scope stable ID uniqueness for hierarchy nodes and widgets.
+  const groupIds = new Set<string>();
+  const themeIds = new Set<string>();
+  const widgetIds = new Set<string>();
+  project.themeProjectGroups.forEach((group, groupIndex) => {
+    if (groupIds.has(group.id)) issue(issues, "DUPLICATE_GROUP_ID", `Theme Project Group ID '${group.id}' is duplicated in the project scope.`, `themeProjectGroups[${groupIndex}].id`, "Assign a unique stable Group ID.");
+    groupIds.add(group.id);
+    group.themeProjects.forEach((theme, themeIndex) => {
+      if (themeIds.has(theme.id)) issue(issues, "DUPLICATE_THEME_ID", `Theme Project ID '${theme.id}' is duplicated in the project scope.`, `themeProjectGroups[${groupIndex}].themeProjects[${themeIndex}].id`, "Assign a unique stable Theme ID.");
+      themeIds.add(theme.id);
+      theme.rotations.forEach((rotation) => rotation.scenes.forEach((scene) => scene.widgets.forEach((widget) => {
+        if (widgetIds.has(widget.id)) issue(issues, "DUPLICATE_WIDGET_ID", `Widget ID '${widget.id}' is duplicated in the project scope.`, "widgets", "Assign a unique stable Widget ID.");
+        widgetIds.add(widget.id);
+      })));
+    });
+  });
+
   if (!profile) {
     return { valid: issues.every((current) => current.severity !== "error"), issues };
   }
 
   if (project.deviceProfileId !== profile.id) {
     issue(issues, "DEVICE_PROFILE_MISMATCH", `Project profile '${project.deviceProfileId}' does not match '${profile.id}'.`, "deviceProfileId", "Resolve the active DeviceProfile before validation.");
+  }
+
+  const supportedFormats = (profile.supportedFormats ?? []).map((format) => format.toLowerCase());
+  if (supportedFormats.length > 0) {
+    project.assets.forEach((asset, index) => {
+      const extension = asset.sourcePath.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
+      if (extension && !supportedFormats.includes(extension)) {
+        issue(issues, "ASSET_FORMAT_UNSUPPORTED", `Asset format '.${extension}' is not supported by the active DeviceProfile.`, `assets[${index}].sourcePath`, "Use a profile-supported format or remove the asset reference.");
+      }
+    });
   }
 
   project.defaultAssetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `defaultAssetIds[${index}]`, issues));

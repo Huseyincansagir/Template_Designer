@@ -242,6 +242,7 @@ export interface BindingEvaluation {
 }
 
 export interface PackageManifest {
+  schemaVersion: number;
   packageId: Id;
   packageVersion: number;
   projectId: Id;

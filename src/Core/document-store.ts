@@ -1,6 +1,7 @@
 import type { Project } from "../Domain/models";
 import type { ProjectStorage } from "../Infrastructure/project-storage";
 import { CommandHistory, type Command, type CommandHistorySnapshot } from "./commands";
+import { stableSerialize } from "./serialize";
 
 export interface DocumentSnapshot {
   readonly project: Project | undefined;
@@ -25,7 +26,7 @@ export interface DocumentStore {
 }
 
 function serialize(project: Project | undefined): string {
-  return project ? JSON.stringify(project) : "";
+  return project ? stableSerialize(project) : "";
 }
 
 export class InMemoryDocumentStore implements DocumentStore {

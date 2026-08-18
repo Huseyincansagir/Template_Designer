@@ -409,9 +409,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     try {
       setDeploymentStatus("Building…");
       const built = await buildDeploymentPackage(project, activeProfile);
+      setDeploymentStatus("Built · verifying…");
       const verified = await verifyDeploymentPackage(built);
-      setDeploymentStatus(verified.verified ? "Verified package" : "Blocked · integrity failed");
-      logAction(verified.verified ? `Package verified · ${verified.manifest.assetIds.length} asset(s)` : "Package verification failed", verified.verified ? "INFO" : "ERROR");
+      setDeploymentStatus(verified.verified ? "Built · checksum verified" : "Blocked · integrity failed");
+      logAction(verified.verified ? `Package verified · ${verified.manifest.assetIds.length} asset record(s)` : "Package verification failed", verified.verified ? "INFO" : "ERROR");
     } catch (error) {
       setDeploymentStatus("Blocked · export error");
       logAction(error instanceof Error ? error.message : "Package build failed", "ERROR");

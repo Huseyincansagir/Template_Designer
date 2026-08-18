@@ -191,10 +191,78 @@ describe("canonical deployment export", () => {
     expect(assetIds).toEqual(["asset-default", "asset-logo", "asset-used-audio", "asset-used-video"]);
     expect(assetIds).not.toContain("asset-unused");
     expect(packageFile.manifest.assetIds).toEqual(assetIds);
-    expect(packageFile.verified).toBe(true);
+    expect(packageFile.manifest).toMatchObject({ schemaVersion: 1 });
+    // A freshly built package is never pre-declared verified.
+    expect(packageFile.verified).toBe(false);
     expect((await verifyDeploymentPackage(packageFile)).verified).toBe(true);
+    expect(packageFile.files.filter((file) => file.kind === "asset").every((file) => file.path.endsWith(".asset.json"))).toBe(true);
 
     const tampered = { ...packageFile, files: packageFile.files.map((file, index) => index === 0 ? { ...file, content: `${file.content}tampered` } : file) };
     expect((await verifyDeploymentPackage(tampered)).verified).toBe(false);
+  });
+
+  it("blocks build for a project without any Theme Project", async () => {
+    const empty = {
+      id: "project-empty",
+      schemaVersion: 1,
+      name: "Empty",
+      deviceProfileId: profile.id,
+      themeProjectGroups: [{ id: "group-empty", name: "Empty Group", themeProjects: [] }],
+      assets: [],
+      metadata: {},
+    };
+    const validation = validateProject(empty, profile);
+    expect(validation.valid).toBe(false);
+    expect(validation.issues.map((issue) => issue.code)).toContain("THEME_PROJECT_REQUIRED");
+    await expect(buildDeploymentPackage(empty, profile)).rejects.toThrow("Export is blocked");
+  });
+
+  it("flags duplicated widget ids, non-finite zIndex and decode-slot violations", () => {
+    const base = projectWithTheme();
+    const duplicatedWidget = mediaWidget("fire-widget");
+    const duplicated: Project = {
+      ...base,
+      themeProjectGroups: [{
+        ...base.themeProjectGroups[0]!,
+        themeProjects: [{
+          ...base.themeProjectGroups[0]!.themeProjects[0]!,
+          rotations: base.themeProjectGroups[0]!.themeProjects[0]!.rotations.map((rotation) => rotation.id === "r0" ? {
+            ...rotation,
+            scenes: [...rotation.scenes, { id: "dup", name: "dup", priority: 1, activationConditions: [], widgets: [duplicatedWidget] }],
+          } : rotation),
+        }],
+      }],
+    };
+    const duplicateResult = validateProject(duplicated, profile);
+    expect(duplicateResult.issues.map((issue) => issue.code)).toContain("DUPLICATE_WIDGET_ID");
+
+    const badZ = projectWithTheme({
+      themeProjectGroups: [{
+        ...projectWithTheme().themeProjectGroups[0]!,
+        themeProjects: [{
+          ...projectWithTheme().themeProjectGroups[0]!.themeProjects[0]!,
+          rotations: projectWithTheme().themeProjectGroups[0]!.themeProjects[0]!.rotations.map((rotation) => rotation.id === "r0" ? {
+            ...rotation,
+            scenes: [scene("badz", 1, { ...mediaWidget("badz"), zIndex: Number.NaN })],
+          } : rotation),
+        }],
+      }],
+    });
+    expect(validateProject(badZ, profile).issues.map((issue) => issue.code)).toContain("WIDGET_Z_INDEX_INVALID");
+
+    const threeVideos: Project = {
+      ...base,
+      themeProjectGroups: [{
+        ...base.themeProjectGroups[0]!,
+        themeProjects: [{
+          ...base.themeProjectGroups[0]!.themeProjects[0]!,
+          rotations: base.themeProjectGroups[0]!.themeProjects[0]!.rotations.map((rotation) => rotation.id === "r0" ? {
+            ...rotation,
+            scenes: [{ id: "videos", name: "videos", priority: 1, activationConditions: [], widgets: [mediaWidget("v1"), mediaWidget("v2"), mediaWidget("v3")] }],
+          } : rotation),
+        }],
+      }],
+    };
+    expect(validateProject(threeVideos, profile).issues.map((issue) => issue.code)).toContain("VIDEO_SLOT_LIMIT_EXCEEDED");
   });
 });
