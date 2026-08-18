@@ -124,7 +124,7 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 121/121 in 12 files (was 90/11), including two enforced architecture invariants |
+| `npm test` | **PASS** — 126/126 in 12 files (was 90/11), including two enforced architecture invariants and the selection-refusal policy |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
 | Live browser acceptance | **PASS** — 128 checks across 4 scripted runs, **0 console errors** |
@@ -183,7 +183,7 @@ Honest, and measured against what a designer needs — not against the test suit
 | Validation | **8 / 10** | 49 rules, each with code, path, message and remediation, and now navigable. Rule severities are not user-configurable and there is no "fix it for me". |
 | Build | **8 / 10** | Deterministic manifest, coherent asset sets, sha-256 checksum, separate verify step, never pre-declared verified, blocked states explained. |
 | Deployment | **2 / 10** | The package boundary and the target interface are correct and honest. Nothing writes to an SD card. This is the V1 acceptance gap and it is environmental. |
-| Discoverability | **8 / 10** | 9 menus with disabled reasons, per-node context menus, persistent switchers, empty-state CTAs, navigable validation, document properties, 17 shortcuts. No command palette, no onboarding. |
+| Discoverability | **8 / 10** | 9 menus whose disabled entries state their reason from a single shared policy, per-node context menus, persistent switchers, empty-state CTAs, navigable validation, document properties, 17 shortcuts. No command palette, no onboarding. |
 | Error recovery | **9 / 10** | No white screens under any injected corruption; every refusal explains itself; rejected payloads are preserved; the error boundary is honest about what may be lost. |
 
 **Weighted design-scope readiness: 8.2 / 10. Full V1 acceptance: blocked on the SD-card transport, which this environment cannot build or test.**

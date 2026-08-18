@@ -9,6 +9,7 @@ import { compactDeviceProfile, createEmptyProject, foundationDeviceProfile } fro
 import { LocalStorageProjectStorage, PROJECT_STORAGE_KEY } from "../src/Infrastructure/project-storage";
 import { displayNameOf, extensionOf, inferMediaType, toAssetDraft } from "../src/Infrastructure/asset-import";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../src/Infrastructure/project-file";
+import { describeSelectionRefusal } from "../src/App/editor-commands";
 import type { Project, Widget } from "../src/Domain/models";
 
 function widget(id: string, widgetType = "media", overrides: Partial<Widget> = {}): Widget {
@@ -516,5 +517,55 @@ describe("Load gate rejects documents the editor cannot repair (D3-11/D3-12)", (
     // A structurally sound project with unique ids still loads.
     raw.setItem(PROJECT_STORAGE_KEY, JSON.stringify(createEmptyProject("Sound")));
     expect(storage.read().status).toBe("loaded");
+  });
+});
+describe("Refusal policy is explained before it is enforced (D2-05/D2-06/D2-09)", () => {
+  it("names the canonical reason a Rotation cannot be deleted or duplicated", () => {
+    for (const operation of ["delete", "duplicate"] as const) {
+      const reason = describeSelectionRefusal(["rotation"], operation, 1);
+      expect(reason).toMatch(/R0, R90, R180 and R270/);
+      expect(reason).toMatch(/no Add Rotation command/);
+    }
+    // Mixed selections that include a Rotation are refused for the same reason.
+    expect(describeSelectionRefusal(["scene", "rotation"], "delete", 2)).toMatch(/R0, R90, R180 and R270/);
+  });
+
+  it("refuses the last Theme Project Group only for delete, and only when it is the last", () => {
+    expect(describeSelectionRefusal(["theme-group"], "delete", 1)).toMatch(/at least one Theme Project Group/);
+    // With a sibling group the delete is allowed again.
+    expect(describeSelectionRefusal(["theme-group"], "delete", 2)).toBeUndefined();
+    // Duplicating a group is not constrained by the count.
+    expect(describeSelectionRefusal(["theme-group"], "duplicate", 1)).toBeUndefined();
+  });
+
+  it("refuses mixed selections and asset duplication with specific reasons", () => {
+    expect(describeSelectionRefusal(["widget", "scene"], "delete", 2)).toMatch(/widgets only or containers only/);
+    expect(describeSelectionRefusal(["asset", "scene"], "delete", 2)).toMatch(/assets only or hierarchy nodes only/);
+    expect(describeSelectionRefusal(["asset"], "duplicate", 2)).toMatch(/not defined for Assets/);
+    // An asset-only delete is allowed; references are purged by removeAssets.
+    expect(describeSelectionRefusal(["asset"], "delete", 2)).toBeUndefined();
+    expect(describeSelectionRefusal([], "delete", 2)).toBe("Nothing selected");
+  });
+
+  it("permits every operation the Core actually accepts", () => {
+    expect(describeSelectionRefusal(["widget"], "delete", 1)).toBeUndefined();
+    expect(describeSelectionRefusal(["widget", "widget"], "duplicate", 1)).toBeUndefined();
+    expect(describeSelectionRefusal(["scene"], "delete", 1)).toBeUndefined();
+    expect(describeSelectionRefusal(["theme"], "duplicate", 1)).toBeUndefined();
+  });
+
+  it("agrees with what the Core does, for every case it permits and refuses", () => {
+    // The policy is only honest if the Core reaches the same verdict.
+    const { project, rotationId, themeId } = fixture();
+    const { editor } = setup(project);
+    expect(describeSelectionRefusal(["rotation"], "delete", 1)).toBeDefined();
+    expect(editor.deleteSelection([rotationId]).changed).toBe(false);
+    expect(describeSelectionRefusal(["rotation"], "duplicate", 1)).toBeDefined();
+    expect(editor.duplicateSelection([rotationId]).changed).toBe(false);
+    expect(describeSelectionRefusal(["theme-group"], "delete", 1)).toBeDefined();
+    expect(editor.deleteSelection([project.themeProjectGroups[0].id]).changed).toBe(false);
+    // ...and a permitted operation really is permitted.
+    expect(describeSelectionRefusal(["theme"], "duplicate", 1)).toBeUndefined();
+    expect(editor.duplicateSelection([themeId]).changed).toBe(true);
   });
 });

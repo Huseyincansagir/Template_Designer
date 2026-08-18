@@ -99,3 +99,39 @@ export function commandsForSelection(
   }));
   return [...addWidgetDescriptors, ...base];
 }
+
+export type SelectionOperation = "delete" | "duplicate";
+
+/**
+ * Why a selection cannot be deleted or duplicated, or undefined when it can.
+ *
+ * This is policy, not presentation: the menu affordance and the runtime refusal
+ * both read it, so an action the Core will always refuse is shown disabled WITH
+ * its reason instead of being offered and then rejected. Keeping it pure makes
+ * the rules directly testable.
+ */
+export function describeSelectionRefusal(
+  kinds: readonly SelectionKind[],
+  operation: SelectionOperation,
+  themeGroupCount: number,
+): string | undefined {
+  if (!kinds.length) return "Nothing selected";
+  // The canonical invariant: a Theme Project holds exactly R0/R90/R180/R270 and
+  // no command can restore a removed one.
+  if (kinds.includes("rotation")) {
+    return "A Theme Project must keep exactly Rotation / Form R0, R90, R180 and R270, and there is no Add Rotation command to restore one";
+  }
+  if (kinds.includes("widget") && !kinds.every((kind) => kind === "widget")) {
+    return "Mixed widget and container selection - select widgets only or containers only";
+  }
+  if (kinds.includes("asset") && !kinds.every((kind) => kind === "asset")) {
+    return "Mixed asset and hierarchy selection - select assets only or hierarchy nodes only";
+  }
+  if (operation === "duplicate" && kinds.every((kind) => kind === "asset")) {
+    return "Duplicate is not defined for Assets - import the file again or reuse the same asset";
+  }
+  if (operation === "delete" && kinds.includes("theme-group") && themeGroupCount <= 1) {
+    return "A project must keep at least one Theme Project Group";
+  }
+  return undefined;
+}

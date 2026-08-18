@@ -13,7 +13,7 @@ import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-sessio
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
 import type { Asset, Binding, Condition, ConditionMode, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
-import { commandsForSelection, type EditorCommandId } from "./editor-commands";
+import { commandsForSelection, describeSelectionRefusal, type EditorCommandId, type SelectionOperation } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
 import { canonicalShortcuts, matchShortcut, shortcutDisplay, shortcutRegistry } from "./shortcut-registry";
@@ -109,7 +109,7 @@ function getThemeNodes(group: ThemeProjectGroup): TreeNode[] {
           id: scene.id,
           label: scene.name,
           kind: "Scene",
-          detail: `Priority ${scene.priority}`,
+          detail: `Priority ${scene.priority}${scene.enabled === false ? " · disabled" : ""}${scene.activationConditions.length ? ` · ${scene.activationConditions.length} condition(s)` : ""}`,
           children: scene.widgets.map((widget) => ({
             id: widget.id,
             label: widget.name,
@@ -1255,6 +1255,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     canvasScreenRef.current?.focus();
     logAction("Selection deleted", "EVENT");
     return true;
+  };
+
+  /**
+   * Reads the shared refusal policy (`describeSelectionRefusal`) so the menu
+   * affordance and the runtime refusal can never drift (D2-05/D2-06/D2-09).
+   */
+  const selectionRefusal = (operation: SelectionOperation): string | undefined => {
+    const kinds = selectedIds.map((id) => resolveCanonicalNode(project, id)?.kind).filter((kind): kind is SelectionKind => Boolean(kind));
+    if (selectedIds.length && !kinds.length) return "The selection no longer resolves to a canonical object";
+    return describeSelectionRefusal(kinds, operation, groups.length);
   };
 
   const deleteSelectionCommand = (): boolean => {
@@ -2598,7 +2608,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Paste", shortcut: shortcutFor("paste"), disabled: !clipboard, title: clipboard ? undefined : "Nothing copied", onClick: pasteSelection },
       { label: "Select All in Scene", shortcut: shortcutFor("select-all"), disabled: !canvasWidgets.length, title: canvasWidgets.length ? undefined : "The active Scene has no widget", onClick: selectAllCommand },
       { label: "Rename Selection", shortcut: shortcutFor("rename"), disabled: !selection, title: selection ? "Focus the Name field in Properties" : "Nothing selected", onClick: requestRename },
-      { label: "Delete Selection", shortcut: "Delete", disabled: !selectedIds.length, title: selectedIds.length ? undefined : "Nothing selected", onClick: deleteSelectionCommand },
+      { label: "Delete Selection", shortcut: "Delete", disabled: Boolean(selectionRefusal("delete")), title: selectionRefusal("delete"), onClick: deleteSelectionCommand },
       { label: "Reset Layout", onClick: resetLayout },
     ],
     View: [
@@ -2631,7 +2641,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Edit Scene Activation", disabled: !activeSceneNode, title: activeSceneNode ? "Select the Scene and open its activation rule in Properties" : "No active Scene", onClick: () => { if (activeSceneNode) selectNode({ id: activeSceneNode.id, label: activeSceneNode.name, kind: "Scene", detail: `Priority ${activeSceneNode.priority}` }); activatePanel("properties"); } },
       { label: "Hide All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(false) },
       { label: "Show All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(true) },
-      { label: "Delete Scene", disabled: !activeSceneNode, onClick: () => deleteNodeCommand(activeSceneNode?.id, "Scene") },
+      { label: "Delete Scene", disabled: !activeSceneNode, title: activeSceneNode ? `Delete ${activeSceneNode.name} and every widget in it` : "No active Scene", onClick: () => deleteNodeCommand(activeSceneNode?.id, "Scene") },
       { label: "Test Scene in Simulator", disabled: !activeSceneNode, onClick: () => { activatePanel("simulator"); traceRuntime(); } },
     ],
     Widget: [
@@ -2640,9 +2650,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: selectedWidgetsAllVisible ? "Hide Selection" : "Show Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("visible") },
       { label: "Bring To Front", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("bring-to-front") },
       { label: "Send To Back", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("send-to-back") },
-      { label: "Duplicate Selection", disabled: !selectedIds.length, onClick: duplicateSelectionCommand },
-      { label: "Duplicate Mode (click to place)", disabled: !selectedWidgetIds.length, onClick: enterDuplicateMode },
-      { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
+      { label: "Duplicate Selection", disabled: Boolean(selectionRefusal("duplicate")), title: selectionRefusal("duplicate"), onClick: duplicateSelectionCommand },
+      { label: "Duplicate Mode (click to place)", disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? "Click the canvas to place a copy; Esc exits" : "Requires a selected widget in the active Scene", onClick: enterDuplicateMode },
+      { label: "Delete Selection", disabled: Boolean(selectionRefusal("delete")), title: selectionRefusal("delete"), onClick: deleteSelectionCommand },
       { label: "Binding Editor", disabled: !resolvedSelection?.widget, title: resolvedSelection?.widget ? undefined : "Requires a single selected widget", onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
     ],
     Asset: [
