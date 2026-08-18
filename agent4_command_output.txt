@@ -1,0 +1,49 @@
+===== npm run typecheck =====
+
+> template-designer@0.1.0 typecheck
+> tsc --noEmit
+
+EXIT_CODE=
+===== npm test -- --run =====
+
+> template-designer@0.1.0 test
+> vitest run --run
+
+
+ RUN  v3.2.7 /home/ubuntu/Template_Designer
+
+ ✓ tests/foundation.test.ts (3 tests) 7ms
+ ✓ tests/domain-runtime.test.ts (6 tests) 15ms
+ ✓ tests/ui-phase2.test.ts (4 tests) 5ms
+ ✓ tests/canvas-interaction.test.ts (16 tests) 11ms
+ ✓ tests/editor-pipeline.test.ts (16 tests) 48ms
+ ✓ tests/architecture.test.ts (2 tests) 4ms
+
+ Test Files  6 passed (6)
+      Tests  47 passed (47)
+   Start at  13:47:36
+   Duration  720ms (transform 538ms, setup 0ms, collect 938ms, tests 89ms, environment 1ms, prepare 558ms)
+
+EXIT_CODE=
+===== npm run build =====
+
+> template-designer@0.1.0 build
+> tsc --noEmit && vite build
+
+vite v7.3.6 building client environment for production...
+transforming...
+✓ 40 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.47 kB │ gzip:  0.29 kB
+dist/assets/index-Bdz2W_qV.css   28.11 kB │ gzip:  5.83 kB
+dist/assets/index-AmkIHbnQ.js   276.96 kB │ gzip: 83.85 kB
+✓ built in 1.29s
+EXIT_CODE=
+===== npm run tauri:check =====
+
+> template-designer@0.1.0 tauri:check
+> cargo check --manifest-path src-tauri/Cargo.toml
+
+sh: 1: cargo: not found
+EXIT_CODE=

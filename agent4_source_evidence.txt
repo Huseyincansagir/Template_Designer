@@ -1,0 +1,2176 @@
+===== src/Core/editor-application.ts =====
+     1	import type { DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+     2	import { InMemoryDocumentStore } from "./document-store";
+     3	
+     4	export type ProjectMutation = (project: Project) => Project;
+     5	export type MutationResult = { readonly changed: boolean };
+     6	
+     7	function clone<T>(value: T): T { return structuredClone(value); }
+     8	function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
+     9	function equalProject(left: Project, right: Project): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+    10	
+    11	function isValidGeometry(value: unknown): value is Geometry {
+    12	  if (!value || typeof value !== "object") return false;
+    13	  const candidate = value as Record<string, unknown>;
+    14	  return Object.keys(candidate).length === 4
+    15	    && ["x", "y", "width", "height"].every((key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key]))
+    16	    && (candidate.width as number) > 0
+    17	    && (candidate.height as number) > 0;
+    18	}
+    19	
+    20	function rotationDimensions(display: DeviceProfile["display"], angle: RotationAngle): Pick<Rotation, "width" | "height"> {
+    21	  return angle === 90 || angle === 270
+    22	    ? { width: display.height, height: display.width }
+    23	    : { width: display.width, height: display.height };
+    24	}
+    25	
+    26	function findUniqueScene(project: Project, sceneId: string): Scene | undefined {
+    27	  let found: Scene | undefined;
+    28	  let count = 0;
+    29	  for (const group of project.themeProjectGroups) {
+    30	    for (const theme of group.themeProjects) {
+    31	      for (const rotation of theme.rotations) {
+    32	        for (const scene of rotation.scenes) {
+    33	          if (scene.id === sceneId) {
+    34	            found = scene;
+    35	            count += 1;
+    36	          }
+    37	        }
+    38	      }
+    39	    }
+    40	  }
+    41	  return count === 1 ? found : undefined;
+    42	}
+    43	
+    44	function countWidgetOccurrences(project: Project, widgetId: string): number {
+    45	  return project.themeProjectGroups.reduce((groupCount, group) => groupCount + group.themeProjects.reduce((themeCount, theme) => themeCount + theme.rotations.reduce((rotationCount, rotation) => rotationCount + rotation.scenes.reduce((sceneCount, scene) => sceneCount + scene.widgets.filter((widget) => widget.id === widgetId).length, 0), 0), 0), 0);
+    46	}
+    47	
+    48	function validScopedWidgetIds(project: Project, sceneId: string, ids: readonly string[]): boolean {
+    49	  const scene = findUniqueScene(project, sceneId);
+    50	  if (!scene || !ids.length || new Set(ids).size !== ids.length) return false;
+    51	  return ids.every((id) => countWidgetOccurrences(project, id) === 1 && scene.widgets.filter((widget) => widget.id === id).length === 1);
+    52	}
+    53	
+    54	function validGlobalGeometryUpdates(project: Project, updates: Readonly<Record<string, Geometry>>): boolean {
+    55	  const ids = Object.keys(updates);
+    56	  return ids.length > 0 && ids.every((id) => countWidgetOccurrences(project, id) === 1 && isValidGeometry(updates[id]));
+    57	}
+    58	
+    59	function mapSceneWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
+    60	  return { ...scene, widgets: scene.widgets.map(map) };
+    61	}
+    62	
+    63	function mapProjectGroups(project: Project, map: (group: ThemeProjectGroup) => ThemeProjectGroup): Project {
+    64	  return { ...project, themeProjectGroups: project.themeProjectGroups.map(map) };
+    65	}
+    66	
+    67	function mapThemeProjects(group: ThemeProjectGroup, map: (theme: ThemeProject) => ThemeProject): ThemeProjectGroup {
+    68	  return { ...group, themeProjects: group.themeProjects.map(map) };
+    69	}
+    70	
+    71	function mapRotations(theme: ThemeProject, map: (rotation: Rotation) => Rotation): ThemeProject {
+    72	  return { ...theme, rotations: theme.rotations.map(map) };
+    73	}
+    74	
+    75	function mapScenes(rotation: Rotation, map: (scene: Scene) => Scene): Rotation {
+    76	  return { ...rotation, scenes: rotation.scenes.map(map) };
+    77	}
+    78	
+    79	function mapWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
+    80	  return { ...scene, widgets: scene.widgets.map(map) };
+    81	}
+    82	
+    83	function duplicateWidget(widget: Widget): Widget {
+    84	  return {
+    85	    ...clone(widget),
+    86	    id: newId("widget"),
+    87	    name: `${widget.name} Copy`,
+    88	    geometry: { ...widget.geometry, x: widget.geometry.x + 10, y: widget.geometry.y + 10 },
+    89	  };
+    90	}
+    91	
+    92	function duplicateScene(scene: Scene): Scene {
+    93	  return {
+    94	    ...clone(scene),
+    95	    id: newId("scene"),
+    96	    name: `${scene.name} Copy`,
+    97	    widgets: scene.widgets.map(duplicateWidget),
+    98	  };
+    99	}
+   100	
+   101	function duplicateRotation(rotation: Rotation): Rotation {
+   102	  return {
+   103	    ...clone(rotation),
+   104	    id: newId("rotation"),
+   105	    scenes: rotation.scenes.map(duplicateScene),
+   106	  };
+   107	}
+   108	
+   109	function duplicateThemeProject(theme: ThemeProject): ThemeProject {
+   110	  return {
+   111	    ...clone(theme),
+   112	    id: newId("theme"),
+   113	    name: `${theme.name} Copy`,
+   114	    rotations: theme.rotations.map(duplicateRotation),
+   115	  };
+   116	}
+   117	
+   118	export class EditorApplication {
+   119	  constructor(readonly documents: InMemoryDocumentStore) {}
+   120	
+   121	  executeCommand(command: { readonly label: string; execute(): void; undo(): void }): void {
+   122	    this.documents.execute(command);
+   123	  }
+   124	
+   125	  execute(label: string, mutation: ProjectMutation): MutationResult {
+   126	    const current = this.documents.getCurrent();
+   127	    if (!current) throw new Error("No document is open");
+   128	
+   129	    const before = clone(current);
+   130	    const after = mutation(clone(before));
+   131	    if (equalProject(before, after)) return { changed: false };
+   132	
+   133	    this.documents.execute({
+   134	      label,
+   135	      execute: () => this.documents.replaceCurrent(clone(after)),
+   136	      undo: () => this.documents.replaceCurrent(clone(before)),
+   137	    });
+   138	    return { changed: true };
+   139	  }
+   140	
+   141	  addThemeProject(groupId: string, name = "New Theme Project"): MutationResult {
+   142	    return this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
+   143	      ...group,
+   144	      themeProjects: [...group.themeProjects, { id: newId("theme"), name, rotations: [], resources: [] }],
+   145	    } : group));
+   146	  }
+   147	
+   148	  addRotation(themeId: string, angle: RotationAngle = 0, display?: DeviceProfile["display"]): MutationResult {
+   149	    if (!display || !Number.isFinite(display.width) || !Number.isFinite(display.height) || display.width <= 0 || display.height <= 0) return { changed: false };
+   150	    const dimensions = rotationDimensions(display, angle);
+   151	    return this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
+   152	      ...theme,
+   153	      rotations: [...theme.rotations, { id: newId("rotation"), angle, ...dimensions, scenes: [] }],
+   154	    } : theme)));
+   155	  }
+   156	
+   157	  addScene(rotationId: string, name = "New Scene"): MutationResult {
+   158	    return this.execute(`Add Scene: ${name}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => rotation.id === rotationId ? {
+   159	      ...rotation,
+   160	      scenes: [...rotation.scenes, { id: newId("scene"), name, widgets: [], priority: 0, activationConditions: [] }],
+   161	    } : rotation))));
+   162	  }
+   163	
+   164	  moveScene(rotationId: string, sceneId: string, toIndex: number): MutationResult {
+   165	    return this.execute("Move Scene", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => {
+   166	      if (rotation.id !== rotationId || toIndex < 0 || toIndex >= rotation.scenes.length) return rotation;
+   167	      const fromIndex = rotation.scenes.findIndex((scene) => scene.id === sceneId);
+   168	      if (fromIndex < 0 || fromIndex === toIndex) return rotation;
+   169	      const scenes = [...rotation.scenes];
+   170	      const [scene] = scenes.splice(fromIndex, 1);
+   171	      scenes.splice(toIndex, 0, scene);
+   172	      return { ...rotation, scenes };
+   173	    }))));
+   174	  }
+   175	
+   176	  moveWidget(sceneId: string, widgetId: string, toIndex: number): MutationResult {
+   177	    return this.execute("Move Widget", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+   178	      if (scene.id !== sceneId || toIndex < 0 || toIndex >= scene.widgets.length) return scene;
+   179	      const fromIndex = scene.widgets.findIndex((widget) => widget.id === widgetId);
+   180	      if (fromIndex < 0 || fromIndex === toIndex) return scene;
+   181	      const widgets = [...scene.widgets];
+   182	      const [widget] = widgets.splice(fromIndex, 1);
+   183	      widgets.splice(toIndex, 0, widget);
+   184	      return { ...scene, widgets };
+   185	    })))));
+   186	  }
+   187	
+   188	  setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
+   189	    const current = this.documents.getCurrent();
+   190	    if (!current || !validGlobalGeometryUpdates(current, updates)) return { changed: false };
+   191	    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapSceneWidgets(scene, (widget) => {
+   192	      const geometry = updates[widget.id];
+   193	      return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
+   194	    }))))));
+   195	  }
+   196	
+   197	  setWidgetGeometriesInScene(sceneId: string, updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
+   198	    const current = this.documents.getCurrent();
+   199	    const ids = Object.keys(updates);
+   200	    if (!current || !validScopedWidgetIds(current, sceneId, ids) || !ids.every((id) => isValidGeometry(updates[id]))) return { changed: false };
+   201	    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? mapSceneWidgets(scene, (widget) => {
+   202	      const geometry = updates[widget.id];
+   203	      return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
+   204	    }) : scene)))));
+   205	  }
+   206	
+   207	  editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): MutationResult {
+   208	    const current = this.documents.getCurrent();
+   209	    if (!current || !validScopedWidgetIds(current, sceneId, [widgetId]) || (patch.geometry !== undefined && !isValidGeometry(patch.geometry))) return { changed: false };
+   210	    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? {
+   211	      ...scene,
+   212	      widgets: scene.widgets.map((widget) => {
+   213	        if (widget.id !== widgetId) return widget;
+   214	        const { geometry, ...editablePatch } = clone(patch);
+   215	        return { ...widget, ...editablePatch, ...(widget.locked || geometry === undefined ? {} : { geometry }) };
+   216	      }),
+   217	    } : scene)))));
+   218	  }
+   219	
+   220	  deleteSelection(ids: readonly string[]): MutationResult {
+   221	    if (!ids.length) return { changed: false };
+   222	    const selected = new Set(ids);
+   223	    return this.execute("Delete Selection", (project) => ({
+   224	      ...project,
+   225	      themeProjectGroups: project.themeProjectGroups
+   226	        .filter((group) => !selected.has(group.id))
+   227	        .map((group) => ({
+   228	          ...group,
+   229	          themeProjects: group.themeProjects
+   230	            .filter((theme) => !selected.has(theme.id))
+   231	            .map((theme) => ({
+   232	              ...theme,
+   233	              rotations: theme.rotations
+   234	                .filter((rotation) => !selected.has(rotation.id))
+   235	                .map((rotation) => ({
+   236	                  ...rotation,
+   237	                  scenes: rotation.scenes
+   238	                    .filter((scene) => !selected.has(scene.id))
+   239	                    .map((scene) => ({ ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) })),
+   240	                })),
+   241	            })),
+   242	        })),
+   243	    }));
+   244	  }
+   245	
+   246	  deleteSelectionInScene(sceneId: string, ids: readonly string[]): MutationResult {
+   247	    const current = this.documents.getCurrent();
+   248	    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+   249	    const selected = new Set(ids);
+   250	    return this.execute("Delete Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) } : scene)))));
+   251	  }
+   252	
+   253	  setWidgetZIndicesInScene(sceneId: string, updates: Readonly<Record<string, number>>, label = "Change Widget Z-order"): MutationResult {
+   254	    const current = this.documents.getCurrent();
+   255	    const ids = Object.keys(updates);
+   256	    if (!current || !validScopedWidgetIds(current, sceneId, ids) || !ids.every((id) => Number.isFinite(updates[id]))) return { changed: false };
+   257	    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => ids.includes(widget.id) ? { ...widget, zIndex: updates[widget.id] } : widget) } : scene)))));
+   258	  }
+   259	
+   260	  duplicateSelectionInScene(sceneId: string, ids: readonly string[]): MutationResult {
+   261	    const current = this.documents.getCurrent();
+   262	    if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
+   263	    const selected = new Set(ids);
+   264	    return this.execute("Duplicate Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.flatMap((widget) => selected.has(widget.id) ? [widget, duplicateWidget(widget)] : [widget]) } : scene)))));
+   265	  }
+   266	
+   267	  duplicateSelection(ids: readonly string[]): MutationResult {
+   268	    if (!ids.length) return { changed: false };
+   269	    const selected = new Set(ids);
+   270	    return this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {
+   271	      const themeProjects: ThemeProject[] = [];
+   272	      for (const theme of group.themeProjects) {
+   273	        if (selected.has(theme.id)) {
+   274	          themeProjects.push(theme, duplicateThemeProject(theme));
+   275	          continue;
+   276	        }
+   277	
+   278	        const rotations: Rotation[] = [];
+   279	        for (const rotation of theme.rotations) {
+   280	          if (selected.has(rotation.id)) {
+   281	            rotations.push(rotation, duplicateRotation(rotation));
+   282	            continue;
+   283	          }
+   284	
+   285	          const scenes: Scene[] = [];
+   286	          for (const scene of rotation.scenes) {
+   287	            if (selected.has(scene.id)) {
+   288	              scenes.push(scene, duplicateScene(scene));
+   289	              continue;
+   290	            }
+   291	
+   292	            const widgets: Widget[] = [];
+   293	            for (const widget of scene.widgets) {
+   294	              widgets.push(widget);
+   295	              if (selected.has(widget.id)) widgets.push(duplicateWidget(widget));
+   296	            }
+   297	            scenes.push({ ...scene, widgets });
+   298	          }
+   299	          rotations.push({ ...rotation, scenes });
+   300	        }
+   301	        themeProjects.push({ ...theme, rotations });
+   302	      }
+   303	      return { ...group, themeProjects };
+   304	    }));
+   305	  }
+   306	}
+   307	
+   308	export function createEditorApplication(store: InMemoryDocumentStore): EditorApplication {
+   309	  return new EditorApplication(store);
+   310	}
+===== src/Core/document-store.ts =====
+     1	import type { Project } from "../Domain/models";
+     2	import { CommandHistory, type Command, type CommandHistorySnapshot } from "./commands";
+     3	
+     4	export interface DocumentSnapshot {
+     5	  readonly project: Project | undefined;
+     6	  readonly isOpen: boolean;
+     7	  readonly isDirty: boolean;
+     8	  readonly history: CommandHistorySnapshot;
+     9	}
+    10	
+    11	export interface DocumentStore {
+    12	  getCurrent(): Project | undefined;
+    13	  getSnapshot(): DocumentSnapshot;
+    14	  subscribe(listener: () => void): () => void;
+    15	  open(project: Project): void;
+    16	  create(project: Project): void;
+    17	  close(): void;
+    18	  save(): void;
+    19	  replaceCurrent(project: Project): void;
+    20	  execute(command: Command): void;
+    21	  undo(): boolean;
+    22	  redo(): boolean;
+    23	  readonly history: CommandHistory;
+    24	}
+    25	
+    26	function serialize(project: Project | undefined): string {
+    27	  return project ? JSON.stringify(project) : "";
+    28	}
+    29	
+    30	export class InMemoryDocumentStore implements DocumentStore {
+    31	  private currentProject: Project | undefined;
+    32	  private savedProject: Project | undefined;
+    33	  private snapshot: DocumentSnapshot;
+    34	  private suppressSnapshotRefresh = false;
+    35	  private readonly listeners = new Set<() => void>();
+    36	  readonly history: CommandHistory;
+    37	
+    38	  constructor(history = new CommandHistory()) {
+    39	    this.history = history;
+    40	    this.snapshot = {
+    41	      project: undefined,
+    42	      isOpen: false,
+    43	      isDirty: false,
+    44	      history: history.snapshot,
+    45	    };
+    46	    this.history.subscribe(() => {
+    47	      if (!this.suppressSnapshotRefresh) this.refreshSnapshot();
+    48	    });
+    49	  }
+    50	
+    51	  getCurrent(): Project | undefined { return this.currentProject; }
+    52	  getSnapshot(): DocumentSnapshot { return this.snapshot; }
+    53	
+    54	  subscribe(listener: () => void): () => void {
+    55	    this.listeners.add(listener);
+    56	    return () => this.listeners.delete(listener);
+    57	  }
+    58	
+    59	  open(project: Project): void {
+    60	    this.currentProject = project;
+    61	    this.savedProject = project;
+    62	    this.runWithoutSnapshotRefresh(() => this.history.clear());
+    63	    this.refreshSnapshot();
+    64	  }
+    65	
+    66	  create(project: Project): void { this.open(project); }
+    67	
+    68	  close(): void {
+    69	    this.currentProject = undefined;
+    70	    this.savedProject = undefined;
+    71	    this.runWithoutSnapshotRefresh(() => this.history.clear());
+    72	    this.refreshSnapshot();
+    73	  }
+    74	
+    75	  save(): void {
+    76	    this.savedProject = this.currentProject;
+    77	    this.refreshSnapshot();
+    78	  }
+    79	
+    80	  replaceCurrent(project: Project): void {
+    81	    if (!this.currentProject) throw new Error("No document is open");
+    82	    this.currentProject = project;
+    83	    if (!this.suppressSnapshotRefresh) this.refreshSnapshot();
+    84	  }
+    85	
+    86	  execute(command: Command): void {
+    87	    if (!this.currentProject) throw new Error("No document is open");
+    88	    try {
+    89	      this.runWithoutSnapshotRefresh(() => this.history.execute(command));
+    90	    } finally {
+    91	      this.refreshSnapshot();
+    92	    }
+    93	  }
+    94	
+    95	  undo(): boolean {
+    96	    try {
+    97	      return this.runWithoutSnapshotRefresh(() => this.history.undo());
+    98	    } finally {
+    99	      this.refreshSnapshot();
+   100	    }
+   101	  }
+   102	
+   103	  redo(): boolean {
+   104	    try {
+   105	      return this.runWithoutSnapshotRefresh(() => this.history.redo());
+   106	    } finally {
+   107	      this.refreshSnapshot();
+   108	    }
+   109	  }
+   110	
+   111	  private runWithoutSnapshotRefresh<T>(operation: () => T): T {
+   112	    const previous = this.suppressSnapshotRefresh;
+   113	    this.suppressSnapshotRefresh = true;
+   114	    try {
+   115	      return operation();
+   116	    } finally {
+   117	      this.suppressSnapshotRefresh = previous;
+   118	    }
+   119	  }
+   120	
+   121	  private refreshSnapshot(): void {
+   122	    this.snapshot = {
+   123	      project: this.currentProject,
+   124	      isOpen: Boolean(this.currentProject),
+   125	      isDirty: serialize(this.currentProject) !== serialize(this.savedProject),
+   126	      history: this.history.snapshot,
+   127	    };
+   128	    this.listeners.forEach((listener) => listener());
+   129	  }
+   130	}
+===== src/Core/commands.ts =====
+     1	export interface Command {
+     2	  readonly label: string;
+     3	  execute(): void;
+     4	  undo(): void;
+     5	}
+     6	
+     7	export interface CommandHistorySnapshot {
+     8	  readonly canUndo: boolean;
+     9	  readonly canRedo: boolean;
+    10	  readonly undoCount: number;
+    11	  readonly redoCount: number;
+    12	}
+    13	
+    14	export class CommandHistory {
+    15	  private readonly undoStack: Command[] = [];
+    16	  private readonly redoStack: Command[] = [];
+    17	  private readonly listeners = new Set<() => void>();
+    18	
+    19	  subscribe(listener: () => void): () => void {
+    20	    this.listeners.add(listener);
+    21	    return () => this.listeners.delete(listener);
+    22	  }
+    23	
+    24	  get snapshot(): CommandHistorySnapshot {
+    25	    return {
+    26	      canUndo: this.canUndo,
+    27	      canRedo: this.canRedo,
+    28	      undoCount: this.undoStack.length,
+    29	      redoCount: this.redoStack.length,
+    30	    };
+    31	  }
+    32	
+    33	  execute(command: Command): void {
+    34	    command.execute();
+    35	    this.undoStack.push(command);
+    36	    this.redoStack.length = 0;
+    37	    this.emit();
+    38	  }
+    39	
+    40	  undo(): boolean {
+    41	    const command = this.undoStack[this.undoStack.length - 1];
+    42	    if (!command) return false;
+    43	
+    44	    command.undo();
+    45	    this.undoStack.pop();
+    46	    this.redoStack.push(command);
+    47	    this.emit();
+    48	    return true;
+    49	  }
+    50	
+    51	  redo(): boolean {
+    52	    const command = this.redoStack[this.redoStack.length - 1];
+    53	    if (!command) return false;
+    54	
+    55	    command.execute();
+    56	    this.redoStack.pop();
+    57	    this.undoStack.push(command);
+    58	    this.emit();
+    59	    return true;
+    60	  }
+    61	
+    62	  clear(): void {
+    63	    this.undoStack.length = 0;
+    64	    this.redoStack.length = 0;
+    65	    this.emit();
+    66	  }
+    67	
+    68	  get canUndo(): boolean { return this.undoStack.length > 0; }
+    69	  get canRedo(): boolean { return this.redoStack.length > 0; }
+    70	
+    71	  private emit(): void {
+    72	    this.listeners.forEach((listener) => listener());
+    73	  }
+    74	}
+===== src/Core/validation.ts =====
+     1	import type {
+     2	  Asset,
+     3	  Binding,
+     4	  Condition,
+     5	  DeviceProfile,
+     6	  FloorMapping,
+     7	  Project,
+     8	  RuntimeStateDefinition,
+     9	  RuntimeSettingDefinition,
+    10	  Scene,
+    11	  ThemeProject,
+    12	  Widget,
+    13	} from "../Domain/models";
+    14	
+    15	export type ValidationSeverity = "info" | "warning" | "error";
+    16	
+    17	export interface ValidationIssue {
+    18	  severity: ValidationSeverity;
+    19	  code: string;
+    20	  message: string;
+    21	  path?: string;
+    22	  remediation?: string;
+    23	}
+    24	
+    25	export interface ValidationResult {
+    26	  valid: boolean;
+    27	  issues: readonly ValidationIssue[];
+    28	}
+    29	
+    30	function issue(
+    31	  issues: ValidationIssue[],
+    32	  code: string,
+    33	  message: string,
+    34	  path: string,
+    35	  remediation: string,
+    36	  severity: ValidationSeverity = "error",
+    37	): void {
+    38	  issues.push({ severity, code, message, path, remediation });
+    39	}
+    40	
+    41	function uniqueIds(values: readonly { id: string }[]): readonly string[] {
+    42	  return values.filter((value, index) => values.findIndex((candidate) => candidate.id === value.id) === index).map((value) => value.id);
+    43	}
+    44	
+    45	function validateCondition(
+    46	  condition: Condition,
+    47	  profile: DeviceProfile,
+    48	  path: string,
+    49	  issues: ValidationIssue[],
+    50	): void {
+    51	  const source = condition.source ?? "state";
+    52	  const definitions = source === "setting" ? profile.runtimeSettings : profile.runtimeStates;
+    53	  const definition = definitions.find((candidate) => candidate.id === condition.stateId);
+    54	
+    55	  if (!definition) {
+    56	    issue(
+    57	      issues,
+    58	      "UNKNOWN_RUNTIME_REFERENCE",
+    59	      `Runtime ${source} '${condition.stateId}' is not defined by the active DeviceProfile.`,
+    60	      path,
+    61	      "Select a DeviceProfile-defined runtime state/setting or remove the unresolved condition.",
+    62	    );
+    63	    return;
+    64	  }
+    65	
+    66	  if (definition.operators && !definition.operators.includes(condition.operator)) {
+    67	    issue(
+    68	      issues,
+    69	      "UNSUPPORTED_CONDITION_OPERATOR",
+    70	      `Operator '${condition.operator}' is not supported for runtime reference '${condition.stateId}'.`,
+    71	      path,
+    72	      "Choose one of the operators declared by the active DeviceProfile.",
+    73	    );
+    74	  }
+    75	
+    76	  const typeValid =
+    77	    definition.type === "boolean"
+    78	      ? typeof condition.value === "boolean"
+    79	      : definition.type === "integer"
+    80	        ? typeof condition.value === "number" && Number.isInteger(condition.value)
+    81	        : definition.type === "number"
+    82	          ? typeof condition.value === "number" && Number.isFinite(condition.value)
+    83	          : typeof condition.value === "string";
+    84	
+    85	  if (!typeValid) {
+    86	    issue(
+    87	      issues,
+    88	      "INVALID_CONDITION_DATATYPE",
+    89	      `Condition value for '${condition.stateId}' does not match its DeviceProfile type '${definition.type}'.`,
+    90	      path,
+    91	      "Use a value compatible with the runtime registry definition.",
+    92	    );
+    93	  }
+    94	
+    95	  if (definition.type === "enum" && definition.enumValues && typeof condition.value === "string" && !definition.enumValues.includes(condition.value)) {
+    96	    issue(
+    97	      issues,
+    98	      "INVALID_CONDITION_VALUE",
+    99	      `Value '${condition.value}' is not allowed for enum '${condition.stateId}'.`,
+   100	      path,
+   101	      "Select one of the values declared by the active DeviceProfile.",
+   102	    );
+   103	  }
+   104	}
+   105	
+   106	function validateBinding(
+   107	  binding: Binding,
+   108	  widget: Widget,
+   109	  profile: DeviceProfile,
+   110	  assetIds: ReadonlySet<string>,
+   111	  path: string,
+   112	  issues: ValidationIssue[],
+   113	): void {
+   114	  if (binding.widgetId !== widget.id) {
+   115	    issue(issues, "BINDING_WIDGET_MISMATCH", "Binding widgetId must match its owning widget.", path, "Rebind the condition to the owning widget.");
+   116	  }
+   117	
+   118	  if (binding.conditions.length === 0) {
+   119	    issue(issues, "BINDING_CONDITION_REQUIRED", "A binding requires at least one condition.", path, "Add a DeviceProfile-defined condition or remove the binding.");
+   120	  }
+   121	
+   122	  binding.conditions.forEach((condition, index) => validateCondition(condition, profile, `${path}.conditions[${index}]`, issues));
+   123	
+   124	  if (binding.contentId && !assetIds.has(binding.contentId)) {
+   125	    issue(issues, "BROKEN_BINDING_CONTENT_REFERENCE", `Binding content '${binding.contentId}' cannot be resolved.`, `${path}.contentId`, "Import or select the referenced asset.");
+   126	  }
+   127	}
+   128	
+   129	function validateAssetReference(
+   130	  assetId: string,
+   131	  assets: ReadonlyMap<string, Asset>,
+   132	  path: string,
+   133	  issues: ValidationIssue[],
+   134	): void {
+   135	  if (!assets.has(assetId)) {
+   136	    issue(issues, "MISSING_REFERENCED_ASSET", `Asset '${assetId}' cannot be resolved.`, path, "Import the asset or remove the broken reference.");
+   137	  }
+   138	}
+   139	
+   140	function validateWidget(
+   141	  widget: Widget,
+   142	  profile: DeviceProfile,
+   143	  assets: ReadonlyMap<string, Asset>,
+   144	  path: string,
+   145	  issues: ValidationIssue[],
+   146	): void {
+   147	  const assetIds = new Set(assets.keys());
+   148	
+   149	  if (!profile.supportedWidgetTypes.includes(widget.widgetType)) {
+   150	    issue(issues, "UNSUPPORTED_WIDGET_TYPE", `Widget type '${widget.widgetType}' is not supported by the active DeviceProfile.`, `${path}.widgetType`, "Choose a supported widget type or switch DeviceProfile.");
+   151	  }
+   152	
+   153	  if (widget.geometry.width <= 0 || widget.geometry.height <= 0) {
+   154	    issue(issues, "INVALID_WIDGET_GEOMETRY", "Widget width and height must be greater than zero.", `${path}.geometry`, "Set positive width and height values.");
+   155	  }
+   156	
+   157	  if (widget.mediaType && !profile.supportedMediaTypes.includes(widget.mediaType)) {
+   158	    issue(issues, "UNSUPPORTED_MEDIA_TYPE", `Media type '${widget.mediaType}' is not supported by the active DeviceProfile.`, `${path}.mediaType`, "Choose a supported media type.");
+   159	  }
+   160	
+   161	  widget.assetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.assetIds[${index}]`, issues));
+   162	
+   163	  if (widget.audioAssetId) {
+   164	    const audioAsset = assets.get(widget.audioAssetId);
+   165	    if (widget.widgetType !== "media" && !widget.mediaSlide) {
+   166	      issue(issues, "AUDIO_BINDING_SCOPE_INVALID", "Audio is not a generic capability of every semantic widget.", `${path}.audioAssetId`, "Use audio through Media/Media Slide or the audio policy boundary.");
+   167	    }
+   168	    validateAssetReference(widget.audioAssetId, assets, `${path}.audioAssetId`, issues);
+   169	    if (audioAsset && audioAsset.mediaType !== "audio") {
+   170	      issue(issues, "AUDIO_ASSET_TYPE_INVALID", `Asset '${widget.audioAssetId}' is not an audio asset.`, `${path}.audioAssetId`, "Select an asset with mediaType 'audio'.");
+   171	    }
+   172	  }
+   173	
+   174	  if (widget.mediaSlide) {
+   175	    if (widget.widgetType !== "media") {
+   176	      issue(issues, "MEDIA_SLIDE_WIDGET_TYPE_INVALID", "Media Slide must use the Media semantic widget type.", `${path}.mediaSlide`, "Use widgetType 'media' for a Media Slide.");
+   177	    }
+   178	    if (!profile.supportedMediaTypes.includes(widget.mediaSlide.mediaType)) {
+   179	      issue(issues, "MEDIA_SLIDE_MEDIA_UNSUPPORTED", `Media Slide type '${widget.mediaSlide.mediaType}' is not supported by the active DeviceProfile.`, `${path}.mediaSlide.mediaType`, "Choose a supported image or video capability.");
+   180	    }
+   181	    if (widget.mediaSlide.duration < 0 || !Number.isFinite(widget.mediaSlide.duration)) {
+   182	      issue(issues, "MEDIA_DURATION_INVALID", "Media duration cannot be negative or non-finite.", `${path}.mediaSlide.duration`, "Use duration 0 or a finite non-negative duration in 0.1 second precision.");
+   183	    }
+   184	    if (widget.mediaSlide.duration * 10 !== Math.trunc(widget.mediaSlide.duration * 10)) {
+   185	      issue(issues, "MEDIA_DURATION_PRECISION_INVALID", "Media duration must use 0.1 second precision.", `${path}.mediaSlide.duration`, "Round the duration to one decimal place.");
+   186	    }
+   187	    if (widget.mediaSlide.repeatCount !== undefined && (!Number.isInteger(widget.mediaSlide.repeatCount) || widget.mediaSlide.repeatCount < 0)) {
+   188	      issue(issues, "MEDIA_REPEAT_COUNT_INVALID", "Media repeat count must be a non-negative integer.", `${path}.mediaSlide.repeatCount`, "Use a non-negative integer repeat count.");
+   189	    }
+   190	    validateAssetReference(widget.mediaSlide.assetId, assets, `${path}.mediaSlide.assetId`, issues);
+   191	    const visualAsset = assets.get(widget.mediaSlide.assetId);
+   192	    if (visualAsset && visualAsset.mediaType !== widget.mediaSlide.mediaType) {
+   193	      issue(issues, "MEDIA_ASSET_TYPE_INVALID", `Asset '${widget.mediaSlide.assetId}' does not match Media Slide type '${widget.mediaSlide.mediaType}'.`, `${path}.mediaSlide.assetId`, "Select an asset with the same media type as the Media Slide.");
+   194	    }
+   195	    if (widget.mediaSlide.audioAssetId) {
+   196	      validateAssetReference(widget.mediaSlide.audioAssetId, assets, `${path}.mediaSlide.audioAssetId`, issues);
+   197	      const audioAsset = assets.get(widget.mediaSlide.audioAssetId);
+   198	      if (audioAsset && audioAsset.mediaType !== "audio") {
+   199	        issue(issues, "MEDIA_SLIDE_AUDIO_TYPE_INVALID", `Asset '${widget.mediaSlide.audioAssetId}' is not an audio asset.`, `${path}.mediaSlide.audioAssetId`, "Select an audio asset for the attached Media Slide audio.");
+   200	      }
+   201	    }
+   202	  }
+   203	
+   204	  widget.bindings.forEach((binding, index) => validateBinding(binding, widget, profile, assetIds, `${path}.bindings[${index}]`, issues));
+   205	}
+   206	
+   207	function validateScene(
+   208	  scene: Scene,
+   209	  profile: DeviceProfile,
+   210	  assets: ReadonlyMap<string, Asset>,
+   211	  path: string,
+   212	  issues: ValidationIssue[],
+   213	): void {
+   214	  if (scene.priority < 0 || scene.priority > 10 || !Number.isInteger(scene.priority)) {
+   215	    issue(issues, "SCENE_PRIORITY_INVALID", "Scene priority must be an integer from 0 through 10.", `${path}.priority`, "Set a Scene priority between 0 and 10.");
+   216	  }
+   217	
+   218	  scene.activationConditions.forEach((condition, index) => validateCondition(condition, profile, `${path}.activationConditions[${index}]`, issues));
+   219	  scene.widgets.forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues));
+   220	}
+   221	
+   222	function validateFloorMapping(
+   223	  mapping: FloorMapping,
+   224	  profile: DeviceProfile,
+   225	  assetIds: ReadonlySet<string>,
+   226	  path: string,
+   227	  issues: ValidationIssue[],
+   228	): void {
+   229	  const seen = new Set<string>();
+   230	  mapping.entries.forEach((entry, index) => {
+   231	    const key = `${typeof entry.firmwareValue}:${String(entry.firmwareValue)}`;
+   232	    if (seen.has(key)) {
+   233	      issue(issues, "DUPLICATE_FLOOR_MAPPING", `Firmware floor value '${entry.firmwareValue}' is mapped more than once.`, `${path}.entries[${index}]`, "Keep one deterministic display mapping per firmware value.");
+   234	    }
+   235	    seen.add(key);
+   236	    if (entry.digitStyleId && !profile.digitStyles?.includes(entry.digitStyleId)) {
+   237	      issue(issues, "UNKNOWN_DIGIT_STYLE", `Digit style '${entry.digitStyleId}' is not provided by the active DeviceProfile.`, `${path}.entries[${index}].digitStyleId`, "Select a profile-defined Digit Style or ask to use the default style.");
+   238	    }
+   239	    if (entry.digitStyleId && !assetIds.has(entry.digitStyleId) && profile.digitStyles?.includes(entry.digitStyleId) === false) {
+   240	      issue(issues, "BROKEN_FLOOR_STYLE_REFERENCE", `Floor mapping style '${entry.digitStyleId}' cannot be resolved.`, `${path}.entries[${index}].digitStyleId`, "Select an available Digit Style.");
+   241	    }
+   242	  });
+   243	}
+   244	
+   245	function validateThemeProject(
+   246	  theme: ThemeProject,
+   247	  profile: DeviceProfile,
+   248	  assets: ReadonlyMap<string, Asset>,
+   249	  path: string,
+   250	  issues: ValidationIssue[],
+   251	): void {
+   252	  const rotationAngles = theme.rotations.map((rotation) => rotation.angle);
+   253	  const expectedAngles = [0, 90, 180, 270] as const;
+   254	  if (theme.rotations.length !== 4 || expectedAngles.some((angle) => !rotationAngles.includes(angle))) {
+   255	    issue(issues, "REQUIRED_ROTATIONS_MISSING", "A Theme Project must contain exactly Rotation/Form 0, 90, 180 and 270.", `${path}.rotations`, "Add every required rotation before publishing.");
+   256	  }
+   257	
+   258	  const rotationIds = new Set<string>();
+   259	  theme.rotations.forEach((rotation, rotationIndex) => {
+   260	    if (rotationIds.has(rotation.id)) {
+   261	      issue(issues, "DUPLICATE_ROTATION_ID", `Rotation ID '${rotation.id}' is duplicated.`, `${path}.rotations[${rotationIndex}].id`, "Assign a unique stable Rotation ID.");
+   262	    }
+   263	    rotationIds.add(rotation.id);
+   264	    if (profile.supportedRotations && !profile.supportedRotations.includes(rotation.angle)) {
+   265	      issue(issues, "UNSUPPORTED_ROTATION", `Rotation ${rotation.angle} is not supported by the active DeviceProfile.`, `${path}.rotations[${rotationIndex}]`, "Use a supported rotation/form.");
+   266	    }
+   267	    const sceneIds = new Set<string>();
+   268	    rotation.scenes.forEach((scene, sceneIndex) => {
+   269	      if (sceneIds.has(scene.id)) {
+   270	        issue(issues, "DUPLICATE_SCENE_ID", `Scene ID '${scene.id}' is duplicated within the rotation.`, `${path}.rotations[${rotationIndex}].scenes[${sceneIndex}].id`, "Assign a unique stable Scene ID.");
+   271	      }
+   272	      sceneIds.add(scene.id);
+   273	      validateScene(scene, profile, assets, `${path}.rotations[${rotationIndex}].scenes[${sceneIndex}]`, issues);
+   274	    });
+   275	  });
+   276	
+   277	  theme.resources.forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.resources[${index}]`, issues));
+   278	  theme.defaultAssetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.defaultAssetIds[${index}]`, issues));
+   279	  theme.floorMappings?.forEach((mapping, index) => validateFloorMapping(mapping, profile, new Set(assets.keys()), `${path}.floorMappings[${index}]`, issues));
+   280	}
+   281	
+   282	export function validateProject(project: Project, profile?: DeviceProfile): ValidationResult {
+   283	  const issues: ValidationIssue[] = [];
+   284	  const assetIds = new Set(project.assets.map((asset) => asset.id));
+   285	  const assets = new Map(project.assets.map((asset) => [asset.id, asset]));
+   286	
+   287	  if (project.name.trim().length === 0) {
+   288	    issue(issues, "PROJECT_NAME_REQUIRED", "Project name is required.", "name", "Provide a non-empty project name.");
+   289	  }
+   290	  if (project.schemaVersion < 1) {
+   291	    issue(issues, "PROJECT_SCHEMA_UNSUPPORTED", "Project schema version is not supported.", "schemaVersion", "Migrate the project to schema version 1 or newer.");
+   292	  }
+   293	  if (project.deviceProfileId.trim().length === 0) {
+   294	    issue(issues, "DEVICE_PROFILE_REQUIRED", "A device profile must be selected.", "deviceProfileId", "Select a device profile before editing the project.");
+   295	  }
+   296	
+   297	  const duplicateAssetIds = project.assets.filter((asset, index) => project.assets.findIndex((candidate) => candidate.id === asset.id) !== index);
+   298	  uniqueIds(duplicateAssetIds).forEach((id) => issue(issues, "DUPLICATE_STABLE_ID", `Asset stable ID '${id}' is duplicated in the project scope.`, "assets", "Rename or merge the duplicated asset reference."));
+   299	  project.assets.forEach((asset, index) => {
+   300	    if (asset.name.trim().length === 0) issue(issues, "ASSET_NAME_REQUIRED", "Asset display name is required.", `assets[${index}].name`, "Provide a display name without changing the stable ID.");
+   301	    if (asset.sourcePath.trim().length === 0) issue(issues, "ASSET_SOURCE_REQUIRED", "Asset source path is required.", `assets[${index}].sourcePath`, "Import or locate the source asset.");
+   302	  });
+   303	
+   304	  if (!profile) {
+   305	    return { valid: issues.every((current) => current.severity !== "error"), issues };
+   306	  }
+   307	
+   308	  if (project.deviceProfileId !== profile.id) {
+   309	    issue(issues, "DEVICE_PROFILE_MISMATCH", `Project profile '${project.deviceProfileId}' does not match '${profile.id}'.`, "deviceProfileId", "Resolve the active DeviceProfile before validation.");
+   310	  }
+   311	
+   312	  project.defaultAssetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `defaultAssetIds[${index}]`, issues));
+   313	  profile.defaultAssetIds?.forEach((assetId, index) => validateAssetReference(assetId, assets, `deviceProfile.defaultAssetIds[${index}]`, issues));
+   314	  project.themeProjectGroups.forEach((group, groupIndex) =>
+   315	    group.themeProjects.forEach((theme, themeIndex) => validateThemeProject(theme, profile, assets, `themeProjectGroups[${groupIndex}].themeProjects[${themeIndex}]`, issues)),
+   316	  );
+   317	
+   318	  return {
+   319	    valid: issues.every((current) => current.severity !== "error"),
+   320	    issues,
+   321	  };
+   322	}
+===== src/App/App.tsx =====
+     1	import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+     2	import { createEmptyProject } from "../Domain/factories";
+     3	import { InMemoryDocumentStore } from "../Core/document-store";
+     4	import { createEditorApplication } from "../Core/editor-application";
+     5	import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export";
+     6	import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
+     7	import { validateProject } from "../Core/validation";
+     8	import type { Asset, Geometry, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+     9	import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
+    10	import { commandsForSelection, type EditorCommandId } from "./editor-commands";
+    11	import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
+    12	import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
+    13	import type { DeviceProfileRegistry } from "./profile-registry";
+    14	
+    15	type ViewMode = "design" | "preview";
+    16	type CanvasTool = "select" | "pan";
+    17	type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Tools";
+    18	type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
+    19	type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Simulator" | "Validation" | "Export" | "Shortcuts";
+    20	type BindingModalState = { widgetId: string } | null;
+    21	
+    22	type Selection = {
+    23	  id: string;
+    24	  label: string;
+    25	  kind: SelectionKind;
+    26	  nodeType?: string;
+    27	  detail?: string;
+    28	};
+    29	
+    30	type TreeNode = {
+    31	  id: string;
+    32	  label: string;
+    33	  kind: string;
+    34	  nodeType?: string;
+    35	  detail?: string;
+    36	  disabled?: boolean;
+    37	  children?: TreeNode[];
+    38	};
+    39	
+    40	type ResolvedNode = {
+    41	  kind: SelectionKind;
+    42	  node: Project | ThemeProjectGroup | ThemeProject | Rotation | Scene | Widget | Asset;
+    43	  project?: Project;
+    44	  group?: ThemeProjectGroup;
+    45	  theme?: ThemeProject;
+    46	  rotation?: Rotation;
+    47	  scene?: Scene;
+    48	  widget?: Widget;
+    49	  asset?: Asset;
+    50	};
+    51	
+    52	type MenuItem = {
+    53	  label: string;
+    54	  shortcut?: string;
+    55	  disabled?: boolean;
+    56	  onClick?: () => void;
+    57	};
+    58	
+    59	type ConsoleEntry = {
+    60	  level: "INFO" | "WARN" | "ERROR" | "EVENT";
+    61	  message: string;
+    62	};
+    63	
+    64	type CanvasInteractionState =
+    65	  | { mode: "idle" }
+    66	  | { mode: "marquee"; pointerId: number; start: CanvasPoint; screenStart: CanvasPoint; rect: CanvasRect; additive: boolean; baseSelection: string[] }
+    67	  | { mode: "drag" | "resize"; pointerId: number; widgetIds: string[]; start: CanvasPoint; screenStart: CanvasPoint; initial: Record<string, Geometry>; initialBounds?: CanvasRect; handle?: ResizeHandle }
+    68	  | { mode: "panning"; pointerId: number; start: CanvasPoint; initialPan: CanvasPoint };
+    69	
+    70	const POINTER_DRAG_THRESHOLD = 4;
+    71	const MIN_ZOOM = 50;
+    72	const MAX_ZOOM = 200;
+    73	
+    74	const menuKeys: MenuKey[] = ["File", "Edit", "View", "Project", "Theme", "Scene", "Widget", "Tools"];
+    75	const settingsCategories: SettingsCategory[] = ["General", "Appearance", "Editor", "Canvas", "Assets", "Simulator", "Validation", "Export", "Shortcuts"];
+    76	const assetCategories: { id: AssetCategory; label: string }[] = [
+    77	  { id: "depot", label: "Asset Depot" },
+    78	  { id: "resources", label: "Project Resources" },
+    79	  { id: "scene", label: "Scene Content" },
+    80	  { id: "unsupported", label: "Unsupported Files" },
+    81	];
+    82	
+    83	function getThemeNodes(group: ThemeProjectGroup): TreeNode[] {
+    84	  return group.themeProjects.map((theme: ThemeProject) => ({
+    85	    id: theme.id,
+    86	    label: theme.name,
+    87	    kind: "Theme Project",
+    88	    children: theme.rotations.map((rotation) => ({
+    89	      id: rotation.id,
+    90	      label: `R${rotation.angle}`,
+    91	      kind: "Rotation / Form",
+    92	      detail: `${rotation.width} × ${rotation.height}`,
+    93	        children: rotation.scenes.map((scene) => ({
+    94	          id: scene.id,
+    95	          label: scene.name,
+    96	          kind: "Scene",
+    97	          detail: `Priority ${scene.priority}`,
+    98	          children: scene.widgets.map((widget) => ({
+    99	            id: widget.id,
+   100	            label: widget.name,
+   101	            kind: widget.widgetType,
+   102	            nodeType: widget.widgetType,
+   103	            detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden",
+   104	          })),
+   105	        })),
+   106	    })),
+   107	  }));
+   108	}
+   109	
+   110	function PropertyRow({ label, value, muted = false }: { label: string; value: string; muted?: boolean }) {
+   111	  return (
+   112	    <div className="property-row">
+   113	      <span>{label}</span>
+   114	      <strong className={muted ? "property-muted" : undefined}>{value}</strong>
+   115	    </div>
+   116	  );
+   117	}
+   118	
+   119	function resolveCanonicalNode(project: Project, id: string): ResolvedNode | undefined {
+   120	  if (project.id === id) return { kind: "project", node: project, project };
+   121	  for (const group of project.themeProjectGroups) {
+   122	    if (group.id === id) return { kind: "theme-group", node: group, project, group };
+   123	    for (const theme of group.themeProjects) {
+   124	      if (theme.id === id) return { kind: "theme", node: theme, project, group, theme };
+   125	      for (const rotation of theme.rotations) {
+   126	        if (rotation.id === id) return { kind: "rotation", node: rotation, project, group, theme, rotation };
+   127	        for (const scene of rotation.scenes) {
+   128	          if (scene.id === id) return { kind: "scene", node: scene, project, group, theme, rotation, scene };
+   129	          const widget = scene.widgets.find((candidate) => candidate.id === id);
+   130	          if (widget) return { kind: "widget", node: widget, project, group, theme, rotation, scene, widget };
+   131	        }
+   132	      }
+   133	    }
+   134	  }
+   135	  const asset = project.assets.find((candidate) => candidate.id === id);
+   136	  return asset ? { kind: "asset", node: asset, project, asset } : undefined;
+   137	}
+   138	
+   139	export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistry }) {
+   140	  const documentStore = useMemo(() => {
+   141	    const store = new InMemoryDocumentStore();
+   142	    store.open(createEmptyProject());
+   143	    return store;
+   144	  }, []);
+   145	  const documentSubscribe = useMemo(() => (listener: () => void) => documentStore.subscribe(listener), [documentStore]);
+   146	  const documentSnapshotReader = useMemo(() => () => documentStore.getSnapshot(), [documentStore]);
+   147	  const documentSnapshot = useSyncExternalStore(documentSubscribe, documentSnapshotReader, documentSnapshotReader);
+   148	  const project = documentSnapshot.project ?? createEmptyProject();
+   149	  const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
+   150	  const [leftWidth, setLeftWidth] = useState(286);
+   151	  const [rightWidth, setRightWidth] = useState(298);
+   152	  const [menuOpen, setMenuOpen] = useState<MenuKey | null>(null);
+   153	  const [selection, setSelection] = useState<Selection | null>(null);
+   154	  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+   155	  const [viewMode, setViewMode] = useState<ViewMode>("design");
+   156	  const [canvasTool, setCanvasTool] = useState<CanvasTool>("select");
+   157	  const [gridVisible, setGridVisible] = useState(true);
+   158	  const [snapEnabled, setSnapEnabled] = useState(true);
+   159	  const [zoom, setZoom] = useState(100);
+   160	  const [pan, setPan] = useState<CanvasPoint>({ x: 0, y: 0 });
+   161	  const [consoleTab, setConsoleTab] = useState<"console" | "validation">("console");
+   162	  const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([
+   163	    { level: "INFO", message: "Foundation shell initialized" },
+   164	  ]);
+   165	  const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>({ project: true, "theme-group": true });
+   166	  const [openDocuments, setOpenDocuments] = useState<string[]>(["Project Overview"]);
+   167	  const [activeDocument, setActiveDocument] = useState("Project Overview");
+   168	  const [assetCategory, setAssetCategory] = useState<AssetCategory>("depot");
+   169	  const [assetSearch, setAssetSearch] = useState("");
+   170	  const [settingsOpen, setSettingsOpen] = useState(false);
+   171	  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("General");
+   172	  const [settingsDraft, setSettingsDraft] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
+   173	  const [savedSettings, setSavedSettings] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
+   174	  const [bindingModal, setBindingModal] = useState<BindingModalState>(null);
+   175	  const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
+   176	  const commandHistory = documentStore.history;
+   177	  const [runtimeValues, setRuntimeValues] = useState<Record<string, PrimitiveValue | null>>({});
+   178	  const [runtimeSettings, setRuntimeSettings] = useState<Record<string, PrimitiveValue | null>>({});
+   179	  const [simulationStatus, setSimulationStatus] = useState<"idle" | "running" | "paused">("idle");
+   180	  const [deploymentStatus, setDeploymentStatus] = useState("Not built");
+   181	  const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});
+   182	  const [canvasPointer, setCanvasPointer] = useState<CanvasInteractionState>({ mode: "idle" });
+   183	  const [snapGuides, setSnapGuides] = useState<readonly SnapGuide[]>([]);
+   184	  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; kind: SelectionKind } | null>(null);
+   185	  const canvasScreenRef = useRef<HTMLDivElement>(null);
+   186	  const activePointerIdRef = useRef<number | null>(null);
+   187	  const geometryOverridesRef = useRef<Record<string, Geometry>>({});
+   188	  const suppressCanvasClickRef = useRef(false);
+   189	
+   190	  const availableProfiles = profileRegistry.list();
+   191	  const activeProfile = profileRegistry.get(project.deviceProfileId);
+   192	  const validation = useMemo(() => validateProject(project, activeProfile), [project, activeProfile]);
+   193	  const groups = project.themeProjectGroups;
+   194	  const group = groups[0];
+   195	  const themeNodes = groups.flatMap((currentGroup) => getThemeNodes(currentGroup));
+   196	  const hasThemeProject = themeNodes.length > 0;
+   197	  const activeSelectionLabel = selectedIds.length > 1 ? `${selectedIds.length} items selected` : selection?.label ?? "Nothing selected";
+   198	  const profileStatus = activeProfile ? `${activeProfile.name} · ${availableProfiles.length} profile${availableProfiles.length === 1 ? "" : "s"} registered` : `DeviceProfile unavailable · ${availableProfiles.length} registered`;
+   199	  const resolvedSelection = useMemo(() => selection ? resolveCanonicalNode(project, selection.id) : undefined, [project, selection]);
+   200	  const runtimeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
+   201	  const runtimeContext: RuntimeContext = { values: runtimeValues, settings: runtimeSettings, sceneActivationOrder: {} };
+   202	  const runtime = useMemo(() => activeProfile ? selectActiveScene(runtimeRotation?.scenes ?? [], runtimeContext, activeProfile) : { activeSceneId: undefined, activeScene: undefined, candidates: [] }, [runtimeRotation, activeProfile, runtimeValues, runtimeSettings]);
+   203	  const activeBindings = useMemo(() => activeProfile && runtime.activeScene ? evaluateActiveSceneBindings(runtime.activeScene, runtimeContext, activeProfile) : [], [runtime.activeScene, activeProfile, runtimeValues, runtimeSettings]);
+   204	  const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
+   205	  const profileStates = activeProfile?.runtimeStates ?? [];
+   206	  const profileSettings = activeProfile?.runtimeSettings ?? [];
+   207	  const bindingEvaluations = useMemo(() => bindingWidget && activeProfile ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
+   208	  const activeLeftPanel = panelModes.explorer === "docked" ? "explorer" : panelModes.assets === "docked" ? "assets" : null;
+   209	  const activeRightPanel = panelModes.properties === "docked" ? "properties" : panelModes.simulator === "docked" ? "simulator" : null;
+   210	  const leftVisible = activeLeftPanel !== null;
+   211	  const rightVisible = activeRightPanel !== null;
+   212	  const consoleVisible = panelModes.console === "docked";
+   213	  const floatingPanels = getFloatingPanels(panelModes);
+   214	  const workspaceRows = consoleVisible ? "minmax(0, 1fr) 156px" : "minmax(0, 1fr) 0px";
+   215	  const editorColumns = `${leftVisible ? `${leftWidth}px` : "0px"} ${leftVisible ? "5px" : "0px"} minmax(0, 1fr) ${rightVisible ? "5px" : "0px"} ${rightVisible ? `${rightWidth}px` : "0px"}`;
+   216	
+   217	  const logAction = (message: string, level: ConsoleEntry["level"] = "INFO") => {
+   218	    setConsoleEntries((current) => [...current.slice(-24), { level, message }]);
+   219	    setMenuOpen(null);
+   220	  };
+   221	
+   222	  const undo = () => {
+   223	    if (documentStore.undo()) logAction("> undo()", "EVENT");
+   224	  };
+   225	
+   226	  const redo = () => {
+   227	    if (documentStore.redo()) logAction("> redo()", "EVENT");
+   228	  };
+   229	
+   230	  const createProject = () => {
+   231	    cancelCanvasInteraction();
+   232	    const nextProject = createEmptyProject("Untitled Project");
+   233	    documentStore.create(nextProject);
+   234	    setSelection(null);
+   235	    setSelectedIds([]);
+   236	    setViewMode("design");
+   237	    setOpenDocuments(["Project Overview"]);
+   238	    setActiveDocument("Project Overview");
+   239	    clearGeometryPreview();
+   240	    logAction("New document created", "EVENT");
+   241	  };
+   242	
+   243	  const saveDocument = () => {
+   244	    documentStore.save();
+   245	    logAction("Project saved", "EVENT");
+   246	  };
+   247	
+   248	  const addThemeProject = (): boolean => {
+   249	    const groupId = resolvedSelection?.group?.id ?? group?.id;
+   250	    if (!groupId) return false;
+   251	    const result = editorApplication.addThemeProject(groupId);
+   252	    if (result.changed) logAction("Theme Project added", "EVENT");
+   253	    return result.changed;
+   254	  };
+   255	
+   256	  const addRotation = (): boolean => {
+   257	    const themeId = resolvedSelection?.theme?.id;
+   258	    if (!themeId || !activeProfile) return false;
+   259	    const result = editorApplication.addRotation(themeId, 0, activeProfile.display);
+   260	    if (result.changed) logAction("Rotation added", "EVENT");
+   261	    return result.changed;
+   262	  };
+   263	
+   264	  const addScene = (): boolean => {
+   265	    const rotationId = resolvedSelection?.rotation?.id;
+   266	    if (!rotationId) return false;
+   267	    const result = editorApplication.addScene(rotationId);
+   268	    if (result.changed) logAction("Scene added", "EVENT");
+   269	    return result.changed;
+   270	  };
+   271	
+   272	  const deleteSelectionCommand = (): boolean => {
+   273	    if (!selectedIds.length) return false;
+   274	    const widgetSelection = selectedIds.every((id) => resolveCanonicalNode(project, id)?.kind === "widget");
+   275	    const result = widgetSelection
+   276	      ? activeScene?.id ? editorApplication.deleteSelectionInScene(activeScene.id, selectedWidgetIds) : { changed: false }
+   277	      : editorApplication.deleteSelection(selectedIds);
+   278	    if (!result.changed) return false;
+   279	    setSelection(null);
+   280	    setSelectedIds([]);
+   281	    logAction("Selection deleted", "EVENT");
+   282	    return true;
+   283	  };
+   284	
+   285	  const duplicateSelectionCommand = (): boolean => {
+   286	    if (!selectedIds.length) return false;
+   287	    const widgetSelection = selectedIds.every((id) => resolveCanonicalNode(project, id)?.kind === "widget");
+   288	    const result = widgetSelection
+   289	      ? activeScene?.id ? editorApplication.duplicateSelectionInScene(activeScene.id, selectedWidgetIds) : { changed: false }
+   290	      : editorApplication.duplicateSelection(selectedIds);
+   291	    if (result.changed) logAction("Selection duplicated", "EVENT");
+   292	    return result.changed;
+   293	  };
+   294	
+   295	  const changeWidgetZOrder = (operation: ZOrderOperation): boolean => {
+   296	    const node = resolvedSelection;
+   297	    if (!node?.widget || !node.scene || activeScene?.id !== node.scene.id) return false;
+   298	    const updates = calculateZOrderUpdates(node.scene.widgets, node.widget.id, operation);
+   299	    if (!updates) return false;
+   300	    const result = editorApplication.setWidgetZIndicesInScene(node.scene.id, updates, `Widget ${operation}`);
+   301	    if (result.changed) logAction(`Widget ${operation} executed`, "EVENT");
+   302	    return result.changed;
+   303	  };
+   304	
+   305	  const executeEditorDescriptor = (commandId: EditorCommandId) => {
+   306	    let changed = false;
+   307	    if (commandId === "project.add-theme-project") changed = addThemeProject();
+   308	    else if (commandId === "theme.add-rotation") changed = addRotation();
+   309	    else if (commandId === "rotation.add-scene") changed = addScene();
+   310	    else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
+   311	    else if (commandId === "canvas.delete-selection") changed = deleteSelectionCommand();
+   312	    else if (commandId === "widget.open-properties") {
+   313	      activatePanel("properties");
+   314	      logAction("Properties panel opened", "EVENT");
+   315	      setContextMenu(null);
+   316	      return;
+   317	    }
+   318	    if (changed) logAction(`${commandId} executed`, "EVENT");
+   319	    setContextMenu(null);
+   320	  };
+   321	
+   322	  const buildAndVerifyPackage = async () => {
+   323	    if (!activeProfile) {
+   324	      setDeploymentStatus("Blocked · DeviceProfile unavailable");
+   325	      logAction("Package build blocked: active DeviceProfile is unavailable", "ERROR");
+   326	      return;
+   327	    }
+   328	    if (!validation.valid) {
+   329	      setDeploymentStatus("Blocked · validation failed");
+   330	      validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN"));
+   331	      return;
+   332	    }
+   333	    try {
+   334	      setDeploymentStatus("Building…");
+   335	      const built = await buildDeploymentPackage(project, activeProfile);
+   336	      const verified = await verifyDeploymentPackage(built);
+   337	      setDeploymentStatus(verified.verified ? "Verified package" : "Blocked · integrity failed");
+   338	      logAction(verified.verified ? `Package verified · ${verified.manifest.assetIds.length} asset(s)` : "Package verification failed", verified.verified ? "INFO" : "ERROR");
+   339	    } catch (error) {
+   340	      setDeploymentStatus("Blocked · export error");
+   341	      logAction(error instanceof Error ? error.message : "Package build failed", "ERROR");
+   342	    }
+   343	  };
+   344	
+   345	  const setPanelMode = (panel: PanelId, mode: PanelMode) => {
+   346	    setPanelModes((current) => setPanelLayoutMode(current, panel, mode));
+   347	    logAction(`${panel[0].toUpperCase()}${panel.slice(1)} panel: ${mode}`);
+   348	  };
+   349	
+   350	  const activatePanel = (panel: PanelId) => {
+   351	    setPanelModes((current) => activateDockedPanel(current, panel));
+   352	    logAction(`${panel[0].toUpperCase()}${panel.slice(1)} panel docked`);
+   353	  };
+   354	
+   355	  const collapsePanel = (panel: PanelId) => setPanelMode(panel, "collapsed");
+   356	
+   357	  const resetLayout = () => {
+   358	    setPanelModes({ ...defaultPanelLayout });
+   359	    setLeftWidth(286);
+   360	    setRightWidth(298);
+   361	    logAction("Workspace layout reset");
+   362	  };
+   363	
+   364	  const beginResize = (side: "left" | "right", event: React.PointerEvent<HTMLDivElement>) => {
+   365	    event.preventDefault();
+   366	    const startX = event.clientX;
+   367	    const startWidth = side === "left" ? leftWidth : rightWidth;
+   368	    const move = (moveEvent: PointerEvent) => {
+   369	      const delta = moveEvent.clientX - startX;
+   370	      const nextWidth = Math.min(420, Math.max(220, startWidth + (side === "left" ? delta : -delta)));
+   371	      if (side === "left") setLeftWidth(nextWidth);
+   372	      else setRightWidth(nextWidth);
+   373	    };
+   374	    const stop = () => {
+   375	      window.removeEventListener("pointermove", move);
+   376	      window.removeEventListener("pointerup", stop);
+   377	      logAction(`${side === "left" ? "Explorer" : "Properties"} splitter resized`);
+   378	    };
+   379	    window.addEventListener("pointermove", move);
+   380	    window.addEventListener("pointerup", stop);
+   381	  };
+   382	
+   383	  const openDocument = (label: string) => {
+   384	    setOpenDocuments((current) => current.includes(label) ? current : [...current, label]);
+   385	    setActiveDocument(label);
+   386	    logAction(`${label} document active`);
+   387	  };
+   388	
+   389	  const closeDocument = (label: string) => {
+   390	    if (openDocuments.length <= 1) return;
+   391	    const remaining = openDocuments.filter((document) => document !== label);
+   392	    setOpenDocuments(remaining);
+   393	    if (activeDocument === label) setActiveDocument(remaining[remaining.length - 1]);
+   394	    logAction(`${label} document closed`);
+   395	  };
+   396	
+   397	  const selectNode = (node: TreeNode, additive = false) => {
+   398	    if (node.disabled) return;
+   399	    const canonical = resolveCanonicalNode(project, node.id);
+   400	    const normalizedKind = node.kind.toLowerCase();
+   401	    const kind: SelectionKind = canonical?.kind ?? (normalizedKind.includes("resource") || normalizedKind.includes("unsupported") ? "asset" : "canvas");
+   402	    const nodeType = canonical?.widget?.widgetType ?? node.nodeType ?? node.kind;
+   403	    const nextIds = orderSelectionIds(activeScene?.widgets ?? [], selectIds(selectedIds, node.id, additive));
+   404	    setSelectedIds(nextIds);
+   405	    if (!nextIds.length) {
+   406	      setSelection(null);
+   407	    } else if (additive && selectedIds.includes(node.id)) {
+   408	      const firstId = nextIds[0];
+   409	      const first = resolveCanonicalNode(project, firstId)?.widget;
+   410	      setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
+   411	    } else {
+   412	      setSelection({ id: node.id, label: node.label, kind, nodeType, detail: node.detail });
+   413	    }
+   414	    if (kind === "theme" || kind === "rotation") openDocument(node.label);
+   415	    logAction(`${node.kind} selected: ${node.label}`, "EVENT");
+   416	  };
+   417	
+   418	  const clearSelection = () => {
+   419	    setSelection(null);
+   420	    setSelectedIds([]);
+   421	    logAction("Canvas selection cleared");
+   422	  };
+   423	
+   424	  const toggleExpanded = (nodeId: string) => setExpandedNodes((current) => ({ ...current, [nodeId]: !current[nodeId] }));
+   425	
+   426	  const renderTreeNode = (node: TreeNode, depth = 0): ReactNode => {
+   427	    const expanded = expandedNodes[node.id] ?? depth < 2;
+   428	    const isSelected = selectedIds.includes(node.id);
+   429	    const icon = node.kind === "Scene" ? "◈" : node.kind === "Widget" ? "◇" : node.kind === "Rotation / Form" ? "▧" : node.kind === "Project" ? "▣" : node.kind === "Resources" ? "▤" : "▱";
+   430	    return (
+   431	      <li key={node.id} className={`tree-node ${node.disabled ? "is-disabled" : ""}`}>
+   432	        <div className={`tree-row ${isSelected ? "is-selected" : ""}`} style={{ paddingLeft: `${10 + depth * 15}px` }} onContextMenu={(event) => { event.preventDefault(); selectNode(node); setContextMenu({ x: event.clientX, y: event.clientY, kind: resolveCanonicalNode(project, node.id)?.kind ?? "canvas" }); }}>
+   433	          {node.children && node.children.length > 0 ? (
+   434	            <button type="button" className="tree-expander" aria-label={`${expanded ? "Collapse" : "Expand"} ${node.label}`} aria-expanded={expanded} onClick={() => toggleExpanded(node.id)}>{expanded ? "▾" : "▸"}</button>
+   435	          ) : <span className="tree-expander-placeholder" />}
+   436	          <button type="button" className="tree-label" onClick={(event) => selectNode(node, event.shiftKey || event.ctrlKey || event.metaKey)} disabled={node.disabled}>
+   437	            <span className="tree-icon">{icon}</span>
+   438	            <span className="tree-copy"><strong>{node.label}</strong>{node.detail && <small>{node.detail}</small>}</span>
+   439	          </button>
+   440	        </div>
+   441	        {expanded && node.children && node.children.length > 0 && <ul className="tree-children">{node.children.map((child) => renderTreeNode(child, depth + 1))}</ul>}
+   442	      </li>
+   443	    );
+   444	  };
+   445	
+   446	  const projectTree: TreeNode = {
+   447	    id: project.id,
+   448	    label: project.name,
+   449	    kind: "Project",
+   450	    detail: `Schema v${project.schemaVersion}`,
+   451	    children: [
+   452	      ...groups.map((currentGroup) => ({
+   453	        id: currentGroup.id,
+   454	        label: currentGroup.name,
+   455	        kind: "Theme Project Group",
+   456	        detail: `${currentGroup.themeProjects.length} theme project${currentGroup.themeProjects.length === 1 ? "" : "s"}`,
+   457	        children: getThemeNodes(currentGroup),
+   458	      })),
+   459	      { id: "resources", label: "Resources", kind: "Resources", detail: `${groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)).length} theme resources` },
+   460	      { id: "unsupported", label: "Unsupported Files", kind: "Unsupported Files", detail: "Not imported" },
+   461	    ],
+   462	  };
+   463	
+   464	  const activeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
+   465	  const activeScene = resolvedSelection?.scene ?? runtime.activeScene ?? activeRotation?.scenes[0];
+   466	  const canvasWidgets = activeScene?.widgets ?? [];
+   467	  const canvasWidth = activeRotation?.width ?? activeProfile?.display.width ?? 1;
+   468	  const canvasHeight = activeRotation?.height ?? activeProfile?.display.height ?? 1;
+   469	  const canvasAvailable = Boolean(activeProfile && activeRotation);
+   470	  const effectiveGeometry = (widget: Widget): Geometry => geometryOverrides[widget.id] ?? widget.geometry;
+   471	  const selectedWidgetIds = selectedIds.filter((id) => canvasWidgets.some((widget) => widget.id === id));
+   472	  const selectedEditableWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id) && !widget.locked);
+   473	  const canvasTransform = { zoom: zoom / 100, pan, sceneWidth: canvasWidth, sceneHeight: canvasHeight };
+   474	
+   475	  const toCanvasPoint = (event: { clientX: number; clientY: number }): CanvasPoint => {
+   476	    const bounds = canvasScreenRef.current?.getBoundingClientRect();
+   477	    if (!bounds) return { x: 0, y: 0 };
+   478	    return screenToCanvas({ x: event.clientX, y: event.clientY }, { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height }, canvasTransform);
+   479	  };
+   480	
+   481	  const captureCanvasPointer = (pointerId: number) => {
+   482	    activePointerIdRef.current = pointerId;
+   483	    try { canvasScreenRef.current?.setPointerCapture(pointerId); } catch { /* Pointer capture can fail after browser cancellation. */ }
+   484	  };
+   485	
+   486	  const releaseCanvasPointer = (pointerId: number) => {
+   487	    if (activePointerIdRef.current === pointerId) activePointerIdRef.current = null;
+   488	    try {
+   489	      if (canvasScreenRef.current?.hasPointerCapture(pointerId)) canvasScreenRef.current.releasePointerCapture(pointerId);
+   490	    } catch { /* Pointer capture may already be released. */ }
+   491	  };
+   492	
+   493	  const resetCanvasClickSuppression = () => {
+   494	    window.setTimeout(() => { suppressCanvasClickRef.current = false; }, 0);
+   495	  };
+   496	
+   497	  const setGeometryPreview = (updates: Record<string, Geometry>) => {
+   498	    geometryOverridesRef.current = updates;
+   499	    setGeometryOverrides(updates);
+   500	  };
+   501	
+   502	  const clearGeometryPreview = () => {
+   503	    geometryOverridesRef.current = {};
+   504	    setGeometryOverrides({});
+   505	    setSnapGuides([]);
+   506	  };
+   507	
+   508	  const commitGeometryCommand = (sceneId: string | undefined, updates: Readonly<Record<string, Geometry>>, label: string) => {
+   509	    const result = sceneId ? editorApplication.setWidgetGeometriesInScene(sceneId, updates, label) : { changed: false };
+   510	    if (result.changed) logAction(`${label} committed`, "EVENT");
+   511	    clearGeometryPreview();
+   512	  };
+   513	
+   514	  const cancelCanvasInteraction = () => {
+   515	    if (canvasPointer.mode === "idle") {
+   516	      clearGeometryPreview();
+   517	      return;
+   518	    }
+   519	    if (activePointerIdRef.current !== null) releaseCanvasPointer(canvasPointer.pointerId);
+   520	    if (canvasPointer.mode === "panning") setPan(canvasPointer.initialPan);
+   521	    clearGeometryPreview();
+   522	    setCanvasPointer({ mode: "idle" });
+   523	    suppressCanvasClickRef.current = true;
+   524	    resetCanvasClickSuppression();
+   525	  };
+   526	
+   527	  const beginCanvasMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
+   528	    if (!canvasAvailable || (event.button !== 0 && event.button !== 1)) return;
+   529	    if (event.button === 1 || canvasTool === "pan") {
+   530	      event.preventDefault();
+   531	      captureCanvasPointer(event.pointerId);
+   532	      setCanvasPointer({ mode: "panning", pointerId: event.pointerId, start: { x: event.clientX, y: event.clientY }, initialPan: pan });
+   533	      return;
+   534	    }
+   535	    if ((event.target as HTMLElement).closest(".canvas-widget, .resize-handle")) return;
+   536	    event.preventDefault();
+   537	    captureCanvasPointer(event.pointerId);
+   538	    const start = toCanvasPoint(event);
+   539	    setCanvasPointer({ mode: "marquee", pointerId: event.pointerId, start, screenStart: { x: event.clientX, y: event.clientY }, rect: { x: start.x, y: start.y, width: 0, height: 0 }, additive: event.shiftKey || event.ctrlKey || event.metaKey, baseSelection: selectedIds });
+   540	  };
+   541	
+   542	  const beginWidgetMove = (widget: Widget, event: React.PointerEvent<HTMLDivElement>) => {
+   543	    if (event.button !== 0) return;
+   544	    event.preventDefault();
+   545	    event.stopPropagation();
+   546	    const selected = selectedWidgetIds.includes(widget.id) ? selectedWidgetIds : [widget.id];
+   547	    const editable = selected.map((id) => canvasWidgets.find((candidate) => candidate.id === id)).filter((candidate): candidate is Widget => Boolean(candidate && !candidate.locked));
+   548	    if (!editable.length) {
+   549	      selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Locked" });
+   550	      logAction(`${widget.name} is locked; geometry command blocked`, "WARN");
+   551	      return;
+   552	    }
+   553	    if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.visible ? "Visible" : "Hidden" });
+   554	    captureCanvasPointer(event.pointerId);
+   555	    const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
+   556	    setCanvasPointer({ mode: "drag", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined });
+   557	  };
+   558	
+   559	  const beginWidgetResize = (widget: Widget, handle: ResizeHandle, event: React.PointerEvent<HTMLButtonElement>) => {
+   560	    event.preventDefault();
+   561	    event.stopPropagation();
+   562	    const selected = selectedWidgetIds.includes(widget.id) ? selectedWidgetIds : [widget.id];
+   563	    const editable = selected.map((id) => canvasWidgets.find((candidate) => candidate.id === id)).filter((candidate): candidate is Widget => Boolean(candidate && !candidate.locked));
+   564	    if (!editable.length) {
+   565	      logAction(`${widget.name} is locked; resize blocked`, "WARN");
+   566	      return;
+   567	    }
+   568	    if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Selected" });
+   569	    captureCanvasPointer(event.pointerId);
+   570	    const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
+   571	    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
+   572	  };
+   573	
+   574	  const beginSelectionResize = (handle: ResizeHandle, event: React.PointerEvent<HTMLButtonElement>) => {
+   575	    event.preventDefault();
+   576	    event.stopPropagation();
+   577	    const editable = selectedEditableWidgets;
+   578	    if (!editable.length) return;
+   579	    captureCanvasPointer(event.pointerId);
+   580	    const initial = Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)]));
+   581	    setCanvasPointer({ mode: "resize", pointerId: event.pointerId, widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), screenStart: { x: event.clientX, y: event.clientY }, initial, initialBounds: getBounds(Object.values(initial)) ?? undefined, handle });
+   582	  };
+   583	
+   584	  const handleCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+   585	    if (canvasPointer.mode === "idle" || event.pointerId !== canvasPointer.pointerId) return;
+   586	    if (canvasPointer.mode === "panning") {
+   587	      const distance = Math.hypot(event.clientX - canvasPointer.start.x, event.clientY - canvasPointer.start.y);
+   588	      if (exceedsPointerDragThreshold(distance)) suppressCanvasClickRef.current = true;
+   589	      setPan({ x: canvasPointer.initialPan.x + event.clientX - canvasPointer.start.x, y: canvasPointer.initialPan.y + event.clientY - canvasPointer.start.y });
+   590	      return;
+   591	    }
+   592	    const current = toCanvasPoint(event);
+   593	    const screenDistance = Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y);
+   594	    if (canvasPointer.mode === "marquee") {
+   595	      if (!exceedsPointerDragThreshold(screenDistance)) return;
+   596	      setCanvasPointer((state) => state.mode === "marquee" ? { ...state, rect: normalizeRect(state.start, current) } : state);
+   597	      suppressCanvasClickRef.current = true;
+   598	      return;
+   599	    }
+   600	    const delta = { x: current.x - canvasPointer.start.x, y: current.y - canvasPointer.start.y };
+   601	    if (screenDistance <= POINTER_DRAG_THRESHOLD) return;
+   602	    const initialBounds = canvasPointer.initialBounds ?? getBounds(Object.values(canvasPointer.initial));
+   603	    if (!initialBounds) return;
+   604	    const snapConfiguration = { enabled: snapEnabled, gridSize: DEFAULT_GRID_SIZE, threshold: DEFAULT_SNAP_THRESHOLD };
+   605	    const otherWidgets = canvasWidgets.filter((widget) => !canvasPointer.widgetIds.includes(widget.id) && widget.visible && widget.enabled);
+   606	    let updates: Record<string, Geometry> = {};
+   607	    if (canvasPointer.mode === "drag") {
+   608	      const movedBounds = moveGeometry(initialBounds, delta);
+   609	      const snapped = snapGeometryWithTargets(movedBounds, snapConfiguration, otherWidgets);
+   610	      const snapDelta = { x: snapped.geometry.x - movedBounds.x, y: snapped.geometry.y - movedBounds.y };
+   611	      updates = Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => [widgetId, moveGeometry(canvasPointer.initial[widgetId], { x: delta.x + snapDelta.x, y: delta.y + snapDelta.y })]));
+   612	      setSnapGuides(snapped.guides);
+   613	    } else {
+   614	      const resizedBounds = resizeGeometry(initialBounds, canvasPointer.handle ?? "se", delta);
+   615	      const snapped = snapGeometryWithTargets(resizedBounds, snapConfiguration, otherWidgets);
+   616	      updates = Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => {
+   617	        const next = transformGeometryWithinBounds(canvasPointer.initial[widgetId], initialBounds, snapped.geometry);
+   618	        return [widgetId, { ...next, width: Math.max(10, next.width), height: Math.max(10, next.height) }];
+   619	      }));
+   620	      setSnapGuides(snapped.guides);
+   621	    }
+   622	    setGeometryPreview(updates);
+   623	    suppressCanvasClickRef.current = true;
+   624	  };
+   625	
+   626	  const handleCanvasPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+   627	    if (canvasPointer.mode === "idle" || event.pointerId !== canvasPointer.pointerId) return;
+   628	    releaseCanvasPointer(event.pointerId);
+   629	    if (canvasPointer.mode === "marquee") {
+   630	      const moved = exceedsPointerDragThreshold(Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y));
+   631	      if (moved) {
+   632	        const nextIds = marqueeSelection(canvasWidgets, normalizeRect(canvasPointer.start, toCanvasPoint(event)), canvasPointer.baseSelection, canvasPointer.additive);
+   633	        setSelectedIds(nextIds);
+   634	        const first = nextIds[0] ? canvasWidgets.find((widget) => widget.id === nextIds[0]) : undefined;
+   635	        setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
+   636	        suppressCanvasClickRef.current = true;
+   637	        resetCanvasClickSuppression();
+   638	      }
+   639	      setCanvasPointer({ mode: "idle" });
+   640	      return;
+   641	    }
+   642	    if (canvasPointer.mode === "panning") {
+   643	      setCanvasPointer({ mode: "idle" });
+   644	      resetCanvasClickSuppression();
+   645	      return;
+   646	    }
+   647	    const finalPoint = toCanvasPoint(event);
+   648	    const finalDelta = { x: finalPoint.x - canvasPointer.start.x, y: finalPoint.y - canvasPointer.start.y };
+   649	    const initialBounds = canvasPointer.initialBounds ?? getBounds(Object.values(canvasPointer.initial));
+   650	    if (initialBounds && exceedsPointerDragThreshold(Math.hypot(event.clientX - canvasPointer.screenStart.x, event.clientY - canvasPointer.screenStart.y))) {
+   651	      const snapConfiguration = { enabled: snapEnabled, gridSize: DEFAULT_GRID_SIZE, threshold: DEFAULT_SNAP_THRESHOLD };
+   652	      const otherWidgets = canvasWidgets.filter((widget) => !canvasPointer.widgetIds.includes(widget.id) && widget.visible && widget.enabled);
+   653	      const previewBounds = canvasPointer.mode === "drag" ? moveGeometry(initialBounds, finalDelta) : resizeGeometry(initialBounds, canvasPointer.handle ?? "se", finalDelta);
+   654	      const snapped = snapGeometryWithTargets(previewBounds, snapConfiguration, otherWidgets);
+   655	      const finalGeometry = canvasPointer.mode === "drag"
+   656	        ? Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => [widgetId, moveGeometry(canvasPointer.initial[widgetId], { x: finalDelta.x + snapped.geometry.x - previewBounds.x, y: finalDelta.y + snapped.geometry.y - previewBounds.y })]))
+   657	        : Object.fromEntries(canvasPointer.widgetIds.map((widgetId) => {
+   658	          const next = transformGeometryWithinBounds(canvasPointer.initial[widgetId], initialBounds, snapped.geometry);
+   659	          return [widgetId, { ...next, width: Math.max(10, next.width), height: Math.max(10, next.height) }];
+   660	        }));
+   661	      if (Object.keys(finalGeometry).length) commitGeometryCommand(activeScene?.id, finalGeometry, canvasPointer.mode === "drag" ? "Move widget" : "Resize widget");
+   662	    } else {
+   663	      clearGeometryPreview();
+   664	    }
+   665	    setCanvasPointer({ mode: "idle" });
+   666	    resetCanvasClickSuppression();
+   667	  };
+   668	
+   669	  const handleCanvasPointerCancel = () => cancelCanvasInteraction();
+   670	
+   671	  const handleCanvasClick = () => {
+   672	    if (suppressCanvasClickRef.current || canvasTool === "pan") {
+   673	      suppressCanvasClickRef.current = false;
+   674	      return;
+   675	    }
+   676	    clearSelection();
+   677	  };
+   678	
+   679	  const handleCanvasKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+   680	    const target = event.target as HTMLElement;
+   681	    if (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return;
+   682	    const modifier = event.metaKey || event.ctrlKey;
+   683	    if (event.key === "Escape") {
+   684	      if (canvasPointer.mode !== "idle") {
+   685	        event.preventDefault();
+   686	        cancelCanvasInteraction();
+   687	      }
+   688	      return;
+   689	    }
+   690	    if (event.key.toLowerCase() === "a" && modifier) {
+   691	      event.preventDefault();
+   692	      const allIds = orderSelectionIds(canvasWidgets, canvasWidgets.map((widget) => widget.id));
+   693	      setSelectedIds(allIds);
+   694	      const first = allIds[0] ? canvasWidgets.find((widget) => widget.id === allIds[0]) : undefined;
+   695	      setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
+   696	      return;
+   697	    }
+   698	    if (event.key === "Delete" || event.key === "Backspace") {
+   699	      event.preventDefault();
+   700	      deleteSelectionCommand();
+   701	      return;
+   702	    }
+   703	    if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) || !selectedWidgetIds.length) return;
+   704	    const step = calculateNudgeStep(DEFAULT_GRID_SIZE, { shift: event.shiftKey, modifier });
+   705	    if (step === null) return;
+   706	    event.preventDefault();
+   707	    const delta = { x: event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0, y: event.key === "ArrowUp" ? -step : event.key === "ArrowDown" ? step : 0 };
+   708	    const updates = Object.fromEntries(selectedEditableWidgets.map((widget) => [widget.id, moveGeometry(widget.geometry, delta)]));
+   709	    if (Object.keys(updates).length) commitGeometryCommand(activeScene?.id, updates, "Nudge widget");
+   710	  };
+   711	
+   712	  useEffect(() => {
+   713	    const cancelOnBlur = () => cancelCanvasInteraction();
+   714	    window.addEventListener("blur", cancelOnBlur);
+   715	    return () => window.removeEventListener("blur", cancelOnBlur);
+   716	  });
+   717	
+   718	  useEffect(() => {
+   719	    if (canvasPointer.mode !== "idle") cancelCanvasInteraction();
+   720	    else clearGeometryPreview();
+   721	    return () => { geometryOverridesRef.current = {}; };
+   722	  }, [activeDocument, activeRotation?.id, activeScene?.id]);
+   723	
+   724	  useEffect(() => () => {
+   725	    geometryOverridesRef.current = {};
+   726	    if (activePointerIdRef.current !== null) releaseCanvasPointer(activePointerIdRef.current);
+   727	  }, []);
+   728	
+   729	  const selectionGeometryWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id));
+   730	  const selectionBounds = getBounds(selectionGeometryWidgets.map(effectiveGeometry));
+   731	
+   732	  const renderSnapGuide = (guide: SnapGuide) => <div key={`${guide.axis}-${guide.kind}-${guide.position}-${guide.widgetId ?? "grid"}`} className={`snap-guide snap-guide-${guide.axis} snap-guide-${guide.kind}`} style={guide.axis === "x" ? { left: `${(guide.position / canvasWidth) * 100}%` } : { top: `${(guide.position / canvasHeight) * 100}%` }} aria-hidden="true" />;
+   733	
+   734	  const renderCanvasWidget = (widget: Widget) => {
+   735	    const geometry = effectiveGeometry(widget);
+   736	    const selected = selectedIds.includes(widget.id);
+   737	    const style = { left: `${(geometry.x / canvasWidth) * 100}%`, top: `${(geometry.y / canvasHeight) * 100}%`, width: `${(geometry.width / canvasWidth) * 100}%`, height: `${(geometry.height / canvasHeight) * 100}%`, zIndex: widget.zIndex };
+   738	    const handles: ResizeHandle[] = ["nw", "ne", "sw", "se"];
+   739	    return <div key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""} ${widget.visible ? "" : "is-invisible"}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (!suppressCanvasClickRef.current) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden" }, event.shiftKey || event.ctrlKey || event.metaKey); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden" }); }}><span>{widget.name}</span><small>{widget.widgetType}{widget.locked ? " · locked" : ""}{!widget.visible ? " · hidden" : ""}</small>{selected && selectedWidgetIds.length === 1 && !widget.locked && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
+   740	  };
+   741	
+   742	  const menuItems: Record<MenuKey, MenuItem[]> = {
+   743	    File: [
+   744	      { label: "New Project", shortcut: "Ctrl+N", onClick: createProject },
+   745	      { label: "Open Project", disabled: true },
+   746	      { label: "Save", shortcut: "Ctrl+S", disabled: !documentSnapshot.isDirty, onClick: saveDocument },
+   747	    ],
+   748	    Edit: [
+   749	      { label: "Undo", shortcut: "Ctrl+Z", disabled: !commandHistory.canUndo, onClick: undo },
+   750	      { label: "Redo", shortcut: "Ctrl+Y", disabled: !commandHistory.canRedo, onClick: redo },
+   751	      { label: "Reset Layout", onClick: resetLayout },
+   752	    ],
+   753	    View: [
+   754	      { label: "Project Explorer", onClick: () => activatePanel("explorer") },
+   755	      { label: "Asset Browser", onClick: () => activatePanel("assets") },
+   756	      { label: "Properties", onClick: () => activatePanel("properties") },
+   757	      { label: "Simulator", onClick: () => activatePanel("simulator") },
+   758	      { label: "Console / Output", onClick: () => activatePanel("console") },
+   759	      { label: "Reset Layout", onClick: resetLayout },
+   760	    ],
+   761	    Project: [
+   762	      { label: "Project Settings", disabled: true },
+   763	      { label: "Validate Project", onClick: () => { if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
+   764	      { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
+   765	    ],
+   766	    Theme: [
+   767	      { label: "Add Theme Project", onClick: addThemeProject },
+   768	      { label: "Add Rotation", disabled: !resolvedSelection?.theme, onClick: addRotation },
+   769	      { label: "Theme Defaults", disabled: true },
+   770	    ],
+   771	    Scene: [
+   772	      { label: "Add Scene", disabled: !resolvedSelection?.rotation, onClick: addScene },
+   773	      { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
+   774	      { label: "Test Scene", onClick: () => activatePanel("simulator") },
+   775	    ],
+   776	    Widget: [
+   777	      { label: "Duplicate Selection", disabled: !selectedIds.length, onClick: duplicateSelectionCommand },
+   778	      { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
+   779	      { label: "Binding Editor", disabled: !resolvedSelection?.widget, onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
+   780	    ],
+   781	    Tools: [
+   782	      { label: "Command Palette", disabled: true },
+   783	      { label: "Diagnostics", onClick: () => activatePanel("console") },
+   784	      { label: "Program Settings", onClick: () => setSettingsOpen(true) },
+   785	    ],
+   786	  };
+   787	
+   788	  const renderPanelHeader = (panel: PanelId, kicker: string, title: string) => (
+   789	    <div className="panel-heading">
+   790	      <div><span className="panel-kicker">{kicker}</span><strong>{title}</strong></div>
+   791	      <div className="panel-header-actions">
+   792	        <button type="button" className="panel-action" title="Float panel" onClick={() => setPanelMode(panel, "floating")}>⤢</button>
+   793	        <button type="button" className="panel-action" title="Collapse panel" onClick={() => collapsePanel(panel)}>−</button>
+   794	        <button type="button" className="panel-action" title="Close panel" onClick={() => collapsePanel(panel)}>×</button>
+   795	      </div>
+   796	    </div>
+   797	  );
+   798	
+   799	  const renderDockTabs = (active: "explorer" | "assets" | "properties" | "simulator") => {
+   800	    const tabs = active === "explorer" || active === "assets" ? [["explorer", "Explorer"], ["assets", "Assets"]] : [["properties", "Properties"], ["simulator", "Simulator"]];
+   801	    return <div className="panel-dock-tabs">{tabs.map(([id, label]) => <button key={id} type="button" className={active === id ? "active" : ""} onClick={() => activatePanel(id as PanelId)}>{label}</button>)}</div>;
+   802	  };
+   803	
+   804	  const renderExplorer = () => (
+   805	    <>
+   806	      {renderPanelHeader("explorer", "NAVIGATION", "Project Explorer")}
+   807	      {renderDockTabs("explorer")}
+   808	      <div className="explorer-toolbar"><button type="button" className="small-action" onClick={() => setExpandedNodes({ project: true, "theme-group": true })}>Expand</button><button type="button" className="small-action" onClick={() => setExpandedNodes({})}>Collapse</button><span className="explorer-source">MODEL VIEW</span></div>
+   809	      <div className="tree-scroll"><ul className="project-tree">{renderTreeNode(projectTree)}</ul></div>
+   810	      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Canonical Project Model is the source of truth. Explorer is a navigation view.</span></div>
+   811	    </>
+   812	  );
+   813	
+   814	  const resourceAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)));
+   815	  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => widget.assetIds ?? []))))));
+   816	  const assetsForCategory = assetCategory === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)) : assetCategory === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)) : [];
+   817	  const filteredAssets = assetsForCategory.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || asset.mediaType.toLowerCase().includes(assetSearch.toLowerCase()));
+   818	  const renderAssets = () => (
+   819	    <>
+   820	      {renderPanelHeader("assets", "LIBRARY", "Asset Browser")}
+   821	      {renderDockTabs("assets")}
+   822	      <div className="asset-search"><input aria-label="Search assets" placeholder="Search depot" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /><button type="button" className="small-action" disabled title="Asset import command is a later phase">Import</button></div>
+   823	      <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{category.id === "depot" ? 0 : category.id === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)).length : category.id === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)).length : 0}</small></button>)}</div>
+   824	      <div className="asset-list">
+   825	        {filteredAssets.length > 0 ? filteredAssets.map((asset) => <button type="button" className="asset-row" key={asset.id} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: asset.mediaType })}><span className="asset-type">{asset.mediaType === "audio" ? "♫" : asset.mediaType === "video" ? "▶" : "▧"}</span><span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.id}</small></span></button>) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Unsupported Files is empty" : "No assets in this scope"}</strong><span>{assetCategory === "depot" ? "Depot library content is not Project Resources and unused depot assets are not exported." : assetCategory === "unsupported" ? "Unsupported files cannot become widgets or enter normal export." : "Project Resources and Scene Content are derived from canonical references."}</span></div>}
+   826	      </div>
+   827	      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Asset Depot, Resources, Scene Content and Unsupported Files remain separate surfaces.</span></div>
+   828	    </>
+   829	  );
+   830	
+   831	  const commitSelectionGeometryField = (field: keyof Geometry, value: number) => {
+   832	    const selectedScenes = selectedIds.map((id) => resolveCanonicalNode(project, id)?.scene?.id);
+   833	    const sceneId = selectedScenes[0];
+   834	    if (!sceneId || selectedScenes.some((candidate) => candidate !== sceneId) || sceneId !== activeScene?.id) {
+   835	      logAction("Geometry edit blocked: selection is not scoped to active Scene", "WARN");
+   836	      return;
+   837	    }
+   838	    const updates: Record<string, Geometry> = {};
+   839	    selectedIds.forEach((id) => {
+   840	      const widget = resolveCanonicalNode(project, id)?.widget;
+   841	      if (!widget || widget.locked) return;
+   842	      updates[id] = { ...effectiveGeometry(widget), [field]: Math.max(field === "width" || field === "height" ? 10 : 0, value) };
+   843	    });
+   844	    if (!Object.keys(updates).length) {
+   845	      logAction("Geometry edit blocked: selection is locked or not a Widget", "WARN");
+   846	      return;
+   847	    }
+   848	    const result = editorApplication.setWidgetGeometriesInScene(sceneId, updates, `Set widget ${field}`);
+   849	    if (result.changed) logAction(`Set widget ${field}`, "EVENT");
+   850	  };
+   851	
+   852	  const renderProperties = () => {
+   853	    const multi = selectedIds.length > 1;
+   854	    const node = resolvedSelection;
+   855	    const widget = node?.widget;
+   856	    const selectedCanonical = selectedIds.map((id) => resolveCanonicalNode(project, id)).filter((current): current is ResolvedNode => Boolean(current));
+   857	    const valueFor = (getter: (current: ResolvedNode) => string | number | boolean | undefined, fallback = "—") => {
+   858	      const values = selectedCanonical.map(getter).filter((value): value is string | number | boolean => value !== undefined);
+   859	      if (values.length === 0) return fallback;
+   860	      if (!multi) return String(values[0]);
+   861	      return new Set(values.map((value) => String(value))).size === 1 ? String(values[0]) : "*";
+   862	    };
+   863	    const issueCount = validation.issues.filter((issue) => Boolean(selection && issue.path?.includes(selection.id))).length;
+   864	    return (
+   865	      <>
+   866	        {renderPanelHeader("properties", "INSPECTOR", "Properties")}
+   867	        {renderDockTabs("properties")}
+   868	        <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{selection?.detail ?? "Nothing selected · Project context"}</small></div></div>
+   869	        {selection && node ? <div className="properties-scroll">
+   870	          <section className="property-section"><div className="property-section-title">Identity</div><PropertyRow label="Name" value={multi ? valueFor((current) => "name" in current.node ? String(current.node.name) : undefined) : selection.label} /><PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
+   871	          <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><PropertyRow label="Device Profile" value={project.deviceProfileId} muted /><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
+   872	          {widget && <>
+   873	            <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Enabled" value={multi ? valueFor((current) => current.widget?.enabled) : String(widget.enabled)} /><PropertyRow label="Geometry Lock" value={multi ? valueFor((current) => current.widget?.locked ? "Locked" : "Editable") : widget.locked ? "Locked" : "Editable"} /></section>
+   874	            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><label>X<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).x : undefined) : effectiveGeometry(widget).x} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("x", Number(event.target.value))} /></label><label>Y<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).y : undefined) : effectiveGeometry(widget).y} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("y", Number(event.target.value))} /></label><label>W<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).width : undefined) : effectiveGeometry(widget).width} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("width", Number(event.target.value))} /></label><label>H<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).height : undefined) : effectiveGeometry(widget).height} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("height", Number(event.target.value))} /></label></div><PropertyRow label="Locked" value={multi ? valueFor((current) => current.widget?.locked) : String(widget.locked)} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Z-order" value={String(widget.zIndex)} /></section>
+   875	            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
+   876	            {widget.widgetType === "digit" && <section className="property-section"><div className="property-section-title">Digit</div><PropertyRow label="Style" value={String(widget.style?.digitStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Floor Mapping" value={String(widget.content?.floorMappingId ?? "Not selected")} /></section>}
+   877	            {widget.widgetType === "direction" && <section className="property-section"><div className="property-section-title">Direction</div><PropertyRow label="Style" value={String(widget.style?.directionStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Variant" value={String(widget.content?.variant ?? "Profile-defined")} /></section>}
+   878	            {widget.widgetType === "media" && <section className="property-section"><div className="property-section-title">Media</div><PropertyRow label="Visual" value={widget.mediaType ?? "Not selected"} /><PropertyRow label="Attached Audio" value={widget.audioAssetId ?? "None"} muted /></section>}
+   879	          </>}
+   880	          {node.scene && <section className="property-section"><div className="property-section-title">Scene Runtime</div><PropertyRow label="Priority" value={`${node.scene.priority} / 10`} /><PropertyRow label="Enabled" value={String(node.scene.enabled !== false)} /><PropertyRow label="Activation Conditions" value={`${node.scene.activationConditions.length} · ${node.scene.activationConditionMode ?? "all"}`} /><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>}
+   881	          {node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /></section>}
+   882	          {node.theme && <section className="property-section"><div className="property-section-title">Theme Project</div><PropertyRow label="Rotations" value={String(node.theme.rotations.length)} /><PropertyRow label="Resources" value={String(node.theme.resources.length)} /><PropertyRow label="Floor Mappings" value={String(node.theme.floorMappings?.length ?? 0)} /></section>}
+   883	          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><PropertyRow label="Media Type" value={node.asset.mediaType} /><PropertyRow label="Source" value={node.asset.sourcePath} /><PropertyRow label="Stable ID" value={node.asset.id} muted /></section>}
+   884	          {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
+   885	        </div> : <div className="properties-empty"><span className="empty-panel-icon">□</span><strong>Select a canonical item to inspect</strong><span>Project, Theme Group, Theme, Rotation, Scene, Asset and profile-defined Widget selections resolve from the Project Model.</span></div>}
+   886	        <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
+   887	      </>
+   888	    );
+   889	  };
+   890	
+   891	  const renderSimulator = () => (
+   892	    <>
+   893	      {renderPanelHeader("simulator", "TEST STUDIO", "Simulator")}
+   894	      {renderDockTabs("simulator")}
+   895	      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); logAction("Simulator run requested", "EVENT"); }}>▶ Run</button><button type="button" className="sim-button" disabled={simulationStatus !== "running"} onClick={() => { setSimulationStatus("paused"); logAction("Simulator paused", "EVENT"); }}>Ⅱ Pause</button><button type="button" className="sim-button" disabled={simulationStatus === "idle"} onClick={() => logAction("Simulator step requested", "EVENT")}>Step</button><button type="button" className="sim-button" onClick={() => { setSimulationStatus("idle"); setRuntimeValues({}); setRuntimeSettings({}); logAction("Simulator reset requested", "EVENT"); }}>↺ Reset</button><span className="sim-status">{simulationStatus.toUpperCase()}</span></div>
+   896	      <div className="simulator-scroll"><section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id}><span>{state.displayName}<small>{state.type}</small></span>{state.type === "boolean" ? <input type="checkbox" checked={current === true} onChange={(event) => setRuntimeValues((values) => ({ ...values, [state.id]: event.target.checked }))} /> : <input type="text" value={current == null ? "" : String(current)} placeholder="Unset" onChange={(event) => setRuntimeValues((values) => ({ ...values, [state.id]: event.target.value }))} />}</label>; })}</section><section className="sim-section"><div className="property-section-title">Runtime Settings · DeviceProfile</div>{profileSettings.length === 0 ? <div className="sim-empty">No runtime settings in active DeviceProfile.</div> : profileSettings.map((setting) => <label className="sim-input-row" key={setting.id}><span>{setting.displayName}<small>{setting.type}</small></span><input type="text" value={runtimeSettings[setting.id] == null ? "" : String(runtimeSettings[setting.id])} placeholder={setting.defaultValue == null ? "Unset" : String(setting.defaultValue)} onChange={(event) => setRuntimeSettings((values) => ({ ...values, [setting.id]: event.target.value }))} /></label>)}</section><section className="sim-section"><div className="property-section-title">Active Scene</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.map((candidate) => <div className="sim-row" key={candidate.sceneId}><span>{candidate.sceneId}</span><strong>{candidate.matched ? "MATCH" : "skip"} · P{candidate.priority}</strong></div>)}<div className="sim-row"><span>Active bindings</span><strong>{activeBindings.length}</strong></div></section><section className="sim-section"><div className="property-section-title">Runtime Inspector</div><div className="sim-row"><span>Binding Engine</span><strong>Canonical</strong></div><div className="sim-row"><span>Audio arbitration</span><strong>Firmware-owned</strong></div><div className="sim-row"><span>Package status</span><strong>{deploymentStatus}</strong></div></section></div>
+   897	      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Simulator consumes DeviceProfile, Scene selection and active-scene bindings; it does not invent Custom State.</span></div>
+   898	    </>
+   899	  );
+   900	
+   901	  const renderConsole = () => (
+   902	    <>
+   903	      <div className="console-tabs"><button type="button" className={consoleTab === "console" ? "active" : ""} onClick={() => setConsoleTab("console")}>Console</button><button type="button" className={consoleTab === "validation" ? "active" : ""} onClick={() => setConsoleTab("validation")}>Validation <span className="tab-count">{validation.issues.length}</span></button><span className="console-spacer" /><span className="console-scope">Package: {deploymentStatus}</span><button type="button" className="panel-action" title="Float console" onClick={() => setPanelMode("console", "floating")}>⤢</button><button type="button" className="panel-action" title="Collapse console" onClick={() => collapsePanel("console")}>×</button></div>
+   904	      <div className="console-body">{consoleTab === "console" ? <div className="console-entry-list">{consoleEntries.slice(-3).map((entry, index) => <div className="console-entry" key={`${entry.message}-${index}`}><span className={`console-level ${entry.level.toLowerCase()}`}>{entry.level}</span><span className="console-info">{entry.message}</span></div>)}<span className="console-muted">Command, validation, export and runtime traces appear here.</span></div> : <div className="console-entry-list"><div className="console-entry"><span className={`validation-dot ${validation.valid ? "ok" : "error"}`} /><span className="console-info">{validation.valid ? "No blocking foundation issues" : `${validation.issues.length} validation issue(s)`}</span></div><span className="console-muted">Publish readiness is not evaluated by the Phase 0 foundation.</span>{validation.issues.map((issue) => <div className="console-entry" key={issue.code}><span className={`console-level ${issue.severity}`}>{issue.severity.toUpperCase()}</span><span className="console-info">{issue.message}</span></div>)}</div>}</div>
+   905	    </>
+   906	  );
+   907	
+   908	  const renderPanelContainer = (panel: PanelId, content: ReactNode) => panelModes[panel] === "floating" ? <div className={`floating-tool-panel floating-${panel}`} data-panel={panel}>{content}</div> : <aside className="tool-panel">{content}</aside>;
+   909	
+   910	  const settingsContent: Record<SettingsCategory, ReactNode> = {
+   911	    General: <><h3>General</h3><p>Application-level behavior stays separate from Project, Theme and Runtime settings.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.confirmDestructive} onChange={(event) => setSettingsDraft((current) => ({ ...current, confirmDestructive: event.target.checked }))} /> Confirm destructive commands</label></>,
+   912	    Appearance: <><h3>Appearance</h3><p>Neutral surfaces, restrained teal accent and compact Windows desktop density are canonical.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.compactDensity} onChange={(event) => setSettingsDraft((current) => ({ ...current, compactDensity: event.target.checked }))} /> Use compact panel density</label></>,
+   913	    Editor: <><h3>Editor</h3><p>Editor defaults apply to the UI shell only; domain geometry remains canonical.</p><div className="settings-value">Shortcut registry <strong>Foundation</strong></div></>,
+   914	    Canvas: <><h3>Canvas</h3><p>Canvas preferences are application UI defaults and do not change runtime semantics.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.showGrid} onChange={(event) => setSettingsDraft((current) => ({ ...current, showGrid: event.target.checked }))} /> Show grid by default</label></>,
+   915	    Assets: <><h3>Assets</h3><p>Asset Browser is a depot/library view. Resources, Scene Content and Unsupported Files remain separate.</p><div className="settings-value">Preview mode <strong>Profile-supported</strong></div></>,
+   916	    Simulator: <><h3>Simulator</h3><p>Simulator consumes canonical DeviceProfile runtime state and settings registries.</p><div className="settings-value">Rule system <strong>Canonical evaluator</strong></div></>,
+   917	    Validation: <><h3>Validation</h3><p>Validation issues are sourced from the shared validation service.</p><div className="settings-value">Severity <strong>Profile-aware</strong></div></>,
+   918	    Export: <><h3>Export</h3><p>Export scope is controlled by canonical Resources + Used + Default asset rules.</p><div className="settings-value">Format conversion <strong>Not in V1</strong></div></>,
+   919	    Shortcuts: <><h3>Shortcuts</h3><p>Confirmed shortcuts are shown by the command registry; Proposed shortcuts are not presented as settled product behavior.</p><div className="shortcut-list"><span>Ctrl+S <strong>Save</strong></span><span>Ctrl+Z <strong>Undo</strong></span><span>R <strong>90° rotation</strong></span></div></>,
+   920	  };
+   921	
+   922	  return (
+   923	    <div className="app-shell" onClick={() => menuOpen && setMenuOpen(null)} onKeyDown={handleCanvasKeyDown}>
+   924	      <header className="application-bar">
+   925	        <div className="brand-block"><span className="brand-mark">TD</span><div><strong>Template Designer</strong><span className="muted">Design Studio · Foundation</span></div></div>
+   926	        <nav className="menu-bar" aria-label="Application menu">{menuKeys.map((menu) => <div key={menu} className="menu-item-wrap"><button type="button" className={`menu-button ${menuOpen === menu ? "is-open" : ""}`} onClick={(event) => { event.stopPropagation(); setMenuOpen((current) => current === menu ? null : menu); }}>{menu}</button>{menuOpen === menu && <div className="menu-popover" onClick={(event) => event.stopPropagation()}>{menuItems[menu].map((item) => <button key={item.label} type="button" className="menu-command" disabled={item.disabled} onClick={item.onClick}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>
+   927	        <div className="topbar-actions"><span className="mode-chip"><span className="live-dot" /> {viewMode === "design" ? "Design Mode" : "Preview Mode"}</span><span className={`mode-chip ${documentSnapshot.isDirty ? "is-dirty" : "is-clean"}`}>{documentSnapshot.isDirty ? "Unsaved changes" : "Saved"}</span><button type="button" className="toolbar-button primary" onClick={createProject}>New Project</button><button type="button" className="toolbar-button" disabled={!commandHistory.canUndo} onClick={undo} title={commandHistory.canUndo ? "Undo last command" : "No commands to undo"}>Undo</button><button type="button" className="toolbar-button" disabled={!commandHistory.canRedo} onClick={redo} title={commandHistory.canRedo ? "Redo last command" : "No commands to redo"}>Redo</button><button type="button" className="toolbar-button settings-button" onClick={() => setSettingsOpen(true)} title="Program Settings">⚙ Settings</button></div>
+   928	      </header>
+   929	
+   930	      <div className="document-tabs" role="tablist" aria-label="Open documents"><div className="document-tab-list">{openDocuments.map((document) => <div key={document} className={`document-tab ${activeDocument === document ? "active" : ""}`} role="tab" aria-selected={activeDocument === document}><button type="button" className="document-tab-main" onClick={() => { setActiveDocument(document); logAction(`${document} document active`); }}><span className="document-tab-icon">▧</span><span>{document}</span>{activeDocument === document && <span className="dirty-indicator" title="Foundation project has local state" />}</button><button type="button" className="tab-close" aria-label={`Close ${document}`} onClick={() => closeDocument(document)} disabled={openDocuments.length <= 1}>×</button></div>)}</div><span className="document-tab-note">Theme Project / Rotation documents · {documentSnapshot.isDirty ? "Dirty" : "Clean"}</span><div className="tab-actions"><button type="button" className="icon-button" title="Reset layout" onClick={resetLayout}>↺</button></div></div>
+   931	
+   932	      <main className="workspace-stack" style={{ gridTemplateRows: workspaceRows }}>
+   933	        <div className="editor-workspace" style={{ gridTemplateColumns: editorColumns }}>
+   934	          {activeLeftPanel && renderPanelContainer(activeLeftPanel, activeLeftPanel === "explorer" ? renderExplorer() : renderAssets())}
+   935	          {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" onPointerDown={(event) => beginResize("left", event)} />}
+   936	          <section className="canvas-workspace" aria-label="Canvas editor">
+   937	            <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.max(50, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.min(200, current + 10))}>+</button></div></div>
+   938	            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, kind: selection?.kind ?? "canvas" }); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={handleCanvasClick} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCancel}><div className="canvas-widget-layer" style={{ transform: `translate(${canvasTransform.pan.x}px, ${canvasTransform.pan.y}px) scale(${canvasTransform.zoom})`, transformOrigin: "top left" }}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && canvasWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || canvasWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+   939	            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}</div><div className="context-actions"><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
+   940	          </section>
+   941	          {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" onPointerDown={(event) => beginResize("right", event)} />}
+   942	          {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}
+   943	        </div>
+   944	        {consoleVisible && <section className="console-panel" aria-label="Console and validation">{renderConsole()}</section>}
+   945	        {floatingPanels.map((panel) => renderPanelContainer(panel, panel === "explorer" ? renderExplorer() : panel === "assets" ? renderAssets() : panel === "properties" ? renderProperties() : panel === "simulator" ? renderSimulator() : renderConsole()))}
+   946	      </main>
+   947	
+   948	      {contextMenu && <div className="editor-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>{commandsForSelection(contextMenu.kind).map((command) => <button type="button" key={command.id} onClick={() => executeEditorDescriptor(command.id)}><span>{command.label}</span>{command.shortcut && <kbd>{command.shortcut}</kbd>}</button>)}{commandsForSelection(contextMenu.kind).length === 0 && <span className="context-menu-empty">No commands for this selection</span>}</div>}
+   949	
+   950	      <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
+   951	
+   952	      {bindingModal && <div className="settings-backdrop" role="presentation" onClick={() => setBindingModal(null)}><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Binding is evaluated inside the active Scene</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Binding records remain in the canonical Widget model; this surface does not invent scene selection rules.</span></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+   953	      {settingsOpen && <div className="settings-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { setSavedSettings(settingsDraft); setSettingsOpen(false); logAction("Program Settings saved"); }}>Save / Apply &amp; Close</button></div></footer></section></div>}
+   954	    </div>
+   955	  );
+   956	}
+===== src/App/canvas-interaction.ts =====
+     1	import type { Geometry, Widget } from "../Domain/models";
+     2	
+     3	export type CanvasPoint = { x: number; y: number };
+     4	export type CanvasRect = Geometry;
+     5	export type ResizeHandle = "n" | "e" | "s" | "w" | "ne" | "nw" | "se" | "sw";
+     6	
+     7	export type CanvasViewport = {
+     8	  left: number;
+     9	  top: number;
+    10	  width: number;
+    11	  height: number;
+    12	};
+    13	
+    14	export type SceneFrame = {
+    15	  origin: CanvasPoint;
+    16	  width: number;
+    17	  height: number;
+    18	};
+    19	
+    20	export type CanvasViewTransform = {
+    21	  zoom: number;
+    22	  pan: CanvasPoint;
+    23	  sceneWidth: number;
+    24	  sceneHeight: number;
+    25	};
+    26	
+    27	export type SnapConfiguration = {
+    28	  enabled: boolean;
+    29	  gridSize: number;
+    30	  threshold: number;
+    31	  grid?: boolean;
+    32	  edges?: boolean;
+    33	  centers?: boolean;
+    34	};
+    35	
+    36	export type SnapGuide = {
+    37	  axis: "x" | "y";
+    38	  position: number;
+    39	  kind: "grid" | "edge" | "center";
+    40	  widgetId?: string;
+    41	};
+    42	
+    43	export type SnapResult = {
+    44	  geometry: Geometry;
+    45	  guides: readonly SnapGuide[];
+    46	};
+    47	
+    48	export type ZOrderOperation = "bring-forward" | "send-backward" | "bring-to-front" | "send-to-back";
+    49	
+    50	export function calculateZOrderUpdates(widgets: readonly Widget[], widgetId: string, operation: ZOrderOperation): Readonly<Record<string, number>> | null {
+    51	  const targetIndex = widgets.findIndex((widget) => widget.id === widgetId);
+    52	  if (targetIndex < 0) return null;
+    53	  const ordered = widgets.map((widget, index) => ({ widget, index })).sort((left, right) => left.widget.zIndex - right.widget.zIndex || left.index - right.index || left.widget.id.localeCompare(right.widget.id));
+    54	  const orderedIndex = ordered.findIndex((entry) => entry.widget.id === widgetId);
+    55	  const target = ordered[orderedIndex];
+    56	  if (!target) return null;
+    57	  if (operation === "bring-to-front") {
+    58	    const max = Math.max(...widgets.map((widget) => widget.zIndex));
+    59	    return { [widgetId]: max + 1 };
+    60	  }
+    61	  if (operation === "send-to-back") {
+    62	    const min = Math.min(...widgets.map((widget) => widget.zIndex));
+    63	    return { [widgetId]: min - 1 };
+    64	  }
+    65	  const neighbor = operation === "bring-forward" ? ordered[orderedIndex + 1] : ordered[orderedIndex - 1];
+    66	  if (!neighbor) return null;
+    67	  if (neighbor.widget.zIndex === target.widget.zIndex) return { [widgetId]: target.widget.zIndex + (operation === "bring-forward" ? 1 : -1) };
+    68	  return { [widgetId]: neighbor.widget.zIndex, [neighbor.widget.id]: target.widget.zIndex };
+    69	}
+    70	
+    71	export const DEFAULT_GRID_SIZE = 10;
+    72	export const DEFAULT_SNAP_THRESHOLD = 6;
+    73	export const POINTER_DRAG_THRESHOLD = 4;
+    74	export const MIN_WIDGET_SIZE = 10;
+    75	
+    76	export function exceedsPointerDragThreshold(distance: number): boolean {
+    77	  return Number.isFinite(distance) && distance > POINTER_DRAG_THRESHOLD;
+    78	}
+    79	
+    80	export function calculateNudgeStep(gridSize: number, modifiers: { readonly shift: boolean; readonly modifier: boolean }): number | null {
+    81	  if (!Number.isFinite(gridSize) || gridSize <= 0 || (modifiers.shift && !modifiers.modifier)) return null;
+    82	  if (modifiers.shift) return gridSize * 5;
+    83	  return modifiers.modifier ? gridSize / 10 : gridSize;
+    84	}
+    85	
+    86	const SNAP_KIND_PRIORITY: Record<SnapGuide["kind"], number> = {
+    87	  grid: 0,
+    88	  edge: 1,
+    89	  center: 2,
+    90	};
+    91	
+    92	function safePositive(value: number, fallback = 1): number {
+    93	  return Number.isFinite(value) && value > 0 ? value : fallback;
+    94	}
+    95	
+    96	function compareCandidates(left: { distance: number; guide: SnapGuide }, right: { distance: number; guide: SnapGuide }): number {
+    97	  const distanceDelta = left.distance - right.distance;
+    98	  if (Math.abs(distanceDelta) > Number.EPSILON) return distanceDelta;
+    99	  const kindDelta = SNAP_KIND_PRIORITY[left.guide.kind] - SNAP_KIND_PRIORITY[right.guide.kind];
+   100	  if (kindDelta !== 0) return kindDelta;
+   101	  return (left.guide.widgetId ?? "").localeCompare(right.guide.widgetId ?? "");
+   102	}
+   103	
+   104	function sceneViewportRect(viewport: CanvasViewport, transform: CanvasViewTransform): CanvasRect & { scale: number } {
+   105	  const sceneWidth = safePositive(transform.sceneWidth);
+   106	  const sceneHeight = safePositive(transform.sceneHeight);
+   107	  const zoom = safePositive(transform.zoom);
+   108	  const scale = Math.min(viewport.width / sceneWidth, viewport.height / sceneHeight) * zoom;
+   109	  const width = sceneWidth * scale;
+   110	  const height = sceneHeight * scale;
+   111	  return {
+   112	    x: viewport.left + (viewport.width - width) / 2 + transform.pan.x,
+   113	    y: viewport.top + (viewport.height - height) / 2 + transform.pan.y,
+   114	    width,
+   115	    height,
+   116	    scale,
+   117	  };
+   118	}
+   119	
+   120	/** Convert a CSS/screen point into Canvas coordinates while preserving scene aspect ratio. */
+   121	export function screenToCanvas(point: CanvasPoint, viewport: CanvasViewport, transform: CanvasViewTransform): CanvasPoint {
+   122	  const frame = sceneViewportRect(viewport, transform);
+   123	  return {
+   124	    x: (point.x - frame.x) / frame.scale,
+   125	    y: (point.y - frame.y) / frame.scale,
+   126	  };
+   127	}
+   128	
+   129	/** Convert a Canvas point into CSS/screen coordinates using the same view transform. */
+   130	export function canvasToScreen(point: CanvasPoint, viewport: CanvasViewport, transform: CanvasViewTransform): CanvasPoint {
+   131	  const frame = sceneViewportRect(viewport, transform);
+   132	  return {
+   133	    x: frame.x + point.x * frame.scale,
+   134	    y: frame.y + point.y * frame.scale,
+   135	  };
+   136	}
+   137	
+   138	export function canvasToScene(point: CanvasPoint, frame: SceneFrame): CanvasPoint {
+   139	  return { x: point.x - frame.origin.x, y: point.y - frame.origin.y };
+   140	}
+   141	
+   142	export function sceneToCanvas(point: CanvasPoint, frame: SceneFrame): CanvasPoint {
+   143	  return { x: point.x + frame.origin.x, y: point.y + frame.origin.y };
+   144	}
+   145	
+   146	export function clampCanvasPoint(point: CanvasPoint, sceneWidth: number, sceneHeight: number): CanvasPoint {
+   147	  return {
+   148	    x: Math.max(0, Math.min(sceneWidth, point.x)),
+   149	    y: Math.max(0, Math.min(sceneHeight, point.y)),
+   150	  };
+   151	}
+   152	
+   153	export function snapValue(value: number, enabled: boolean, step = DEFAULT_GRID_SIZE): number {
+   154	  if (!enabled || !Number.isFinite(step) || step <= 0) return value;
+   155	  return Math.round(value / step) * step;
+   156	}
+   157	
+   158	/**
+   159	 * Preserve the original grid helper contract. The richer edge/center snapping
+   160	 * implementation is exposed as snapGeometryWithTargets below.
+   161	 */
+   162	export function snapGeometry(geometry: Geometry, enabled: boolean, step = DEFAULT_GRID_SIZE): Geometry {
+   163	  return {
+   164	    x: snapValue(geometry.x, enabled, step),
+   165	    y: snapValue(geometry.y, enabled, step),
+   166	    width: Math.max(step, snapValue(geometry.width, enabled, step)),
+   167	    height: Math.max(step, snapValue(geometry.height, enabled, step)),
+   168	  };
+   169	}
+   170	
+   171	export function normalizeRect(start: CanvasPoint, current: CanvasPoint): CanvasRect {
+   172	  return {
+   173	    x: Math.min(start.x, current.x),
+   174	    y: Math.min(start.y, current.y),
+   175	    width: Math.abs(current.x - start.x),
+   176	    height: Math.abs(current.y - start.y),
+   177	  };
+   178	}
+   179	
+   180	/** Inclusive rectangle intersection; edge-touch counts as an intersection. */
+   181	export function intersects(a: CanvasRect, b: CanvasRect): boolean {
+   182	  return a.x <= b.x + b.width && a.x + a.width >= b.x && a.y <= b.y + b.height && a.y + a.height >= b.y;
+   183	}
+   184	
+   185	export function containsPoint(rect: CanvasRect, point: CanvasPoint): boolean {
+   186	  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+   187	}
+   188	
+   189	export function getBounds(geometries: readonly Geometry[]): CanvasRect | null {
+   190	  if (!geometries.length) return null;
+   191	  const left = Math.min(...geometries.map((geometry) => geometry.x));
+   192	  const top = Math.min(...geometries.map((geometry) => geometry.y));
+   193	  const right = Math.max(...geometries.map((geometry) => geometry.x + geometry.width));
+   194	  const bottom = Math.max(...geometries.map((geometry) => geometry.y + geometry.height));
+   195	  return { x: left, y: top, width: right - left, height: bottom - top };
+   196	}
+   197	
+   198	export function moveGeometry(geometry: Geometry, delta: CanvasPoint): Geometry {
+   199	  return { ...geometry, x: geometry.x + delta.x, y: geometry.y + delta.y };
+   200	}
+   201	
+   202	export function resizeGeometry(geometry: Geometry, handle: ResizeHandle | string, delta: CanvasPoint, minWidth = MIN_WIDGET_SIZE, minHeight = MIN_WIDGET_SIZE): Geometry {
+   203	  const minimumWidth = Math.max(0, minWidth);
+   204	  const minimumHeight = Math.max(0, minHeight);
+   205	  let left = geometry.x;
+   206	  let top = geometry.y;
+   207	  let right = geometry.x + geometry.width;
+   208	  let bottom = geometry.y + geometry.height;
+   209	
+   210	  if (handle.includes("w")) left = Math.min(geometry.x + delta.x, right - minimumWidth);
+   211	  if (handle.includes("e")) right = Math.max(geometry.x + geometry.width + delta.x, left + minimumWidth);
+   212	  if (handle.includes("n")) top = Math.min(geometry.y + delta.y, bottom - minimumHeight);
+   213	  if (handle.includes("s")) bottom = Math.max(geometry.y + geometry.height + delta.y, top + minimumHeight);
+   214	
+   215	  return { x: left, y: top, width: Math.max(minimumWidth, right - left), height: Math.max(minimumHeight, bottom - top) };
+   216	}
+   217	
+   218	export function transformGeometryWithinBounds(geometry: Geometry, initialBounds: CanvasRect, nextBounds: CanvasRect): Geometry {
+   219	  const widthRatio = initialBounds.width > 0 ? nextBounds.width / initialBounds.width : 1;
+   220	  const heightRatio = initialBounds.height > 0 ? nextBounds.height / initialBounds.height : 1;
+   221	  return {
+   222	    x: nextBounds.x + (geometry.x - initialBounds.x) * widthRatio,
+   223	    y: nextBounds.y + (geometry.y - initialBounds.y) * heightRatio,
+   224	    width: geometry.width * widthRatio,
+   225	    height: geometry.height * heightRatio,
+   226	  };
+   227	}
+   228	
+   229	export function selectIds(current: readonly string[], id: string, additive: boolean): string[] {
+   230	  if (!additive) return [id];
+   231	  return current.includes(id) ? current.filter((candidate) => candidate !== id) : [...current, id];
+   232	}
+   233	
+   234	export function orderSelectionIds(widgets: readonly Widget[], ids: readonly string[]): string[] {
+   235	  const wanted = new Set(ids);
+   236	  const ordered = widgets.filter((widget) => wanted.has(widget.id)).map((widget) => widget.id);
+   237	  const known = new Set(ordered);
+   238	  return [...ordered, ...ids.filter((id) => !known.has(id))];
+   239	}
+   240	
+   241	export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect, baseSelection: readonly string[] = [], additive = false): string[] {
+   242	  const hits = widgets.filter((widget) => widget.visible && widget.enabled && intersects(marquee, widget.geometry)).map((widget) => widget.id);
+   243	  return orderSelectionIds(widgets, additive ? [...baseSelection, ...hits] : hits);
+   244	}
+   245	
+   246	/** Highest z-order wins; equal z-order uses later Scene document order, then stable ID. */
+   247	export function hitTest(point: CanvasPoint, widgets: readonly Widget[]): string | null {
+   248	  return [...widgets]
+   249	    .map((widget, index) => ({ widget, index }))
+   250	    .filter(({ widget }) => widget.visible && widget.enabled && containsPoint(widget.geometry, point))
+   251	    .sort((left, right) => right.widget.zIndex - left.widget.zIndex || right.index - left.index || right.widget.id.localeCompare(left.widget.id))
+   252	    .at(0)?.widget.id ?? null;
+   253	}
+   254	
+   255	function candidateForAxis(
+   256	  axis: "x" | "y",
+   257	  candidate: Geometry,
+   258	  others: readonly Widget[],
+   259	  configuration: SnapConfiguration,
+   260	): { value: number; guide: SnapGuide; distance: number } | null {
+   261	  const sourceStart = axis === "x" ? candidate.x : candidate.y;
+   262	  const sourceSize = axis === "x" ? candidate.width : candidate.height;
+   263	  const threshold = Math.max(0, configuration.threshold);
+   264	  const gridCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+   265	  const edgeCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+   266	  const centerCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+   267	
+   268	  if (configuration.grid !== false && configuration.gridSize > 0) {
+   269	    const gridValue = snapValue(sourceStart, true, configuration.gridSize);
+   270	    const distance = Math.abs(gridValue - sourceStart);
+   271	    if (distance <= threshold) gridCandidates.push({ value: gridValue, distance, guide: { axis, position: gridValue, kind: "grid" } });
+   272	  }
+   273	
+   274	  if (configuration.edges !== false || configuration.centers !== false) {
+   275	    for (const other of others) {
+   276	      const start = axis === "x" ? other.geometry.x : other.geometry.y;
+   277	      const size = axis === "x" ? other.geometry.width : other.geometry.height;
+   278	      const end = start + size;
+   279	      if (configuration.edges !== false) {
+   280	        for (const target of [start, end]) {
+   281	          for (const value of [target, target - sourceSize]) {
+   282	            const distance = Math.abs(value - sourceStart);
+   283	            if (distance <= threshold) edgeCandidates.push({ value, distance, guide: { axis, position: target, kind: "edge", widgetId: other.id } });
+   284	          }
+   285	        }
+   286	      }
+   287	      if (configuration.centers !== false) {
+   288	        const targetCenter = start + size / 2;
+   289	        const value = targetCenter - sourceSize / 2;
+   290	        const distance = Math.abs(value - sourceStart);
+   291	        if (distance <= threshold) centerCandidates.push({ value, distance, guide: { axis, position: targetCenter, kind: "center", widgetId: other.id } });
+   292	      }
+   293	    }
+   294	  }
+   295	
+   296	  for (const pass of [gridCandidates, edgeCandidates, centerCandidates]) {
+   297	    if (pass.length) return pass.sort((left, right) => compareCandidates(left, right))[0];
+   298	  }
+   299	  return null;
+   300	}
+   301	
+   302	export function snapGeometryWithTargets(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): SnapResult {
+   303	  if (!configuration.enabled) return { geometry: candidate, guides: [] };
+   304	  const x = candidateForAxis("x", candidate, others, configuration);
+   305	  const y = candidateForAxis("y", candidate, others, configuration);
+   306	  return {
+   307	    geometry: { ...candidate, x: x?.value ?? candidate.x, y: y?.value ?? candidate.y },
+   308	    guides: [x?.guide, y?.guide].filter((guide): guide is SnapGuide => Boolean(guide)),
+   309	  };
+   310	}
+   311	
+   312	export function calculateSnapGuides(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): readonly SnapGuide[] {
+   313	  return snapGeometryWithTargets(candidate, configuration, others).guides;
+   314	}
+   315	
+   316	export function updateWidgetGeometries(project: import("../Domain/models").Project, updates: Readonly<Record<string, Geometry>>): import("../Domain/models").Project {
+   317	  return {
+   318	    ...project,
+   319	    themeProjectGroups: project.themeProjectGroups.map((group) => ({
+   320	      ...group,
+   321	      themeProjects: group.themeProjects.map((theme) => ({
+   322	        ...theme,
+   323	        rotations: theme.rotations.map((rotation) => ({
+   324	          ...rotation,
+   325	          scenes: rotation.scenes.map((scene) => ({
+   326	            ...scene,
+   327	            widgets: scene.widgets.map((widget) => updates[widget.id] ? { ...widget, geometry: updates[widget.id] } : widget),
+   328	          })),
+   329	        })),
+   330	      })),
+   331	    })),
+   332	  };
+   333	}
+===== src/App/editor-commands.ts =====
+     1	import type { SelectionKind } from "./editor-types";
+     2	
+     3	export type EditorCommandId =
+     4	  | "project.add-theme-project"
+     5	  | "theme.add-rotation"
+     6	  | "rotation.add-scene"
+     7	  | "widget.bring-forward"
+     8	  | "widget.send-backward"
+     9	  | "widget.bring-to-front"
+    10	  | "widget.send-to-back"
+    11	  | "canvas.delete-selection"
+    12	  | "widget.open-properties";
+    13	
+    14	export type EditorCommandKind = "mutation" | "navigation";
+    15	
+    16	export type EditorCommandDescriptor = {
+    17	  id: EditorCommandId;
+    18	  kind: EditorCommandKind;
+    19	  label: string;
+    20	  shortcut?: string;
+    21	  supportedSelectionKinds: readonly SelectionKind[];
+    22	};
+    23	
+    24	/**
+    25	 * UI command palette/context-menu descriptors. Persistent operations are
+    26	 * executed through the canonical application/use-case layer. Navigation
+    27	 * entries are explicitly not document mutations.
+    28	 */
+    29	export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
+    30	  { id: "project.add-theme-project", kind: "mutation", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
+    31	  { id: "theme.add-rotation", kind: "mutation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
+    32	  { id: "rotation.add-scene", kind: "mutation", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
+    33	  { id: "widget.bring-forward", kind: "mutation", label: "Bring Forward", supportedSelectionKinds: ["widget"] },
+    34	  { id: "widget.send-backward", kind: "mutation", label: "Send Backward", supportedSelectionKinds: ["widget"] },
+    35	  { id: "widget.bring-to-front", kind: "mutation", label: "Bring To Front", supportedSelectionKinds: ["widget"] },
+    36	  { id: "widget.send-to-back", kind: "mutation", label: "Send To Back", supportedSelectionKinds: ["widget"] },
+    37	  { id: "canvas.delete-selection", kind: "mutation", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group"] },
+    38	  { id: "widget.open-properties", kind: "navigation", label: "Open Properties", supportedSelectionKinds: ["widget"] },
+    39	];
+    40	
+    41	export function commandsForSelection(selectionKind: SelectionKind | undefined): readonly EditorCommandDescriptor[] {
+    42	  if (!selectionKind) return editorCommandDescriptors;
+    43	  return editorCommandDescriptors.filter((command) => command.supportedSelectionKinds.includes(selectionKind));
+    44	}

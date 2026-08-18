@@ -1,0 +1,28 @@
+--- DIRECT MUTATIONS ---
+--- UNSAFE CASTS ---
+--- HISTORY/DOCUMENT BYPASS CANDIDATES ---
+src/App/App.tsx:3:import { InMemoryDocumentStore } from "../Core/document-store";
+src/App/App.tsx:140:  const documentStore = useMemo(() => {
+src/App/App.tsx:141:    const store = new InMemoryDocumentStore();
+src/App/App.tsx:145:  const documentSubscribe = useMemo(() => (listener: () => void) => documentStore.subscribe(listener), [documentStore]);
+src/App/App.tsx:146:  const documentSnapshotReader = useMemo(() => () => documentStore.getSnapshot(), [documentStore]);
+src/App/App.tsx:175:  const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
+src/App/App.tsx:176:  const commandHistory = documentStore.history;
+src/App/App.tsx:223:    if (documentStore.undo()) logAction("> undo()", "EVENT");
+src/App/App.tsx:227:    if (documentStore.redo()) logAction("> redo()", "EVENT");
+src/App/App.tsx:233:    documentStore.create(nextProject);
+src/App/App.tsx:244:    documentStore.save();
+src/Core/document-store.ts:11:export interface DocumentStore {
+src/Core/document-store.ts:30:export class InMemoryDocumentStore implements DocumentStore {
+src/Core/document-store.ts:62:    this.runWithoutSnapshotRefresh(() => this.history.clear());
+src/Core/document-store.ts:71:    this.runWithoutSnapshotRefresh(() => this.history.clear());
+src/Core/document-store.ts:97:      return this.runWithoutSnapshotRefresh(() => this.history.undo());
+src/Core/document-store.ts:105:      return this.runWithoutSnapshotRefresh(() => this.history.redo());
+src/Core/editor-application.ts:2:import { InMemoryDocumentStore } from "./document-store";
+src/Core/editor-application.ts:119:  constructor(readonly documents: InMemoryDocumentStore) {}
+src/Core/editor-application.ts:308:export function createEditorApplication(store: InMemoryDocumentStore): EditorApplication {
+--- GLOBAL WIDGET LOOKUPS ---
+src/App/App.tsx:129:          const widget = scene.widgets.find((candidate) => candidate.id === id);
+src/App/App.tsx:815:  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => widget.assetIds ?? []))))));
+src/App/canvas-interaction.ts:51:  const targetIndex = widgets.findIndex((widget) => widget.id === widgetId);
+src/Core/editor-application.ts:179:      const fromIndex = scene.widgets.findIndex((widget) => widget.id === widgetId);
