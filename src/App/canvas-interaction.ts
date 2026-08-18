@@ -52,22 +52,45 @@ export type ZOrderOperation = "bring-forward" | "send-backward" | "bring-to-fron
 export function calculateZOrderUpdates(widgets: readonly Widget[], widgetId: string, operation: ZOrderOperation): Readonly<Record<string, number>> | null {
   const targetIndex = widgets.findIndex((widget) => widget.id === widgetId);
   if (targetIndex < 0) return null;
+  const target = widgets[targetIndex];
+  // Z-order operations respect the lock: a locked widget cannot be re-stacked.
+  if (target.locked) return null;
+  if (widgets.length <= 1) return null;
+
+  // Deterministic renumbering: the stacking total order (zIndex asc, array
+  // index asc, stable ID asc) is normalized to sequential zIndex values, the
+  // requested swap is applied to the order, and the changed zIndex values are
+  // returned. This eliminates equal-z tie leapfrogging (§4.5).
   const ordered = widgets.map((widget, index) => ({ widget, index })).sort((left, right) => left.widget.zIndex - right.widget.zIndex || left.index - right.index || left.widget.id.localeCompare(right.widget.id));
-  const orderedIndex = ordered.findIndex((entry) => entry.widget.id === widgetId);
-  const target = ordered[orderedIndex];
-  if (!target) return null;
-  if (operation === "bring-to-front") {
-    const max = Math.max(...widgets.map((widget) => widget.zIndex));
-    return { [widgetId]: max + 1 };
+  const position = ordered.findIndex((entry) => entry.widget.id === widgetId);
+  const neighborPosition = operation === "bring-forward" || operation === "bring-to-front"
+    ? position + 1
+    : position - 1;
+  const isFrontBack = operation === "bring-to-front" || operation === "send-to-back";
+  const next: { widget: Widget; index: number }[] = [...ordered];
+  if (isFrontBack) {
+    if (operation === "bring-to-front") {
+      if (position >= ordered.length - 1) return null;
+      const [entry] = next.splice(position, 1);
+      next.push(entry);
+    } else {
+      if (position <= 0) return null;
+      const [entry] = next.splice(position, 1);
+      next.unshift(entry);
+    }
+  } else {
+    if (neighborPosition < 0 || neighborPosition >= ordered.length) return null;
+    [next[position], next[neighborPosition]] = [next[neighborPosition], next[position]];
   }
-  if (operation === "send-to-back") {
-    const min = Math.min(...widgets.map((widget) => widget.zIndex));
-    return { [widgetId]: min - 1 };
-  }
-  const neighbor = operation === "bring-forward" ? ordered[orderedIndex + 1] : ordered[orderedIndex - 1];
-  if (!neighbor) return null;
-  if (neighbor.widget.zIndex === target.widget.zIndex) return { [widgetId]: target.widget.zIndex + (operation === "bring-forward" ? 1 : -1) };
-  return { [widgetId]: neighbor.widget.zIndex, [neighbor.widget.id]: target.widget.zIndex };
+
+  const updates: Record<string, number> = {};
+  next.forEach((entry, index) => {
+    // Locked widgets keep their zIndex; they still participate in the
+    // stacking order above.
+    if (entry.widget.locked) return;
+    if (entry.widget.zIndex !== index) updates[entry.widget.id] = index;
+  });
+  return Object.keys(updates).length > 0 ? updates : null;
 }
 
 export const DEFAULT_GRID_SIZE = 10;
@@ -96,10 +119,32 @@ export function isCanvasKeyboardExcludedTarget(target: { readonly tagName?: stri
   return Boolean(target.isContentEditable) || ["INPUT", "TEXTAREA", "SELECT"].includes((target.tagName ?? "").toUpperCase());
 }
 
-export function calculateNudgeStep(gridSize: number, modifiers: { readonly shift: boolean; readonly modifier: boolean; readonly alt?: boolean }): number | null {
-  if (!Number.isFinite(gridSize) || gridSize <= 0 || modifiers.alt || (modifiers.shift && !modifiers.modifier)) return null;
-  if (modifiers.shift) return gridSize * 5;
-  return modifiers.modifier ? gridSize / 10 : gridSize;
+export type NudgeModifiers = {
+  readonly shift: boolean;
+  readonly modifier: boolean;
+  readonly alt?: boolean;
+  /** Exact platform modifier flags; when supplied, ambiguous or wrong-platform modifiers produce no movement. */
+  readonly ctrlKey?: boolean;
+  readonly metaKey?: boolean;
+  readonly platform?: KeyboardPlatform;
+};
+
+export function calculateNudgeStep(gridSize: number, modifiers: NudgeModifiers): number | null {
+  if (!Number.isFinite(gridSize) || gridSize <= 0 || modifiers.alt) return null;
+  let modifier = modifiers.modifier;
+  const ctrl = modifiers.ctrlKey;
+  const meta = modifiers.metaKey;
+  if (ctrl !== undefined && meta !== undefined) {
+    // Exact modifier set (§4.12): holding both modifiers is ambiguous, and a
+    // wrong-platform Mod (Meta on Windows/Linux, Ctrl on macOS) must NOT
+    // silently degrade to plain-Arrow movement.
+    if (ctrl && meta) return null;
+    const canonical = isCanonicalModifier({ metaKey: meta, ctrlKey: ctrl }, modifiers.platform);
+    if ((ctrl || meta) && !canonical) return null;
+    modifier = canonical;
+  }
+  if (modifiers.shift) return modifier ? gridSize * 5 : null;
+  return modifier ? gridSize / 10 : gridSize;
 }
 
 const SNAP_KIND_PRIORITY: Record<SnapGuide["kind"], number> = {
@@ -127,9 +172,10 @@ export function getCanvasViewFrame(viewport: CanvasViewport, transform: CanvasVi
   const scale = Math.min(viewport.width / sceneWidth, viewport.height / sceneHeight) * zoom;
   const width = sceneWidth * scale;
   const height = sceneHeight * scale;
+  // §4.2: contentOrigin = viewport.top-left + ((viewport − content) / 2) + pan × fitScale
   return {
-    x: viewport.left + (viewport.width - width) / 2 + transform.pan.x,
-    y: viewport.top + (viewport.height - height) / 2 + transform.pan.y,
+    x: viewport.left + (viewport.width - width) / 2 + transform.pan.x * scale,
+    y: viewport.top + (viewport.height - height) / 2 + transform.pan.y * scale,
     width,
     height,
     scale,
@@ -265,18 +311,12 @@ export type MarqueeSelectionOptions = {
   readonly mode?: MarqueeSelectionMode;
 };
 
-function containsRect(outer: CanvasRect, inner: CanvasRect): boolean {
-  return inner.x >= outer.x
-    && inner.y >= outer.y
-    && inner.x + inner.width <= outer.x + outer.width
-    && inner.y + inner.height <= outer.y + outer.height;
-}
-
 export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect, options: MarqueeSelectionOptions = {}): string[] {
   const mode = options.mode ?? "intersect";
-  if (mode !== "intersect" && mode !== "contains") throw new RangeError(`Unsupported marquee selection mode: ${String(mode)}`);
-  const predicate = mode === "intersect" ? (geometry: Geometry) => intersects(marquee, geometry) : (geometry: Geometry) => containsRect(marquee, geometry);
-  const hits = widgets.filter((widget) => widget.visible && widget.enabled && predicate(widget.geometry)).map((widget) => widget.id);
+  // §4.8: V1 implements "intersect" only. Requesting "contains" must be
+  // rejected explicitly — never silently treated as intersection.
+  if (mode !== "intersect") throw new RangeError(`Unsupported marquee selection mode: ${String(mode)}`);
+  const hits = widgets.filter((widget) => widget.visible && widget.enabled && intersects(marquee, widget.geometry)).map((widget) => widget.id);
   return orderSelectionIds(widgets, options.additive ? [...(options.baseSelection ?? []), ...hits] : hits);
 }
 
@@ -289,23 +329,29 @@ export function hitTest(point: CanvasPoint, widgets: readonly Widget[]): string 
     .at(0)?.widget.id ?? null;
 }
 
+type SnapEdge = "start" | "end";
+
+type AxisCandidate = { value: number; guide: SnapGuide; distance: number; edge: SnapEdge };
+
 function candidateForAxis(
   axis: "x" | "y",
   candidate: Geometry,
   others: readonly Widget[],
   configuration: SnapConfiguration,
-): { value: number; guide: SnapGuide; distance: number } | null {
+  edge: SnapEdge = "start",
+): AxisCandidate | null {
   const sourceStart = axis === "x" ? candidate.x : candidate.y;
   const sourceSize = axis === "x" ? candidate.width : candidate.height;
+  const sourceEdge = edge === "end" ? sourceStart + sourceSize : sourceStart;
   const threshold = Math.max(0, configuration.threshold);
-  const gridCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
-  const edgeCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
-  const centerCandidates: { value: number; guide: SnapGuide; distance: number }[] = [];
+  const gridCandidates: AxisCandidate[] = [];
+  const edgeCandidates: AxisCandidate[] = [];
+  const centerCandidates: AxisCandidate[] = [];
 
   if (configuration.grid !== false && configuration.gridSize > 0) {
-    const gridValue = snapValue(sourceStart, true, configuration.gridSize);
-    const distance = Math.abs(gridValue - sourceStart);
-    if (distance <= threshold) gridCandidates.push({ value: gridValue, distance, guide: { axis, position: gridValue, kind: "grid" } });
+    const gridValue = snapValue(sourceEdge, true, configuration.gridSize);
+    const distance = Math.abs(gridValue - sourceEdge);
+    if (distance <= threshold) gridCandidates.push({ value: gridValue, distance, guide: { axis, position: gridValue, kind: "grid" }, edge });
   }
 
   if (configuration.edges !== false || configuration.centers !== false) {
@@ -315,17 +361,20 @@ function candidateForAxis(
       const end = start + size;
       if (configuration.edges !== false) {
         for (const target of [start, end]) {
-          for (const value of [target, target - sourceSize]) {
-            const distance = Math.abs(value - sourceStart);
-            if (distance <= threshold) edgeCandidates.push({ value, distance, guide: { axis, position: target, kind: "edge", widgetId: other.id } });
+          // Start-edge snapping aligns the leading (target) or trailing
+          // (target − sourceSize) edge; end-edge snapping mirrors it
+          // (target, target + sourceSize) so east/south resize handles snap.
+          for (const value of edge === "end" ? [target, target + sourceSize] : [target, target - sourceSize]) {
+            const distance = Math.abs(value - sourceEdge);
+            if (distance <= threshold) edgeCandidates.push({ value, distance, guide: { axis, position: target, kind: "edge", widgetId: other.id }, edge });
           }
         }
       }
       if (configuration.centers !== false) {
         const targetCenter = start + size / 2;
-        const value = targetCenter - sourceSize / 2;
-        const distance = Math.abs(value - sourceStart);
-        if (distance <= threshold) centerCandidates.push({ value, distance, guide: { axis, position: targetCenter, kind: "center", widgetId: other.id } });
+        const value = edge === "end" ? targetCenter + sourceSize / 2 : targetCenter - sourceSize / 2;
+        const distance = Math.abs(value - sourceEdge);
+        if (distance <= threshold) centerCandidates.push({ value, distance, guide: { axis, position: targetCenter, kind: "center", widgetId: other.id }, edge });
       }
     }
   }
@@ -336,35 +385,27 @@ function candidateForAxis(
   return null;
 }
 
-export function snapGeometryWithTargets(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): SnapResult {
+export type SnapEndEdges = { readonly x?: boolean; readonly y?: boolean };
+
+export function snapGeometryWithTargets(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = [], endEdges: SnapEndEdges = {}): SnapResult {
   if (!configuration.enabled) return { geometry: candidate, guides: [] };
-  const x = candidateForAxis("x", candidate, others, configuration);
-  const y = candidateForAxis("y", candidate, others, configuration);
+  const x = candidateForAxis("x", candidate, others, configuration, endEdges.x ? "end" : "start");
+  const y = candidateForAxis("y", candidate, others, configuration, endEdges.y ? "end" : "start");
+  const geometry = { ...candidate };
+  if (x) {
+    if (x.edge === "end") geometry.width = Math.max(MIN_WIDGET_SIZE, x.value - candidate.x);
+    else geometry.x = x.value;
+  }
+  if (y) {
+    if (y.edge === "end") geometry.height = Math.max(MIN_WIDGET_SIZE, y.value - candidate.y);
+    else geometry.y = y.value;
+  }
   return {
-    geometry: { ...candidate, x: x?.value ?? candidate.x, y: y?.value ?? candidate.y },
+    geometry,
     guides: [x?.guide, y?.guide].filter((guide): guide is SnapGuide => Boolean(guide)),
   };
 }
 
 export function calculateSnapGuides(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): readonly SnapGuide[] {
   return snapGeometryWithTargets(candidate, configuration, others).guides;
-}
-
-export function updateWidgetGeometries(project: import("../Domain/models").Project, updates: Readonly<Record<string, Geometry>>): import("../Domain/models").Project {
-  return {
-    ...project,
-    themeProjectGroups: project.themeProjectGroups.map((group) => ({
-      ...group,
-      themeProjects: group.themeProjects.map((theme) => ({
-        ...theme,
-        rotations: theme.rotations.map((rotation) => ({
-          ...rotation,
-          scenes: rotation.scenes.map((scene) => ({
-            ...scene,
-            widgets: scene.widgets.map((widget) => updates[widget.id] ? { ...widget, geometry: updates[widget.id] } : widget),
-          })),
-        })),
-      })),
-    })),
-  };
 }

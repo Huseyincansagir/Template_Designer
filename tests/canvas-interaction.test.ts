@@ -110,7 +110,7 @@ describe("Canvas interaction foundation", () => {
     expect(marqueeSelection(widgets, marquee, { mode: "intersect" })).toEqual(["touching"]);
   });
 
-  it("supports intersect/contains marquee modes, edge touch, additive selection, and rejects unknown modes", () => {
+  it("implements intersect marquee only and rejects contains and unknown modes explicitly", () => {
     const widgets = [
       widget("contained", { x: 10, y: 10, width: 20, height: 20 }),
       widget("partial", { x: 25, y: 10, width: 20, height: 20 }),
@@ -120,8 +120,8 @@ describe("Canvas interaction foundation", () => {
     const marquee = { x: 10, y: 10, width: 20, height: 20 };
     expect(marqueeSelection(widgets, marquee)).toEqual(["contained", "partial", "corner"]);
     expect(marqueeSelection(widgets, { x: 0, y: 0, width: 10, height: 10 }, { mode: "intersect" })).toEqual(["contained"]);
-    expect(marqueeSelection(widgets, marquee, { mode: "contains" })).toEqual(["contained"]);
-    expect(marqueeSelection(widgets, marquee, { mode: "contains", baseSelection: ["base"], additive: true })).toEqual(["contained", "base"]);
+    expect(marqueeSelection(widgets, marquee, { baseSelection: ["base"], additive: true })).toEqual(["contained", "partial", "corner", "base"]);
+    expect(() => marqueeSelection(widgets, marquee, { mode: "contains" })).toThrow(RangeError);
     expect(() => marqueeSelection(widgets, marquee, { mode: "unsupported" as "intersect" })).toThrow(RangeError);
   });
 
@@ -213,6 +213,37 @@ describe("Canvas canonical remediation regressions", () => {
     expect(snapGeometry({ x: 13, y: 25, width: 24, height: 26 }, true, 12)).toEqual({ x: 12, y: 24, width: 24, height: 24 });
   });
 
+  it("rejects ambiguous and wrong-platform Mod combinations instead of degrading to plain Arrow", () => {
+    // Windows/Linux: Ctrl = Mod. Meta alone, or Ctrl+Meta together, must not move.
+    expect(calculateNudgeStep(10, { shift: false, modifier: true, ctrlKey: true, metaKey: false, platform: "windows" })).toBe(1);
+    expect(calculateNudgeStep(10, { shift: false, modifier: false, ctrlKey: false, metaKey: true, platform: "windows" })).toBeNull();
+    expect(calculateNudgeStep(10, { shift: false, modifier: false, ctrlKey: true, metaKey: true, platform: "windows" })).toBeNull();
+    // macOS: Meta = Mod. Ctrl alone must not move.
+    expect(calculateNudgeStep(10, { shift: false, modifier: false, ctrlKey: false, metaKey: true, platform: "mac" })).toBe(1);
+    expect(calculateNudgeStep(10, { shift: false, modifier: false, ctrlKey: true, metaKey: false, platform: "mac" })).toBeNull();
+    expect(calculateNudgeStep(10, { shift: true, modifier: false, ctrlKey: true, metaKey: true, platform: "mac" })).toBeNull();
+  });
+
+  it("applies the §4.2 pan × fitScale term in the view frame", () => {
+    const viewport = { left: 0, top: 0, width: 1000, height: 1000 };
+    const frame = getCanvasViewFrame(viewport, { zoom: 2, pan: { x: 10, y: -5 }, sceneWidth: 500, sceneHeight: 500 });
+    expect(frame).toEqual({ x: -460, y: -520, width: 2000, height: 2000, scale: 4 });
+    const noPan = getCanvasViewFrame({ left: 0, top: 0, width: 1000, height: 400 }, { zoom: 1, pan: { x: 25, y: 0 }, sceneWidth: 500, sceneHeight: 250 });
+    expect(noPan).toEqual({ x: 140, y: 0, width: 800, height: 400, scale: 1.6 });
+  });
+
+  it("snaps east/south resize handles through the moving edge", () => {
+    const candidate = { x: 10, y: 10, width: 20, height: 20 };
+    const target = widget("target", { x: 40, y: 100, width: 20, height: 20 });
+    const result = snapGeometryWithTargets(candidate, { enabled: true, gridSize: 10, threshold: 6 }, [target], { x: true, y: true });
+    // End x = 30 snaps to grid 30 (distance 0) and end y = 30 is beyond threshold of any target → width changes, height unchanged.
+    expect(result.geometry.x).toBe(10);
+    expect(result.geometry.width).toBe(20);
+    expect(result.geometry.height).toBe(20);
+    const gridOnly = snapGeometryWithTargets({ x: 10, y: 10, width: 26, height: 26 }, { enabled: true, gridSize: 10, threshold: 6 }, [], { x: true, y: true });
+    expect(gridOnly.geometry).toEqual({ x: 10, y: 10, width: 30, height: 30 });
+  });
+
   it("normalizes platform Mod semantics without treating both modifiers as interchangeable", () => {
     expect(detectKeyboardPlatform("MacIntel")).toBe("mac");
     expect(detectKeyboardPlatform("Win32")).toBe("windows");
@@ -246,16 +277,37 @@ describe("Canvas canonical remediation regressions", () => {
     expect(snapGeometryWithTargets({ x: 13, y: 0, width: 10, height: 10 }, { enabled: true, gridSize: 10, threshold: 6 }, [widget("edge", { x: 14, y: 100, width: 10, height: 10 })]).geometry.x).toBe(10);
   });
 
-  it("calculates all four deterministic z-order operations", () => {
+  it("calculates all four deterministic z-order operations through normalized renumbering", () => {
     const widgets = [
       widget("back", { x: 0, y: 0, width: 10, height: 10 }, { zIndex: 10 }),
       widget("middle", { x: 20, y: 0, width: 10, height: 10 }, { zIndex: 20 }),
       widget("front", { x: 40, y: 0, width: 10, height: 10 }, { zIndex: 30 }),
     ];
-    expect(calculateZOrderUpdates(widgets, "middle", "bring-forward")).toEqual({ middle: 30, front: 20 });
-    expect(calculateZOrderUpdates(widgets, "middle", "send-backward")).toEqual({ middle: 10, back: 20 });
-    expect(calculateZOrderUpdates(widgets, "middle", "bring-to-front")).toEqual({ middle: 31 });
-    expect(calculateZOrderUpdates(widgets, "middle", "send-to-back")).toEqual({ middle: 9 });
+    // Renumbering normalizes the whole stack (back 10→0, middle 20→1,
+    // front 30→2) and then applies the requested swap.
+    expect(calculateZOrderUpdates(widgets, "middle", "bring-forward")).toEqual({ back: 0, middle: 2, front: 1 });
+    expect(calculateZOrderUpdates(widgets, "middle", "send-backward")).toEqual({ back: 1, middle: 0, front: 2 });
+    expect(calculateZOrderUpdates(widgets, "middle", "bring-to-front")).toEqual({ back: 0, middle: 2, front: 1 });
+    expect(calculateZOrderUpdates(widgets, "middle", "send-to-back")).toEqual({ middle: 0, back: 1, front: 2 });
+    expect(calculateZOrderUpdates(widgets, "front", "bring-forward")).toBeNull();
+    expect(calculateZOrderUpdates(widgets, "back", "send-backward")).toBeNull();
+  });
+
+  it("normalizes equal-z stacks without leapfrogging and respects locks", () => {
+    const tied = [
+      widget("a", { x: 0, y: 0, width: 10, height: 10 }, { zIndex: 5 }),
+      widget("b", { x: 10, y: 0, width: 10, height: 10 }, { zIndex: 5 }),
+      widget("c", { x: 20, y: 0, width: 10, height: 10 }, { zIndex: 5 }),
+    ];
+    // Doc order a, b, c → stacking a(0), b(1), c(2); bring-forward b swaps with c only.
+    expect(calculateZOrderUpdates(tied, "b", "bring-forward")).toEqual({ a: 0, b: 2, c: 1 });
+    const locked = [
+      widget("a", { x: 0, y: 0, width: 10, height: 10 }, { zIndex: 0 }),
+      widget("b", { x: 10, y: 0, width: 10, height: 10 }, { zIndex: 1, locked: true }),
+    ];
+    expect(calculateZOrderUpdates(locked, "b", "bring-to-front")).toBeNull();
+    // A locked sibling keeps its zIndex while the unlocked widget renumbers around it.
+    expect(calculateZOrderUpdates(locked, "a", "bring-to-front")).toEqual({ a: 1 });
   });
 
   it("rejects malformed geometry at the application mutation boundary", () => {

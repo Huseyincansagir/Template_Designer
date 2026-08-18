@@ -321,7 +321,13 @@ export class EditorApplication {
     const current = this.documents.getCurrent();
     const ids = Object.keys(updates);
     if (!current || !validScopedWidgetIds(current, sceneId, ids) || !ids.every((id) => Number.isFinite(updates[id]))) return { changed: false };
-    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => ids.includes(widget.id) ? { ...widget, zIndex: updates[widget.id] } : widget) } : scene)))));
+    // Locked widgets keep their zIndex (defense in depth; the UI-level
+    // z-order computation already refuses locked targets).
+    const scene = findUniqueScene(current, sceneId);
+    const lockedIds = new Set(scene?.widgets.filter((widget) => widget.locked).map((widget) => widget.id));
+    const applicableIds = ids.filter((id) => !lockedIds.has(id));
+    if (!applicableIds.length) return { changed: false };
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (candidate) => candidate.id === sceneId ? { ...candidate, widgets: candidate.widgets.map((widget) => applicableIds.includes(widget.id) ? { ...widget, zIndex: updates[widget.id] } : widget) } : candidate)))));
   }
 
   duplicateSelectionInScene(sceneId: string, ids: readonly string[]): MutationResult {

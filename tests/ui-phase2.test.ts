@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createDeviceProfileRegistry } from "../src/App/profile-registry";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels } from "../src/App/panel-manager";
-import { intersects, normalizeRect, snapGeometry, updateWidgetGeometries } from "../src/App/canvas-interaction";
-import { createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
+import { intersects, normalizeRect, snapGeometry } from "../src/App/canvas-interaction";
+import { foundationDeviceProfile } from "../src/Domain/factories";
 
 describe("UI Phase 2 foundations", () => {
   it("resolves profiles through the injected registry", () => {
@@ -26,10 +26,8 @@ describe("UI Phase 2 foundations", () => {
     expect(snapGeometry({ x: 13, y: 27, width: 42, height: 49 }, true, 10)).toEqual({ x: 10, y: 30, width: 40, height: 50 });
   });
 
-  it("updates canonical widget geometry without changing unrelated nodes", () => {
-    const project = createEmptyProject();
-    const next = updateWidgetGeometries(project, { "missing-widget": { x: 10, y: 10, width: 20, height: 20 } });
-    expect(next.themeProjectGroups).toEqual(project.themeProjectGroups);
-    expect(next.id).toBe(project.id);
+  it("ships a profile with real runtime registries for the Simulator surfaces", () => {
+    expect(foundationDeviceProfile.runtimeStates.length).toBeGreaterThan(0);
+    expect(foundationDeviceProfile.runtimeSettings.length).toBeGreaterThan(0);
   });
 });

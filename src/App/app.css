@@ -291,9 +291,8 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 /* QA correction surfaces: canonical widget canvas and binding editor */
 .canvas-widget-layer { position: absolute; display: grid; place-items: center; }
 .canvas-widget { position: absolute; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 2px; overflow: hidden; min-width: 20px; min-height: 16px; border: 1px solid rgba(38, 166, 170, .8); background: rgba(25, 137, 143, .18); color: #d7fbfb; padding: 3px; text-align: center; }
-.canvas-widget:hover, .canvas-widget.is-selected { z-index: 4; overflow: visible; border: 2px solid #62dfe0; background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
+.canvas-widget:hover, .canvas-widget.is-selected { overflow: visible; border: 2px solid #62dfe0; background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
 .canvas-widget.is-locked { border-style: dashed; }
-.canvas-widget.is-invisible { border-style: dotted; background: rgba(70, 96, 101, .12); color: #89a4a7; opacity: .65; pointer-events: none; }
 .canvas-widget span { overflow: hidden; max-width: 100%; font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .canvas-widget small { color: #9bd4d4; font-size: 7px; }
 .property-inline-action { width: 100%; margin-top: 8px; border: 1px solid #9dcfd1; background: #eef9f9; color: var(--accent-dark); padding: 6px 8px; font-size: 10px; text-align: left; }
@@ -331,7 +330,6 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
 .device-screen { position: relative; touch-action: none; }
 .canvas-widget { cursor: move; user-select: none; }
 .canvas-widget.is-locked { cursor: not-allowed; }
-.canvas-widget.is-invisible { outline: 1px dotted rgba(98, 223, 224, .8); }
 .resize-handle { position: absolute; z-index: 6; width: 7px; height: 7px; border: 1px solid #0d5e67; background: #eafefe; padding: 0; }
 .handle-n { top: -5px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
 .handle-e { top: 50%; right: -5px; transform: translateY(-50%); cursor: ew-resize; }
