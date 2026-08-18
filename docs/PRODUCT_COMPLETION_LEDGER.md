@@ -134,6 +134,18 @@ While re-checking D5-04 I stated in the session that an uncommitted edit committ
 What I did about it: replaced the unsupported claims in the source comments with what the evidence supports, re-classified D5-04 as NOT-A-DEFECT with the reasoning above, and kept the two changes only because they are defensible independently — a command that names its target is better than one that reads ambient state, and both are now labelled "defensive, no reproduced defect" rather than presented as bug fixes.
 
 Method note for anyone re-running this: coordinate-based clicks on the canvas are unreliable when widgets overlap, because Add Widget cascades by one grid step. Assert that the selection actually changed (stable ID before vs after) before drawing any conclusion from a canvas click.
+### Post-report correction (D4 re-delivery)
+
+D4's re-delivered inventory was measured against the pre-fix baseline, so its orphan list and its missing-shortcut findings were already closed. Four items were genuinely open, and one was a defect nobody had caught:
+
+| ID | Sev | Class | Observed | Decision | Status |
+|----|-----|-------|----------|----------|--------|
+| D4-17 | P3 | BUG | The visibility toggle logged the **inverse** of what it did: `allSet` means every selected widget is already visible, so the command hides them — and the log said "Show". Confirmed live, then fixed and asserted in both directions. `locked` and `enabled` were correct. | Label reads the action, not the prior state. | **FIXED** |
+| D4-21 | P2 | MISSING FEATURE | No align or distribute. For a layout tool this is the last missing geometry operation — a row of floor indicators could only be lined up by typing coordinates. | `calculateAlignUpdates` (6 operations) and `calculateDistributeUpdates` (2) added to `canvas-interaction.ts` as pure functions, wired to the Widget menu, committed as one undoable geometry command through the existing scene-bounds path. Sizes never change; the outermost widgets keep their position when distributing; an already-aligned selection is refused rather than recorded; a distribution that cannot preserve the outer widgets is refused with the reason. 6 unit tests + 4 live checks. | **FIXED** |
+| D4-19 / D4-22 / D4-31 | P2/P3 | MISSING FEATURE | No Zoom to Fit, no Deselect All, and `enabled` was reachable only as an inspector checkbox. | All three added as commands with disabled reasons. | **FIXED** |
+| D4-25 / D4-29 / D4-13 | P3 | UX DISCOVERABILITY | Three bound keys were undocumented: Backspace (delete), the Alt navigation family, and the deliberate Shift+Arrow no-op; the Select All scope was also unstated. The Shortcuts page actively filtered Backspace out. | The page now lists every registry entry and states the nudge ladder, the Select All scope, the Delete/Backspace equivalence and that Alt+Arrow never moves geometry. | **FIXED** |
+
+Deliberately not acted on: `D4-27` (Reset Layout in three places) and `D4-28` (Delete Selection in three menus) are intentional multi-surface access, now with consistent reasons from the shared refusal policy. `D4-24` (profile management UI) stays out of scope — profiles are firmware-supplied capability data, not user-authored content.
 ### Verified working — reported and confirmed, no change needed
 
 `D2-14` rotation dimension swap · `D2-15` per-rotation scene/widget isolation · `D2-16` theme/scene undo-redo + save/reload · `D2-17` canonical four rotations on menu-created and duplicated themes · `D2-18` selection pruning · `D4` all 14 command descriptors render and every rendered control resolves to a working handler · `D3` dirty-flag correctness, `beforeunload` + Tauri close guard, 30× undo/redo, 200-widget project usable, all four program settings genuinely consumed.

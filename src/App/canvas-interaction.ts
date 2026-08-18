@@ -409,3 +409,78 @@ export function snapGeometryWithTargets(candidate: Geometry, configuration: Snap
 export function calculateSnapGuides(candidate: Geometry, configuration: SnapConfiguration, others: readonly Widget[] = []): readonly SnapGuide[] {
   return snapGeometryWithTargets(candidate, configuration, others).guides;
 }
+
+export type AlignOperation = "left" | "horizontal-center" | "right" | "top" | "vertical-middle" | "bottom";
+export type DistributeOperation = "horizontal" | "vertical";
+
+/**
+ * Multi-selection alignment. Every widget moves to the selection's own bounding
+ * box, which is the behaviour a layout tool is expected to have and the last
+ * geometry operation the canvas was missing (D4-21). Sizes never change, so an
+ * alignment can never violate the scene-bounds contract that the commit path
+ * already enforces.
+ *
+ * Locked widgets are excluded by the caller, exactly like drag and resize.
+ * Returns only the widgets whose geometry actually moves, so a no-op alignment
+ * records no history.
+ */
+export function calculateAlignUpdates(
+  widgets: readonly { readonly id: string; readonly geometry: Geometry }[],
+  operation: AlignOperation,
+): Record<string, Geometry> | null {
+  if (widgets.length < 2) return null;
+  const bounds = getBounds(widgets.map((widget) => widget.geometry));
+  if (!bounds) return null;
+  const updates: Record<string, Geometry> = {};
+  for (const widget of widgets) {
+    const { geometry } = widget;
+    const next: Geometry = { ...geometry };
+    if (operation === "left") next.x = bounds.x;
+    else if (operation === "right") next.x = bounds.x + bounds.width - geometry.width;
+    else if (operation === "horizontal-center") next.x = bounds.x + (bounds.width - geometry.width) / 2;
+    else if (operation === "top") next.y = bounds.y;
+    else if (operation === "bottom") next.y = bounds.y + bounds.height - geometry.height;
+    else next.y = bounds.y + (bounds.height - geometry.height) / 2;
+    next.x = Math.round(next.x);
+    next.y = Math.round(next.y);
+    if (next.x !== geometry.x || next.y !== geometry.y) updates[widget.id] = next;
+  }
+  return Object.keys(updates).length ? updates : null;
+}
+
+/**
+ * Even spacing between the outermost widgets. The first and last keep their
+ * position — they define the span — and the ones between them are placed at
+ * equal gaps measured edge to edge, which is what makes a row of floor
+ * indicators look deliberate rather than approximately spaced.
+ */
+export function calculateDistributeUpdates(
+  widgets: readonly { readonly id: string; readonly geometry: Geometry }[],
+  operation: DistributeOperation,
+): Record<string, Geometry> | null {
+  if (widgets.length < 3) return null;
+  const horizontal = operation === "horizontal";
+  const ordered = [...widgets].sort((left, right) => horizontal
+    ? left.geometry.x - right.geometry.x
+    : left.geometry.y - right.geometry.y);
+  const first = ordered[0].geometry;
+  const last = ordered[ordered.length - 1].geometry;
+  const span = horizontal
+    ? (last.x + last.width) - first.x
+    : (last.y + last.height) - first.y;
+  const occupied = ordered.reduce((total, widget) => total + (horizontal ? widget.geometry.width : widget.geometry.height), 0);
+  // A negative gap means the widgets already overlap more than the span allows;
+  // spreading them further would move the outermost ones, so refuse instead.
+  const gap = (span - occupied) / (ordered.length - 1);
+  if (!Number.isFinite(gap) || gap < 0) return null;
+  const updates: Record<string, Geometry> = {};
+  let cursor = horizontal ? first.x : first.y;
+  for (const widget of ordered) {
+    const { geometry } = widget;
+    const position = Math.round(cursor);
+    if (horizontal && position !== geometry.x) updates[widget.id] = { ...geometry, x: position };
+    if (!horizontal && position !== geometry.y) updates[widget.id] = { ...geometry, y: position };
+    cursor += (horizontal ? geometry.width : geometry.height) + gap;
+  }
+  return Object.keys(updates).length ? updates : null;
+}

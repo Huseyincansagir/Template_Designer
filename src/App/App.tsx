@@ -12,7 +12,7 @@ import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
 import type { Asset, Binding, Condition, ConditionMode, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
-import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
+import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateAlignUpdates, calculateDistributeUpdates, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type AlignOperation, type DistributeOperation, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, describeSelectionRefusal, type EditorCommandId, type SelectionOperation } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
@@ -1232,6 +1232,22 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return run();
   };
 
+  /** Zoom to fit: clears pan and returns to the 100% baseline the frame is sized for. */
+  const zoomToFit = () => {
+    setPan({ x: 0, y: 0 });
+    setZoom(100);
+    logAction("Canvas fitted to the device frame", "EVENT");
+    setMenuOpen(null);
+  };
+
+  const deselectAll = () => {
+    if (!selectedIds.length) return;
+    setSelection(null);
+    setSelectedIds([]);
+    logAction("Selection cleared", "EVENT");
+    setMenuOpen(null);
+  };
+
   const resetZoom = () => {
     setZoom(100);
     setPan({ x: 0, y: 0 });
@@ -1452,7 +1468,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const allSet = selected.every((widget) => widget[property]);
     const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selected.map((widget) => widget.id), { [property]: !allSet });
-    if (result.changed) logAction(`${property === "locked" ? (allSet ? "Unlock" : "Lock") : property === "visible" ? (allSet ? "Show" : "Hide") : allSet ? "Disable" : "Enable"} applied to ${selected.length} widget(s)`, "EVENT");
+    if (result.changed) logAction(`${property === "locked" ? (allSet ? "Unlock" : "Lock") : property === "visible" ? (allSet ? "Hide" : "Show") : allSet ? "Disable" : "Enable"} applied to ${selected.length} widget(s)`, "EVENT");
     return result.changed;
   };
 
@@ -1598,6 +1614,27 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, widget.bindings.filter((binding) => binding.id !== bindingId));
     if (result.changed) logAction("Binding removed", "EVENT");
     return result.changed;
+  };
+
+  /** Multi-selection alignment / distribution: one undoable geometry command. */
+  const alignSelection = (operation: AlignOperation | DistributeOperation, kind: "align" | "distribute"): boolean => {
+    if (blockedInPreview(kind === "align" ? "Align" : "Distribute")) return false;
+    const sceneId = activeScene?.id;
+    const editable = selectedEditableWidgets;
+    const minimum = kind === "align" ? 2 : 3;
+    if (!sceneId || editable.length < minimum) {
+      logAction(`${kind === "align" ? "Align" : "Distribute"} needs at least ${minimum} unlocked widgets in the active Scene`, "WARN");
+      return false;
+    }
+    const updates = kind === "align"
+      ? calculateAlignUpdates(editable, operation as AlignOperation)
+      : calculateDistributeUpdates(editable, operation as DistributeOperation);
+    if (!updates) {
+      logAction(kind === "align" ? "Selection is already aligned" : "Selection cannot be distributed: the widgets already overlap more than their span allows", "WARN");
+      return false;
+    }
+    commitGeometryCommand(sceneId, updates, kind === "align" ? `Align ${operation}` : `Distribute ${operation}`);
+    return true;
   };
 
   const changeWidgetZOrder = (operation: ZOrderOperation): boolean => {    const node = resolvedSelection;
@@ -1948,6 +1985,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const selectedSceneWidgets = activeScene?.widgets.filter((widget) => selectedWidgetIds.includes(widget.id)) ?? [];
   const selectedWidgetsAllLocked = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.locked);
   const selectedWidgetsAllVisible = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.visible);
+  const selectedWidgetsAllEnabled = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.enabled);
   const selectedEditableWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id) && !widget.locked);
   const canvasTransform = { zoom: zoom / 100, pan, sceneWidth: canvasWidth, sceneHeight: canvasHeight };
   const canvasFrame = canvasViewportSize.width > 0 && canvasViewportSize.height > 0
@@ -2659,6 +2697,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Copy", shortcut: shortcutFor("copy"), disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? undefined : "Requires a selected widget", onClick: copySelection },
       { label: "Paste", shortcut: shortcutFor("paste"), disabled: !clipboard, title: clipboard ? undefined : "Nothing copied", onClick: pasteSelection },
       { label: "Select All in Scene", shortcut: shortcutFor("select-all"), disabled: !canvasWidgets.length, title: canvasWidgets.length ? undefined : "The active Scene has no widget", onClick: selectAllCommand },
+      { label: "Deselect All", disabled: !selectedIds.length, title: selectedIds.length ? "Clear the selection without changing the document" : "Nothing selected", onClick: deselectAll },
       { label: "Rename Selection", shortcut: shortcutFor("rename"), disabled: !selection, title: selection ? "Focus the Name field in Properties" : "Nothing selected", onClick: requestRename },
       { label: "Delete Selection", shortcut: "Delete", disabled: Boolean(selectionRefusal("delete")), title: selectionRefusal("delete"), onClick: deleteSelectionCommand },
       { label: "Reset Layout", onClick: resetLayout },
@@ -2669,6 +2708,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Properties", onClick: () => activatePanel("properties") },
       { label: "Simulator", onClick: () => activatePanel("simulator") },
       { label: "Console / Output", onClick: () => activatePanel("console") },
+      { label: "Zoom to Fit", disabled: zoom === 100 && pan.x === 0 && pan.y === 0, title: "Clear the pan and return to the size the device frame is drawn at", onClick: zoomToFit },
       { label: "Zoom to 100%", shortcut: shortcutFor("zoom-reset"), disabled: zoom === 100 && pan.x === 0 && pan.y === 0, onClick: resetZoom },
       { label: "Next Rotation / Form", shortcut: shortcutFor("rotation-next"), onClick: () => stepRotation(1) },
       { label: "Next Scene", shortcut: shortcutFor("scene-next"), onClick: () => stepScene(1) },
@@ -2700,6 +2740,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, title: activeScene?.id ? undefined : "Requires an active Scene", onClick: () => addWidget(widgetType) })),
       { label: selectedWidgetsAllLocked ? "Unlock Selection" : "Lock Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("locked") },
       { label: selectedWidgetsAllVisible ? "Hide Selection" : "Show Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("visible") },
+      { label: selectedWidgetsAllEnabled ? "Disable Selection" : "Enable Selection", disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? "A disabled widget stays in the layout but the runtime does not present it" : "Requires a selected widget", onClick: () => toggleWidgetProperty("enabled") },
+      { label: "Align Left", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("left", "align") },
+      { label: "Align Horizontal Centres", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("horizontal-center", "align") },
+      { label: "Align Right", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("right", "align") },
+      { label: "Align Top", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("top", "align") },
+      { label: "Align Vertical Middles", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("vertical-middle", "align") },
+      { label: "Align Bottom", disabled: selectedEditableWidgets.length < 2, title: selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : undefined, onClick: () => alignSelection("bottom", "align") },
+      { label: "Distribute Horizontally", disabled: selectedEditableWidgets.length < 3, title: selectedEditableWidgets.length < 3 ? "Requires at least 3 unlocked widgets" : "Equal edge-to-edge gaps; the outermost widgets keep their position", onClick: () => alignSelection("horizontal", "distribute") },
+      { label: "Distribute Vertically", disabled: selectedEditableWidgets.length < 3, title: selectedEditableWidgets.length < 3 ? "Requires at least 3 unlocked widgets" : "Equal edge-to-edge gaps; the outermost widgets keep their position", onClick: () => alignSelection("vertical", "distribute") },
       { label: "Bring To Front", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("bring-to-front") },
       { label: "Send To Back", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("send-to-back") },
       { label: "Duplicate Selection", disabled: Boolean(selectionRefusal("duplicate")), title: selectionRefusal("duplicate"), onClick: duplicateSelectionCommand },
@@ -3254,7 +3303,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     Simulator: <><h3>Simulator</h3><p>Simulator consumes canonical DeviceProfile runtime state and settings registries.</p><div className="settings-value">Rule system <strong>Canonical evaluator</strong></div></>,
     Validation: <><h3>Validation</h3><p>Validation issues are sourced from the shared validation service.</p><div className="settings-value">Severity <strong>Profile-aware</strong></div></>,
     Export: <><h3>Export</h3><p>Export scope is controlled by canonical Resources + Used + Default asset rules.</p><div className="settings-value">Format conversion <strong>Not in V1</strong></div></>,
-    Shortcuts: <><h3>Shortcuts</h3><p>Confirmed shortcuts are shown by the command registry; Proposed shortcuts are not presented as settled product behavior.</p><div className="shortcut-list">{canonicalShortcuts.filter((descriptor) => !["delete-backspace", "escape"].includes(descriptor.id)).map((descriptor) => <span key={descriptor.id}>{shortcutDisplay(descriptor)} <strong>{descriptor.label}</strong></span>)}</div></>,
+    Shortcuts: <><h3>Shortcuts</h3><p>Every binding the application listens for, read from the one command registry, so an advertised shortcut can never drift from its handler.</p><div className="shortcut-list">{canonicalShortcuts.map((descriptor) => <span key={descriptor.id}>{shortcutDisplay(descriptor)} <strong>{descriptor.label}</strong></span>)}</div><p className="property-note">Select All applies to the widgets of the active Scene. Delete and Backspace are equivalent. Arrow nudges by the snap grid, Ctrl+Arrow by a tenth of it, Ctrl+Shift+Arrow by five times it; Shift+Arrow alone does not move a widget. Alt+Arrow navigates Scenes and Rotation / Forms and never moves geometry.</p></>,
   };
 
   return (

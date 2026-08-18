@@ -124,14 +124,14 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 126/126 in 12 files (was 90/11), including two enforced architecture invariants and the selection-refusal policy |
+| `npm test` | **PASS** — 132/132 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
-| Live browser acceptance | **PASS** — 128 checks across 4 scripted runs, **0 console errors** |
+| Live browser acceptance | **PASS** — 147 checks across 5 scripted runs, **0 console errors** |
 
 New tests prove product behaviour, not helper internals: asset import as one undoable command, reference-purging delete, the manifest actually receiving asset ids, widget configuration with type-transition cleanup, media-slide type constraints, activation rules the runtime honours, scene reordering, profile switching with re-dimension and clamping, the canonical rotation guards, the seven new validation rules, media-type inference, project-file parsing, `create` persistence, `adopt` dirtiness, rejection reporting and the duplicate-ID gate.
 
-Live runs: **run 1** (34) navigation switchers, second-theme canvas, asset import through a real intercepted file chooser; **run 2** (49) per-type widget configuration, media slides, scene activation including a setting-sourced condition, theme resources, build + validation, profile switch, preview, project file, reload, corrupt-storage recovery; **run 3** (30) context menus per node type, F2/Ctrl+0, simulator honesty, session restore, revert-to-saved; **run 4** (15) document properties, navigable validation, profile recovery, duplicate-ID gate.
+Live runs: **run 5** (19) align/distribute, enable toggle, deselect, zoom-to-fit, corrected log labels, documented shortcuts; **run 1** (34) navigation switchers, second-theme canvas, asset import through a real intercepted file chooser; **run 2** (49) per-type widget configuration, media slides, scene activation including a setting-sourced condition, theme resources, build + validation, profile switch, preview, project file, reload, corrupt-storage recovery; **run 3** (30) context menus per node type, F2/Ctrl+0, simulator honesty, session restore, revert-to-saved; **run 4** (15) document properties, navigable validation, profile recovery, duplicate-ID gate.
 
 ---
 
@@ -171,8 +171,8 @@ Honest, and measured against what a designer needs — not against the test suit
 
 | Area | Score | Justification |
 |------|-------|---------------|
-| Core editing | **9 / 10** | Create, select, move, resize, rename, duplicate, lock, hide, z-order, clipboard, marquee, snap, nudge — all through the canonical pipeline, all undoable. Edge/centre snap is arithmetically unreachable at grid 10 / threshold 6. |
-| Widget system | **8 / 10** | Every type is creatable and now fully configurable, including type change. Widget-level bounding-group layout and multi-select alignment are absent. |
+| Core editing | **9 / 10** | Create, select, move, resize, rename, duplicate, lock, hide, z-order, clipboard, marquee, snap, nudge, align, distribute — all through the canonical pipeline, all undoable. Edge/centre snap is arithmetically unreachable at grid 10 / threshold 6. |
+| Widget system | **9 / 10** | Every type is creatable and fully configurable, including type change, and multi-selection align/distribute now exists. Widget-level bounding-group layout (a specified V1 concept) is still absent. |
 | Asset system | **7 / 10** | Import, list, categorise, name, re-path, retype, assign, replace, reuse, usage counts, reference-purging delete, export scope. No thumbnails, no folders, no bytes in the package. |
 | Scene workflow | **9 / 10** | Create, rename, duplicate, delete, reorder, one-click switch, keyboard switch, priority, enabled, and a real activation-rule editor. No cross-rotation scene copy. |
 | Rotation workflow | **9 / 10** | Always four, always reachable, always labelled, dimension-correct, keyboard-navigable, structurally protected. Per-rotation layout inheritance does not exist (nor is it specified). |

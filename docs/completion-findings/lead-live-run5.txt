@@ -1,0 +1,19 @@
+PASS W1 three widgets created
+PASS W2 select-all covers the scene :: [{"left":"41.6667%","top":"46.875%"},{"left":"43.0556%","top":"47.6562%"},{"left":"44.4444%","top":"48.4375%"}]
+PASS W3 align and distribute are offered :: Align Left | Align Horizontal Centres | Align Right | Align Top | Align Vertical Middles | Align Bottom | Distribute Horizontally | Distribute Vertically
+PASS W4 all enabled with 3 unlocked widgets
+PASS W5 Align Left puts every widget on one x :: 41.6667%
+PASS W6 alignment is undoable
+PASS W7 Distribute Vertically produces equal spacing :: gaps 0.78 vs 0.78
+PASS W8 an already-aligned selection is refused, not recorded :: Selection is already aligned
+PASS W9 undo availability unchanged by the refusal
+PASS W10 Enabled has a command, not only a checkbox :: Disable Selection title="A disabled widget stays in the layout but the runtime does not present it"
+PASS W11 hiding logs Hide, not Show :: Hide applied to 3 widget(s)
+PASS W12 showing logs Show :: Show applied to 3 widget(s)
+PASS W13 Deselect All exists and is enabled with a selection :: title="Clear the selection without changing the document"
+PASS W14 Deselect All clears the selection
+PASS W15 Zoom to Fit returns to the frame baseline :: 120% -> 100%
+PASS W16 Backspace is documented
+PASS W17 Alt navigation family is documented
+PASS W18 Select All scope is documented
+PASS W19 Shift+Arrow no-op is documented

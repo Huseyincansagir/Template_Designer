@@ -3,7 +3,7 @@ import { createEmptyProject } from "../src/Domain/factories";
 import { createEditorApplication } from "../src/Core/editor-application";
 import { InMemoryDocumentStore } from "../src/Core/document-store";
 import type { Project, Widget } from "../src/Domain/models";
-import {
+import { calculateAlignUpdates, calculateDistributeUpdates,
   calculateNudgeStep,
   calculateZOrderUpdates,
   canvasToScreen,
@@ -351,5 +351,68 @@ describe("Canvas canonical remediation regressions", () => {
     };
     const { editor: duplicateEditor } = setupEditor(duplicateProject);
     expect(duplicateEditor.setWidgetGeometriesInScene("scene-a", { w1: valid }).changed).toBe(false);
+  });
+});
+
+describe("Alignment and distribution (D4-21)", () => {
+  const box = (id: string, x: number, y: number, width = 40, height = 20) => ({ id, geometry: { x, y, width, height } });
+
+  it("aligns to the selection bounding box without resizing", () => {
+    const widgets = [box("a", 0, 0, 40, 20), box("b", 100, 50, 60, 30)];
+    const left = calculateAlignUpdates(widgets, "left");
+    expect(left).toEqual({ b: { x: 0, y: 50, width: 60, height: 30 } });
+    const right = calculateAlignUpdates(widgets, "right");
+    // Bounding box right edge is 160; a keeps its size and moves to 120.
+    expect(right).toEqual({ a: { x: 120, y: 0, width: 40, height: 20 } });
+    const top = calculateAlignUpdates(widgets, "top");
+    expect(top).toEqual({ b: { x: 100, y: 0, width: 60, height: 30 } });
+    const bottom = calculateAlignUpdates(widgets, "bottom");
+    expect(bottom).toEqual({ a: { x: 0, y: 60, width: 40, height: 20 } });
+    // Every operation preserves width and height.
+    for (const updates of [left, right, top, bottom]) {
+      for (const [id, geometry] of Object.entries(updates ?? {})) {
+        const original = widgets.find((widget) => widget.id === id);
+        expect(geometry.width).toBe(original?.geometry.width);
+        expect(geometry.height).toBe(original?.geometry.height);
+      }
+    }
+  });
+
+  it("centres on the bounding box midline and rounds to whole scene units", () => {
+    const widgets = [box("a", 0, 0, 40, 20), box("b", 0, 0, 61, 21)];
+    const centred = calculateAlignUpdates(widgets, "horizontal-center");
+    // Bounding box is 61 wide, so a moves to (61-40)/2 = 10.5 -> 11 (rounded).
+    expect(centred?.a.x).toBe(11);
+    expect(Number.isInteger(centred?.a.x)).toBe(true);
+    const middled = calculateAlignUpdates(widgets, "vertical-middle");
+    expect(Number.isInteger(middled?.a.y)).toBe(true);
+  });
+
+  it("refuses an alignment that would change nothing and needs two widgets", () => {
+    expect(calculateAlignUpdates([box("a", 0, 0)], "left")).toBeNull();
+    // Already flush left.
+    expect(calculateAlignUpdates([box("a", 10, 0), box("b", 10, 40)], "left")).toBeNull();
+  });
+
+  it("distributes with equal edge-to-edge gaps and fixed outer widgets", () => {
+    const widgets = [box("a", 0, 0, 20, 10), box("b", 35, 0, 20, 10), box("c", 100, 0, 20, 10)];
+    const updates = calculateDistributeUpdates(widgets, "horizontal");
+    // Span 0..120 = 120, occupied 60, so each of the two gaps is 30.
+    expect(updates).toEqual({ b: { x: 50, y: 0, width: 20, height: 10 } });
+    const positions = [0, updates?.b.x ?? 35, 100];
+    expect(positions[1] - (positions[0] + 20)).toBe(30);
+    expect(positions[2] - (positions[1] + 20)).toBe(30);
+  });
+
+  it("refuses distribution that cannot preserve the outer widgets", () => {
+    expect(calculateDistributeUpdates([box("a", 0, 0), box("b", 10, 0)], "horizontal")).toBeNull();
+    // Three 40-wide widgets inside a 60-wide span cannot be spread.
+    expect(calculateDistributeUpdates([box("a", 0, 0, 40, 10), box("b", 5, 0, 40, 10), box("c", 20, 0, 40, 10)], "horizontal")).toBeNull();
+  });
+
+  it("distributes vertically on the same rules", () => {
+    const widgets = [box("a", 0, 0, 10, 20), box("b", 0, 30, 10, 20), box("c", 0, 100, 10, 20)];
+    const updates = calculateDistributeUpdates(widgets, "vertical");
+    expect(updates).toEqual({ b: { x: 0, y: 50, width: 10, height: 20 } });
   });
 });
