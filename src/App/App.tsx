@@ -1,9 +1,11 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { createEmptyProject, foundationDeviceProfile } from "../Domain/factories";
 import { InMemoryDocumentStore } from "../Core/document-store";
+import { CommandHistory, type Command } from "../Core/commands";
+import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
-import type { Asset, Project, Rotation, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { Asset, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 
 type PanelId = "explorer" | "assets" | "properties" | "simulator" | "console";
 type PanelMode = "docked" | "floating" | "collapsed";
@@ -160,6 +162,12 @@ export function App() {
   const [settingsDraft, setSettingsDraft] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
   const [savedSettings, setSavedSettings] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
   const [bindingModal, setBindingModal] = useState<BindingModalState>(null);
+  const commandHistory = useMemo(() => new CommandHistory(), []);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [runtimeValues, setRuntimeValues] = useState<Record<string, PrimitiveValue | null>>({});
+  const [runtimeSettings, setRuntimeSettings] = useState<Record<string, PrimitiveValue | null>>({});
+  const [simulationStatus, setSimulationStatus] = useState<"idle" | "running" | "paused">("idle");
+  const [deploymentStatus, setDeploymentStatus] = useState("Not built");
 
   const profileRegistry = [foundationDeviceProfile];
   const activeProfile = profileRegistry.find((profile) => profile.id === project.deviceProfileId);
@@ -171,12 +179,13 @@ export function App() {
   const activeSelectionLabel = selectedIds.length > 1 ? `${selectedIds.length} items selected` : selection?.label ?? "Nothing selected";
   const resolvedSelection = useMemo(() => selection ? resolveCanonicalNode(project, selection.id) : undefined, [project, selection]);
   const runtimeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
-  const runtime = useMemo(() => selectActiveScene(runtimeRotation?.scenes ?? [], { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile), [runtimeRotation, activeProfile]);
-  const activeBindings = useMemo(() => evaluateActiveSceneBindings(runtime.activeScene, { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile), [runtime.activeScene, activeProfile]);
+  const runtimeContext: RuntimeContext = { values: runtimeValues, settings: runtimeSettings, sceneActivationOrder: {} };
+  const runtime = useMemo(() => selectActiveScene(runtimeRotation?.scenes ?? [], runtimeContext, activeProfile ?? foundationDeviceProfile), [runtimeRotation, activeProfile, runtimeValues, runtimeSettings]);
+  const activeBindings = useMemo(() => evaluateActiveSceneBindings(runtime.activeScene, runtimeContext, activeProfile ?? foundationDeviceProfile), [runtime.activeScene, activeProfile, runtimeValues, runtimeSettings]);
   const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
   const profileStates = activeProfile?.runtimeStates ?? [];
   const profileSettings = activeProfile?.runtimeSettings ?? [];
-  const bindingEvaluations = useMemo(() => bindingWidget ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile)) : [], [bindingWidget, activeProfile]);
+  const bindingEvaluations = useMemo(() => bindingWidget ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile ?? foundationDeviceProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
   const activeLeftPanel = panelModes.explorer === "docked" ? "explorer" : panelModes.assets === "docked" ? "assets" : null;
   const activeRightPanel = panelModes.properties === "docked" ? "properties" : panelModes.simulator === "docked" ? "simulator" : null;
   const leftVisible = activeLeftPanel !== null;
@@ -191,19 +200,64 @@ export function App() {
     setMenuOpen(null);
   };
 
+  const runCommand = (command: Command) => {
+    commandHistory.execute(command);
+    setHistoryVersion((current) => current + 1);
+    logAction(`> ${command.label}`, "EVENT");
+  };
+
+  const undo = () => {
+    if (commandHistory.undo()) {
+      setHistoryVersion((current) => current + 1);
+      logAction("> undo()", "EVENT");
+    }
+  };
+
+  const redo = () => {
+    if (commandHistory.redo()) {
+      setHistoryVersion((current) => current + 1);
+      logAction("> redo()", "EVENT");
+    }
+  };
+
   const replaceProject = (nextProject: Project) => {
     documentStore.open(nextProject);
     setProject(nextProject);
   };
 
   const createProject = () => {
-    replaceProject(createEmptyProject("Untitled Project"));
+    const previousProject = project;
+    const nextProject = createEmptyProject("Untitled Project");
+    runCommand({ label: "Create Project", execute: () => replaceProject(nextProject), undo: () => replaceProject(previousProject) });
     setSelection(null);
     setSelectedIds([]);
     setViewMode("design");
     setOpenDocuments(["Project Overview"]);
     setActiveDocument("Project Overview");
-    logAction("New project created in foundation state");
+    logAction("New project command executed");
+  };
+
+  const buildAndVerifyPackage = async () => {
+    if (!activeProfile) {
+      setDeploymentStatus("Blocked · DeviceProfile unavailable");
+      logAction("Package build blocked: active DeviceProfile is unavailable", "ERROR");
+      return;
+    }
+    if (!validation.valid) {
+      setDeploymentStatus("Blocked · validation failed");
+      validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN"));
+      return;
+    }
+    try {
+      setDeploymentStatus("Building…");
+      const built = await buildDeploymentPackage(project, activeProfile);
+      const verified = await verifyDeploymentPackage(built);
+      setDeploymentStatus(verified.verified ? "Verified package" : "Blocked · integrity failed");
+      logAction(verified.verified ? `Package verified · ${verified.manifest.assetIds.length} asset(s)` : "Package verification failed", verified.verified ? "INFO" : "ERROR");
+    } catch (error) {
+      setDeploymentStatus("Blocked · export error");
+      logAction(error instanceof Error ? error.message : "Package build failed", "ERROR");
+    }
   };
 
   const setPanelMode = (panel: PanelId, mode: PanelMode) => {
@@ -339,8 +393,8 @@ export function App() {
       { label: "Save", shortcut: "Ctrl+S", disabled: true },
     ],
     Edit: [
-      { label: "Undo", shortcut: "Ctrl+Z", disabled: true },
-      { label: "Redo", shortcut: "Ctrl+Y", disabled: true },
+      { label: "Undo", shortcut: "Ctrl+Z", disabled: !commandHistory.canUndo, onClick: undo },
+      { label: "Redo", shortcut: "Ctrl+Y", disabled: !commandHistory.canRedo, onClick: redo },
       { label: "Reset Layout", onClick: resetLayout },
     ],
     View: [
@@ -353,7 +407,8 @@ export function App() {
     ],
     Project: [
       { label: "Project Settings", disabled: true },
-      { label: "Validate Project", onClick: () => logAction("Foundation validation completed") },
+      { label: "Validate Project", onClick: () => { if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
+      { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
     ],
     Theme: [
       { label: "Theme Defaults", disabled: true },
@@ -460,15 +515,15 @@ export function App() {
     <>
       {renderPanelHeader("simulator", "TEST STUDIO", "Simulator")}
       {renderDockTabs("simulator")}
-      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => logAction("Simulator run requested", "EVENT")}>▶ Run</button><button type="button" className="sim-button" disabled>Ⅱ Pause</button><button type="button" className="sim-button" onClick={() => logAction("Simulator reset requested", "EVENT")}>↺ Reset</button></div>
-      <div className="simulator-scroll"><section className="sim-section"><div className="property-section-title">Runtime Inputs</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => <div className="sim-row" key={state.id}><span>{state.displayName}</span><strong>Unset</strong></div>)}</section><section className="sim-section"><div className="property-section-title">Active Scene</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div><div className="sim-row"><span>Candidate scenes</span><strong>{runtime.candidates.length}</strong></div><div className="sim-row"><span>Active bindings</span><strong>{activeBindings.length}</strong></div></section><section className="sim-section"><div className="property-section-title">Runtime Inspector</div><div className="sim-row"><span>Binding Engine</span><strong>Canonical</strong></div><div className="sim-row"><span>Second rule system</span><strong>No</strong></div><div className="sim-row"><span>Firmware mixer</span><strong>Not simulated</strong></div></section></div>
-      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Simulator consumes the canonical runtime evaluator; it does not invent Custom State.</span></div>
+      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); logAction("Simulator run requested", "EVENT"); }}>▶ Run</button><button type="button" className="sim-button" disabled={simulationStatus !== "running"} onClick={() => { setSimulationStatus("paused"); logAction("Simulator paused", "EVENT"); }}>Ⅱ Pause</button><button type="button" className="sim-button" disabled={simulationStatus === "idle"} onClick={() => logAction("Simulator step requested", "EVENT")}>Step</button><button type="button" className="sim-button" onClick={() => { setSimulationStatus("idle"); setRuntimeValues({}); setRuntimeSettings({}); logAction("Simulator reset requested", "EVENT"); }}>↺ Reset</button><span className="sim-status">{simulationStatus.toUpperCase()}</span></div>
+      <div className="simulator-scroll"><section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id}><span>{state.displayName}<small>{state.type}</small></span>{state.type === "boolean" ? <input type="checkbox" checked={current === true} onChange={(event) => setRuntimeValues((values) => ({ ...values, [state.id]: event.target.checked }))} /> : <input type="text" value={current == null ? "" : String(current)} placeholder="Unset" onChange={(event) => setRuntimeValues((values) => ({ ...values, [state.id]: event.target.value }))} />}</label>; })}</section><section className="sim-section"><div className="property-section-title">Runtime Settings · DeviceProfile</div>{profileSettings.length === 0 ? <div className="sim-empty">No runtime settings in active DeviceProfile.</div> : profileSettings.map((setting) => <label className="sim-input-row" key={setting.id}><span>{setting.displayName}<small>{setting.type}</small></span><input type="text" value={runtimeSettings[setting.id] == null ? "" : String(runtimeSettings[setting.id])} placeholder={setting.defaultValue == null ? "Unset" : String(setting.defaultValue)} onChange={(event) => setRuntimeSettings((values) => ({ ...values, [setting.id]: event.target.value }))} /></label>)}</section><section className="sim-section"><div className="property-section-title">Active Scene</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.map((candidate) => <div className="sim-row" key={candidate.sceneId}><span>{candidate.sceneId}</span><strong>{candidate.matched ? "MATCH" : "skip"} · P{candidate.priority}</strong></div>)}<div className="sim-row"><span>Active bindings</span><strong>{activeBindings.length}</strong></div></section><section className="sim-section"><div className="property-section-title">Runtime Inspector</div><div className="sim-row"><span>Binding Engine</span><strong>Canonical</strong></div><div className="sim-row"><span>Audio arbitration</span><strong>Firmware-owned</strong></div><div className="sim-row"><span>Package status</span><strong>{deploymentStatus}</strong></div></section></div>
+      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Simulator consumes DeviceProfile, Scene selection and active-scene bindings; it does not invent Custom State.</span></div>
     </>
   );
 
   const renderConsole = () => (
     <>
-      <div className="console-tabs"><button type="button" className={consoleTab === "console" ? "active" : ""} onClick={() => setConsoleTab("console")}>Console</button><button type="button" className={consoleTab === "validation" ? "active" : ""} onClick={() => setConsoleTab("validation")}>Validation <span className="tab-count">{validation.issues.length}</span></button><span className="console-spacer" /><span className="console-scope">Foundation / local project</span><button type="button" className="panel-action" title="Float console" onClick={() => setPanelMode("console", "floating")}>⤢</button><button type="button" className="panel-action" title="Collapse console" onClick={() => collapsePanel("console")}>×</button></div>
+      <div className="console-tabs"><button type="button" className={consoleTab === "console" ? "active" : ""} onClick={() => setConsoleTab("console")}>Console</button><button type="button" className={consoleTab === "validation" ? "active" : ""} onClick={() => setConsoleTab("validation")}>Validation <span className="tab-count">{validation.issues.length}</span></button><span className="console-spacer" /><span className="console-scope">Package: {deploymentStatus}</span><button type="button" className="panel-action" title="Float console" onClick={() => setPanelMode("console", "floating")}>⤢</button><button type="button" className="panel-action" title="Collapse console" onClick={() => collapsePanel("console")}>×</button></div>
       <div className="console-body">{consoleTab === "console" ? <div className="console-entry-list">{consoleEntries.slice(-3).map((entry, index) => <div className="console-entry" key={`${entry.message}-${index}`}><span className={`console-level ${entry.level.toLowerCase()}`}>{entry.level}</span><span className="console-info">{entry.message}</span></div>)}<span className="console-muted">Command, validation, export and runtime traces appear here.</span></div> : <div className="console-entry-list"><div className="console-entry"><span className={`validation-dot ${validation.valid ? "ok" : "error"}`} /><span className="console-info">{validation.valid ? "No blocking foundation issues" : `${validation.issues.length} validation issue(s)`}</span></div><span className="console-muted">Publish readiness is not evaluated by the Phase 0 foundation.</span>{validation.issues.map((issue) => <div className="console-entry" key={issue.code}><span className={`console-level ${issue.severity}`}>{issue.severity.toUpperCase()}</span><span className="console-info">{issue.message}</span></div>)}</div>}</div>
     </>
   );
@@ -492,7 +547,7 @@ export function App() {
       <header className="application-bar">
         <div className="brand-block"><span className="brand-mark">TD</span><div><strong>Template Designer</strong><span className="muted">Design Studio · Foundation</span></div></div>
         <nav className="menu-bar" aria-label="Application menu">{menuKeys.map((menu) => <div key={menu} className="menu-item-wrap"><button type="button" className={`menu-button ${menuOpen === menu ? "is-open" : ""}`} onClick={(event) => { event.stopPropagation(); setMenuOpen((current) => current === menu ? null : menu); }}>{menu}</button>{menuOpen === menu && <div className="menu-popover" onClick={(event) => event.stopPropagation()}>{menuItems[menu].map((item) => <button key={item.label} type="button" className="menu-command" disabled={item.disabled} onClick={item.onClick}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>
-        <div className="topbar-actions"><span className="mode-chip"><span className="live-dot" /> {viewMode === "design" ? "Design Mode" : "Preview Mode"}</span><button type="button" className="toolbar-button primary" onClick={createProject}>New Project</button><button type="button" className="toolbar-button" disabled title="Command history is a later foundation phase">Undo</button><button type="button" className="toolbar-button" disabled title="Command history is a later foundation phase">Redo</button><button type="button" className="toolbar-button settings-button" onClick={() => setSettingsOpen(true)} title="Program Settings">⚙ Settings</button></div>
+        <div className="topbar-actions"><span className="mode-chip"><span className="live-dot" /> {viewMode === "design" ? "Design Mode" : "Preview Mode"}</span><button type="button" className="toolbar-button primary" onClick={createProject}>New Project</button><button type="button" className="toolbar-button" disabled={!commandHistory.canUndo} onClick={undo} title={commandHistory.canUndo ? "Undo last command" : "No commands to undo"}>Undo</button><button type="button" className="toolbar-button" disabled={!commandHistory.canRedo} onClick={redo} title={commandHistory.canRedo ? "Redo last command" : "No commands to redo"}>Redo</button><button type="button" className="toolbar-button settings-button" onClick={() => setSettingsOpen(true)} title="Program Settings">⚙ Settings</button></div>
       </header>
 
       <div className="document-tabs" role="tablist" aria-label="Open documents"><div className="document-tab-list">{openDocuments.map((document) => <div key={document} className={`document-tab ${activeDocument === document ? "active" : ""}`} role="tab" aria-selected={activeDocument === document}><button type="button" className="document-tab-main" onClick={() => { setActiveDocument(document); logAction(`${document} document active`); }}><span className="document-tab-icon">▧</span><span>{document}</span>{activeDocument === document && <span className="dirty-indicator" title="Foundation project has local state" />}</button><button type="button" className="tab-close" aria-label={`Close ${document}`} onClick={() => closeDocument(document)} disabled={openDocuments.length <= 1}>×</button></div>)}</div><span className="document-tab-note">Theme Project / Rotation documents</span><div className="tab-actions"><button type="button" className="icon-button" title="Reset layout" onClick={resetLayout}>↺</button></div></div>
@@ -513,7 +568,7 @@ export function App() {
         {floatingPanels.map((panel) => renderPanelContainer(panel, panel === "explorer" ? renderExplorer() : panel === "assets" ? renderAssets() : panel === "properties" ? renderProperties() : panel === "simulator" ? renderSimulator() : renderConsole()))}
       </main>
 
-      <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>Browser core · Tauri shell reserved</span></footer>
+      <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Browser core · Tauri shell reserved</span></footer>
 
       {bindingModal && <div className="settings-backdrop" role="presentation" onClick={() => setBindingModal(null)}><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Binding is evaluated inside the active Scene</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Binding records remain in the canonical Widget model; this surface does not invent scene selection rules.</span></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { setSavedSettings(settingsDraft); setSettingsOpen(false); logAction("Program Settings saved"); }}>Save / Apply &amp; Close</button></div></footer></section></div>}
