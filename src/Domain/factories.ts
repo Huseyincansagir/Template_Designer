@@ -4,6 +4,7 @@ export const foundationDeviceProfile: DeviceProfile = {
   id: "foundation-profile",
   name: "Foundation Device Profile",
   display: { width: 720, height: 1280 },
+  supportedRotations: [0, 90, 180, 270],
   supportedWidgetTypes: ["media", "digit", "direction", "warning", "text"],
   supportedMediaTypes: ["image", "video", "audio"],
   supportedFormats: [],

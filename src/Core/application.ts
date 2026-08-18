@@ -1,4 +1,5 @@
-import type { DeploymentPackage, DeploymentTarget, Project } from "../Domain/models";
+import { buildDeploymentPackage, verifyDeploymentPackage } from "./export";
+import type { DeploymentPackage, DeploymentTarget, DeviceProfile, Project } from "../Domain/models";
 
 export interface Logger {
   info(message: string, context?: Readonly<Record<string, unknown>>): void;
@@ -46,5 +47,32 @@ export class UnsupportedDeploymentManager implements DeploymentManager {
       "Deployment adapters are not configured in the foundation.",
       "DEPLOYMENT_ADAPTER_NOT_CONFIGURED",
     );
+  }
+}
+
+export class PackageDeploymentManager implements DeploymentManager {
+  constructor(
+    private readonly profile: DeviceProfile,
+    private readonly adapter: DeploymentTargetAdapter,
+  ) {}
+
+  async deploy(project: Project, target: DeploymentTarget): Promise<void> {
+    if (target.id !== this.adapter.target.id) {
+      throw new ApplicationError(
+        `Deployment target '${target.id}' is not available through '${this.adapter.target.id}'.`,
+        "DEPLOYMENT_TARGET_MISMATCH",
+      );
+    }
+
+    const packageFile = await buildDeploymentPackage(project, this.profile);
+    const verifiedPackage = await verifyDeploymentPackage(packageFile);
+    if (!verifiedPackage.verified) {
+      throw new ApplicationError(
+        "Deployment package verification failed.",
+        "DEPLOYMENT_PACKAGE_NOT_VERIFIED",
+      );
+    }
+
+    await this.adapter.deploy(verifiedPackage);
   }
 }
