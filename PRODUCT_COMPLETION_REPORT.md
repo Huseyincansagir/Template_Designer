@@ -61,7 +61,7 @@ The full ledger is `docs/PRODUCT_COMPLETION_LEDGER.md`. The shape of the problem
 | `addThemeProjectGroup` | The hierarchy was frozen at the scaffold's single group. |
 | `setProjectDeviceProfile(id, display)` | Re-derives all four rotation dimensions (R90/R270 swapped) and clamps every widget back inside the display, as one undoable command. |
 | Rotation guards | `deleteSelection` and `duplicateSelection` refuse rotation ids. |
-| Removed `addRotation`, `moveWidget` | One was a latent path to a fifth rotation; the other had no product meaning, since `zIndex` is the canonical stacking source. |
+| Removed `addRotation`, `moveWidget`, `executeCommand`, unscoped `setWidgetGeometries`, `editWidgetProperties`, `addAsset` | Six orphans. One was a latent path to a fifth rotation; the rest had no product caller — `zIndex` is the canonical stacking source, and the others were superseded by scoped or consolidated commands. Two architecture tests now enforce that no published command lacks a UI caller and no code path can add or delete a Rotation; both were verified to fail when deliberately broken. |
 
 ### Infrastructure — the platform boundary
 
@@ -113,7 +113,7 @@ Seven new rules, all **warning** severity so they inform without blocking a buil
 | `src/App/shortcut-registry.ts` (+23) | `alt` modifier, 6 new bindings |
 | `src/App/app.css` (+88) | Layout for the new surfaces; the token layer is unchanged |
 | `src/main.tsx` | Second profile registered |
-| `tests/*` (+600) | New `product-completion.test.ts` (24 cases) + 4 files updated |
+| `tests/*` (+640) | New `product-completion.test.ts` (24 cases) + 5 files updated, incl. 2 architecture invariants |
 
 Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 deletions across 19 files.
 
@@ -124,7 +124,7 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 119/119 in 12 files (was 90/11) |
+| `npm test` | **PASS** — 121/121 in 12 files (was 90/11), including two enforced architecture invariants |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
 | Live browser acceptance | **PASS** — 128 checks across 4 scripted runs, **0 console errors** |

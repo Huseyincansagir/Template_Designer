@@ -190,11 +190,20 @@ describe("canonical editor mutation pipeline remediation", () => {
     const { project, sceneId } = hierarchyProject();
     const { store, editor } = setup(project);
     const before = structuredClone(current(store));
-    expect(editor.editWidgetProperties(sceneId, "w1", { name: "Edited", visible: false, geometry: { x: 100, y: 110, width: 120, height: 50 } }).changed).toBe(true);
+    // Name/visibility and geometry are separate commands on purpose: the
+    // geometry path refuses locked widgets, the property path never touches
+    // geometry. Each is independently undoable.
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { name: "Edited", visible: false }).changed).toBe(true);
+    const afterProperties = structuredClone(current(store));
+    expect(afterProperties.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0]).toMatchObject({ name: "Edited", visible: false });
+    expect(editor.setWidgetGeometriesInScene(sceneId, { w1: { x: 100, y: 110, width: 120, height: 50 } }).changed).toBe(true);
     const after = structuredClone(current(store));
     expect(after.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0]).toMatchObject({ name: "Edited", visible: false, geometry: { x: 100, y: 110, width: 120, height: 50 } });
     expect(store.undo()).toBe(true);
+    expect(current(store)).toEqual(afterProperties);
+    expect(store.undo()).toBe(true);
     expect(current(store)).toEqual(before);
+    expect(store.redo()).toBe(true);
     expect(store.redo()).toBe(true);
     expect(current(store)).toEqual(after);
   });
@@ -341,12 +350,18 @@ describe("canonical editor mutation pipeline remediation", () => {
     };
     const { store, editor } = setup(lockedProject);
     const before = structuredClone(current(store));
-    expect(editor.setWidgetGeometries({ w1: { x: 99, y: 99, width: 99, height: 99 } }).changed).toBe(false);
+    // A locked widget refuses geometry through every geometry path...
+    expect(editor.setWidgetGeometriesInScene(sceneId, { w1: { x: 99, y: 99, width: 99, height: 99 } }).changed).toBe(false);
     expect(current(store)).toEqual(before);
-    expect(editor.editWidgetProperties(sceneId, "w1", { name: "Locked Rename", geometry: { x: 88, y: 88, width: 88, height: 88 } }).changed).toBe(true);
+    // ...while non-geometry properties stay editable and its geometry is untouched.
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { name: "Locked Rename" }).changed).toBe(true);
     const widgetAfter = current(store).themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0];
     expect(widgetAfter.name).toBe("Locked Rename");
+    expect(widgetAfter.locked).toBe(true);
     expect(widgetAfter.geometry).toEqual(before.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry);
+    // Type-specific configuration is also refused no geometry route exists for it.
+    expect(editor.setWidgetConfiguration(sceneId, "w1", { content: { text: "still editable" } }).changed).toBe(true);
+    expect(current(store).themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry).toEqual(before.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry);
   });
 
   it("refuses to delete the last Theme Project Group and allows deleting additional groups", () => {

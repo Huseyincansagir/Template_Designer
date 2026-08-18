@@ -106,7 +106,7 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
   it("edits asset name, path and media type through the canonical pipeline", () => {
     const { project } = fixture();
     const { store, editor } = setup(project);
-    const assetId = editor.addAsset({ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }).createdIds?.[0] as string;
+    const assetId = editor.addAssets([{ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }]).createdIds?.[0] as string;
 
     expect(editor.setAssetProperties(assetId, { name: "  " }).changed).toBe(false);
     expect(editor.setAssetProperties(assetId, { sourcePath: "" }).changed).toBe(false);
@@ -122,8 +122,8 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
   it("deleting an asset purges every reference so the project stays valid", () => {
     const { project, sceneId, themeId } = fixture([widget("w1", "media")]);
     const { store, editor } = setup(project);
-    const imageId = editor.addAsset({ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }).createdIds?.[0] as string;
-    const audioId = editor.addAsset({ name: "Chime", sourcePath: "assets/chime.mp3", mediaType: "audio" }).createdIds?.[0] as string;
+    const imageId = editor.addAssets([{ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }]).createdIds?.[0] as string;
+    const audioId = editor.addAssets([{ name: "Chime", sourcePath: "assets/chime.mp3", mediaType: "audio" }]).createdIds?.[0] as string;
 
     expect(editor.setThemeResources(themeId, [imageId, audioId]).changed).toBe(true);
     expect(editor.setWidgetConfiguration(sceneId, "w1", {
@@ -152,7 +152,7 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
   it("reaches the deployment manifest once assets are referenced", async () => {
     const { project, sceneId, themeId } = fixture([widget("w1", "media")]);
     const { store, editor } = setup(project);
-    const imageId = editor.addAsset({ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }).createdIds?.[0] as string;
+    const imageId = editor.addAssets([{ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }]).createdIds?.[0] as string;
     editor.setThemeResources(themeId, [imageId]);
     editor.setWidgetConfiguration(sceneId, "w1", { mediaType: "image", assetIds: [imageId] });
 
@@ -169,7 +169,7 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
     const { project, themeId } = fixture();
     const { store, editor } = setup(project);
     expect(editor.setThemeResources(themeId, ["ghost"]).changed).toBe(false);
-    const assetId = editor.addAsset({ name: "A", sourcePath: "a.png", mediaType: "image" }).createdIds?.[0] as string;
+    const assetId = editor.addAssets([{ name: "A", sourcePath: "a.png", mediaType: "image" }]).createdIds?.[0] as string;
     expect(editor.setThemeResources(themeId, [assetId, assetId]).changed).toBe(false);
     expect(editor.setThemeResources("missing-theme", [assetId]).changed).toBe(false);
     expect(current(store).themeProjectGroups[0].themeProjects[0].resources).toEqual([]);
@@ -196,7 +196,7 @@ describe("Widget configuration (L-06/L-07/D1-03)", () => {
       zIndex: 7,
     })]);
     const { store, editor } = setup(project);
-    const assetId = editor.addAsset({ name: "A", sourcePath: "a.png", mediaType: "image" }).createdIds?.[0] as string;
+    const assetId = editor.addAssets([{ name: "A", sourcePath: "a.png", mediaType: "image" }]).createdIds?.[0] as string;
     editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { mediaType: "image", assetId, duration: 3 } });
     expect(firstScene(current(store)).widgets[0].mediaSlide).toBeDefined();
 
@@ -230,7 +230,7 @@ describe("Widget configuration (L-06/L-07/D1-03)", () => {
   it("keeps a Media Slide off non-media widget types", () => {
     const { project, sceneId } = fixture([widget("w1", "text")]);
     const { store, editor } = setup(project);
-    const assetId = editor.addAsset({ name: "A", sourcePath: "a.png", mediaType: "image" }).createdIds?.[0] as string;
+    const assetId = editor.addAssets([{ name: "A", sourcePath: "a.png", mediaType: "image" }]).createdIds?.[0] as string;
     editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { mediaType: "image", assetId, duration: 2 } });
     expect(firstScene(current(store)).widgets[0].mediaSlide).toBeUndefined();
     expect(validateProject(current(store), foundationDeviceProfile).issues.some((issue) => issue.code === "MEDIA_SLIDE_WIDGET_TYPE_INVALID")).toBe(false);

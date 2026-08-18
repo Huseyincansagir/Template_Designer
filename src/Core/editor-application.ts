@@ -220,10 +220,6 @@ function duplicateThemeProject(theme: ThemeProject): ThemeProject {
 export class EditorApplication {
   constructor(readonly documents: InMemoryDocumentStore) {}
 
-  executeCommand(command: { readonly label: string; execute(): void; undo(): void }): void {
-    this.documents.execute(command);
-  }
-
   execute(label: string, mutation: ProjectMutation): MutationResult {
     const current = this.documents.getCurrent();
     if (!current) throw new Error("No document is open");
@@ -332,10 +328,6 @@ export class EditorApplication {
     const label = created.length === 1 ? `Import Asset: ${created[0].name}` : `Import ${created.length} Assets`;
     const result = this.execute(label, (project) => ({ ...project, assets: [...project.assets, ...clone(created)] }));
     return result.changed ? { changed: true, createdIds: created.map((asset) => asset.id) } : result;
-  }
-
-  addAsset(draft: AssetDraft): MutationResult {
-    return this.addAssets([draft]);
   }
 
   setAssetProperties(assetId: string, patch: Partial<Pick<Asset, "name" | "sourcePath" | "mediaType" | "metadata">>): MutationResult {
@@ -608,15 +600,6 @@ export class EditorApplication {
     });
   }
 
-  setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
-    const current = this.documents.getCurrent();
-    if (!current || !validGlobalGeometryUpdates(current, updates)) return { changed: false };
-    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapSceneWidgets(scene, (widget) => {
-      const geometry = updates[widget.id];
-      return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
-    }))))));
-  }
-
   setWidgetGeometriesInScene(sceneId: string, updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
     const current = this.documents.getCurrent();
     const ids = Object.keys(updates);
@@ -625,19 +608,6 @@ export class EditorApplication {
       const geometry = updates[widget.id];
       return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
     }) : scene)))));
-  }
-
-  editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): MutationResult {
-    const current = this.documents.getCurrent();
-    if (!current || !validScopedWidgetIds(current, sceneId, [widgetId]) || (patch.geometry !== undefined && !isValidGeometry(patch.geometry))) return { changed: false };
-    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? {
-      ...scene,
-      widgets: scene.widgets.map((widget) => {
-        if (widget.id !== widgetId) return widget;
-        const { geometry, ...editablePatch } = clone(patch);
-        return { ...widget, ...editablePatch, ...(widget.locked || geometry === undefined ? {} : { geometry }) };
-      }),
-    } : scene)))));
   }
 
   /**

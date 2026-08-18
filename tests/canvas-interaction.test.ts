@@ -323,7 +323,6 @@ describe("Canvas canonical remediation regressions", () => {
       { ...valid, height: 0 },
     ];
     for (const geometry of malformed) {
-      expect(editor.setWidgetGeometries({ w1: geometry }).changed).toBe(false);
       expect(editor.setWidgetGeometriesInScene("scene-a", { w1: geometry }).changed).toBe(false);
     }
     expect(store.getCurrent()).toEqual(project);
@@ -351,7 +350,6 @@ describe("Canvas canonical remediation regressions", () => {
       })),
     };
     const { editor: duplicateEditor } = setupEditor(duplicateProject);
-    expect(duplicateEditor.setWidgetGeometries({ w1: valid }).changed).toBe(false);
     expect(duplicateEditor.setWidgetGeometriesInScene("scene-a", { w1: valid }).changed).toBe(false);
   });
 });
