@@ -79,6 +79,14 @@ Filled from specialist reports during integration; each row gets a fix commit or
 | S4-12 | P3 | sizing | panel actions 27px accidental | FIXED 0743bf2 (24px token) |
 | S4 a11y lead | P2 | a11y | splitter focus-visible removed the outline | FIXED 0743bf2 (focus ring kept) |
 | S4 §6 | P2 | empty states | empty states prose-only, no click target | FIXED 0743bf2 (Add Widget action inside canvas empty state) |
+| S5-04 | P1 | errors | nested-missing-field persisted project white-screened with no recovery (Reload re-crashes) | FIXED fdea84f (deep load-time shape gate + total validation); live-verified boot-to-scaffold |
+| S5-01 | P2 | tauri | empty bundle.icon | DEFERRED — icon assets require tooling; recorded as unverified desktop-build item |
+| S5-02 | P2 | tauri | CSP script-src 'self' blocks Vite react-refresh in tauri dev | FIXED fdea84f ('unsafe-inline' script-src; desktop-local app) |
+| S5-03 | P3 | tauri | dirty-close silently blocked without a user prompt | FIXED fdea84f (in-app Discard & Close confirm on onCloseRequested) |
+| S5-05 | P3 | errors | ErrorBoundary claimed persistence that may not exist | FIXED fdea84f (honest copy) |
+| S5-06 | P3 | export | in-memory checksum self-check | DOCUMENTED deferred (read-back verification belongs to the deployment transport) |
+| S5-07 | P3 | shell | favicon 404 | FIXED fdea84f (inline SVG data-URI) |
+| LEAD | P1 | modals | Escape in a Settings input silently did nothing; first Tab escaped the dialog | FIXED 04af491 (modal branch precedes input exclusion; autofocus + outside-focus trap redirect); live-verified 8 Tabs inside |
 
 ## Acceptance blockers after lead pass (fixed)
 
