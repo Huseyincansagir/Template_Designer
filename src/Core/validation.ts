@@ -143,6 +143,7 @@ function validateWidget(
   assets: ReadonlyMap<string, Asset>,
   path: string,
   issues: ValidationIssue[],
+  bounds?: { readonly width: number; readonly height: number },
 ): void {
   const assetIds = new Set(assets.keys());
 
@@ -163,6 +164,41 @@ function validateWidget(
 
   if (!Number.isFinite(widget.zIndex)) {
     issue(issues, "WIDGET_Z_INDEX_INVALID", "Widget zIndex must be a finite number.", `${path}.zIndex`, "Assign a finite zIndex value.");
+  }
+
+  // A widget outside its Rotation's logical space exists in the document but
+  // can never be seen on the device.
+  if (bounds && bounds.width > 0 && bounds.height > 0) {
+    const overflowsRight = widget.geometry.x + widget.geometry.width > bounds.width;
+    const overflowsBottom = widget.geometry.y + widget.geometry.height > bounds.height;
+    if (widget.geometry.x < 0 || widget.geometry.y < 0 || overflowsRight || overflowsBottom) {
+      issue(
+        issues,
+        "WIDGET_OUTSIDE_SCENE_BOUNDS",
+        `Widget '${widget.name}' extends outside the ${bounds.width} x ${bounds.height} display area and would be clipped.`,
+        `${path}.geometry`,
+        "Move or resize the widget so it fits inside the Rotation / Form display area.",
+        "warning",
+      );
+    }
+  }
+
+  // A declared style that the profile does not provide falls back silently at
+  // runtime; the designer must be told which style will actually be used.
+  const digitStyleId = widget.style?.digitStyleId;
+  if (widget.widgetType === "digit" && typeof digitStyleId === "string" && digitStyleId.length > 0 && profile.digitStyles && !profile.digitStyles.includes(digitStyleId)) {
+    issue(issues, "UNKNOWN_DIGIT_STYLE", `Digit style '${digitStyleId}' is not provided by the active DeviceProfile.`, `${path}.style.digitStyleId`, `Select a profile-defined Digit Style${profile.defaultDigitStyleId ? ` (default: ${profile.defaultDigitStyleId})` : ""}.`);
+  }
+  const directionStyleId = widget.style?.directionStyleId;
+  if (widget.widgetType === "direction" && typeof directionStyleId === "string" && directionStyleId.length > 0 && profile.directionStyles && !profile.directionStyles.includes(directionStyleId)) {
+    issue(issues, "UNKNOWN_DIRECTION_STYLE", `Direction style '${directionStyleId}' is not provided by the active DeviceProfile.`, `${path}.style.directionStyleId`, "Select a profile-defined Direction Style.");
+  }
+
+  // A content value source must exist in the runtime registry, otherwise the
+  // widget can never display a value.
+  const sourceStateId = widget.content?.sourceStateId;
+  if (typeof sourceStateId === "string" && sourceStateId.length > 0 && !profile.runtimeStates.some((state) => state.id === sourceStateId)) {
+    issue(issues, "UNKNOWN_RUNTIME_REFERENCE", `Widget value source '${sourceStateId}' is not defined by the active DeviceProfile.`, `${path}.content.sourceStateId`, "Select a DeviceProfile-defined runtime state or clear the value source.");
   }
 
   if (widget.mediaType && !profile.supportedMediaTypes.includes(widget.mediaType)) {
@@ -221,13 +257,29 @@ function validateScene(
   assets: ReadonlyMap<string, Asset>,
   path: string,
   issues: ValidationIssue[],
+  bounds?: { readonly width: number; readonly height: number },
 ): void {
   if (scene.priority < 0 || scene.priority > 10 || !Number.isInteger(scene.priority)) {
     issue(issues, "SCENE_PRIORITY_INVALID", "Scene priority must be an integer from 0 through 10.", `${path}.priority`, "Set a Scene priority between 0 and 10.");
   }
 
+  // An empty Scene is legal but never shows anything; the designer should know
+  // before the package is built.
+  if ((Array.isArray(scene.widgets) ? scene.widgets : []).length === 0) {
+    issue(issues, "SCENE_EMPTY", `Scene '${scene.name}' contains no widget and would render an empty display.`, `${path}.widgets`, "Add at least one widget, or delete the Scene.", "warning");
+  }
+
   (Array.isArray(scene.activationConditions) ? scene.activationConditions : []).forEach((condition, index) => validateCondition(condition, profile, `${path}.activationConditions[${index}]`, issues));
-  (Array.isArray(scene.widgets) ? scene.widgets : []).forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues));
+  (Array.isArray(scene.widgets) ? scene.widgets : []).forEach((widget, index) => validateWidget(widget, profile, assets, `${path}.widgets[${index}]`, issues, bounds));
+
+  const duplicateNames = new Set<string>();
+  const seenNames = new Set<string>();
+  (Array.isArray(scene.widgets) ? scene.widgets : []).forEach((widget) => {
+    const key = widget.name.trim().toLowerCase();
+    if (seenNames.has(key)) duplicateNames.add(widget.name.trim());
+    seenNames.add(key);
+  });
+  duplicateNames.forEach((name) => issue(issues, "DUPLICATE_WIDGET_NAME", `Scene '${scene.name}' has more than one widget named '${name}'.`, `${path}.widgets`, "Rename one of them so runtime traces and the Explorer stay unambiguous.", "warning"));
 
   const maxConcurrentDecode = profile.videoCapabilities?.maxConcurrentDecode;
   if (maxConcurrentDecode !== undefined && maxConcurrentDecode > 0) {
@@ -295,8 +347,21 @@ function validateThemeProject(
         issue(issues, "DUPLICATE_SCENE_ID", `Scene ID '${scene.id}' is duplicated within the rotation.`, `${path}.rotations[${rotationIndex}].scenes[${sceneIndex}].id`, "Assign a unique stable Scene ID.");
       }
       sceneIds.add(scene.id);
-      validateScene(scene, profile, assets, `${path}.rotations[${rotationIndex}].scenes[${sceneIndex}]`, issues);
+      validateScene(scene, profile, assets, `${path}.rotations[${rotationIndex}].scenes[${sceneIndex}]`, issues, { width: rotation.width, height: rotation.height });
     });
+    // A Rotation / Form with no Scene renders nothing for that physical
+    // orientation; the theme is publishable but incomplete.
+    if ((Array.isArray(rotation.scenes) ? rotation.scenes : []).length === 0) {
+      issue(issues, "ROTATION_WITHOUT_SCENE", `Rotation / Form R${rotation.angle} of '${theme.name}' has no Scene and would render nothing in that orientation.`, `${path}.rotations[${rotationIndex}].scenes`, "Add at least one Scene to this Rotation / Form.", "warning");
+    }
+    const duplicateSceneNames = new Set<string>();
+    const seenSceneNames = new Set<string>();
+    (Array.isArray(rotation.scenes) ? rotation.scenes : []).forEach((scene) => {
+      const key = scene.name.trim().toLowerCase();
+      if (seenSceneNames.has(key)) duplicateSceneNames.add(scene.name.trim());
+      seenSceneNames.add(key);
+    });
+    duplicateSceneNames.forEach((name) => issue(issues, "DUPLICATE_SCENE_NAME", `Rotation / Form R${rotation.angle} has more than one Scene named '${name}'.`, `${path}.rotations[${rotationIndex}].scenes`, "Rename one of them so the Scene switcher and runtime traces stay unambiguous.", "warning"));
   });
 
   theme.resources.forEach((assetId, index) => validateAssetReference(assetId, assets, `${path}.resources[${index}]`, issues));

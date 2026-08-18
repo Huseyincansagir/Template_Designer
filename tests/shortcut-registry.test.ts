@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildShortcutRegistry, canonicalShortcuts, matchShortcut, shortcutDisplay, shortcutRegistry } from "../src/App/shortcut-registry";
+import { calculateNudgeStep } from "../src/App/canvas-interaction";
 import { coerceToDefinitionType, conditionMatches } from "../src/Core/runtime";
 import { foundationDeviceProfile } from "../src/Domain/factories";
 
@@ -12,9 +13,24 @@ describe("Shortcut registry (H-05 remediation)", () => {
     // macOS: Meta.
     expect(matchShortcut({ key: "z", ctrlKey: false, metaKey: true, shiftKey: false, platformHint: "MacIntel" }, shortcutRegistry)?.id).toBe("undo");
     expect(matchShortcut({ key: "z", ctrlKey: true, metaKey: false, shiftKey: false, platformHint: "MacIntel" }, shortcutRegistry)).toBeNull();
-    // Shift variants are not silently treated as their unshifted binding.
-    expect(matchShortcut({ key: "z", ctrlKey: true, metaKey: false, shiftKey: true, platformHint: "Win32" }, shortcutRegistry)).toBeNull();
+    // Shift variants resolve to their own binding, never to the unshifted one.
+    expect(matchShortcut({ key: "z", ctrlKey: true, metaKey: false, shiftKey: true, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("redo-alt");
+    expect(matchShortcut({ key: "y", ctrlKey: true, metaKey: false, shiftKey: true, platformHint: "Win32" }, shortcutRegistry)).toBeNull();
     expect(matchShortcut({ key: "Delete", ctrlKey: false, metaKey: false, shiftKey: false, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("delete");
+  });
+
+  it("keeps the Alt navigation family separate from geometry nudges", () => {
+    // Alt+Arrow is the Scene/Rotation navigation family. `calculateNudgeStep`
+    // refuses Alt, so a navigation shortcut can never move a widget.
+    expect(matchShortcut({ key: "ArrowRight", ctrlKey: false, metaKey: false, shiftKey: false, altKey: true, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("scene-next");
+    expect(matchShortcut({ key: "ArrowLeft", ctrlKey: false, metaKey: false, shiftKey: false, altKey: true, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("scene-previous");
+    expect(matchShortcut({ key: "ArrowDown", ctrlKey: false, metaKey: false, shiftKey: false, altKey: true, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("rotation-next");
+    expect(matchShortcut({ key: "ArrowUp", ctrlKey: false, metaKey: false, shiftKey: false, altKey: true, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("rotation-previous");
+    // Without Alt the same arrows are NOT navigation.
+    expect(matchShortcut({ key: "ArrowRight", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, platformHint: "Win32" }, shortcutRegistry)).toBeNull();
+    expect(calculateNudgeStep(10, { shift: false, modifier: false, alt: true })).toBeNull();
+    expect(matchShortcut({ key: "F2", ctrlKey: false, metaKey: false, shiftKey: false, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("rename");
+    expect(matchShortcut({ key: "0", ctrlKey: true, metaKey: false, shiftKey: false, platformHint: "Win32" }, shortcutRegistry)?.id).toBe("zoom-reset");
   });
 
   it("detects conflicts at registry build time", () => {

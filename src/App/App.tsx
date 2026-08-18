@@ -7,8 +7,10 @@ import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export"
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
+import { createAssetImportSource } from "../Infrastructure/asset-import";
+import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
-import type { Asset, Binding, Geometry, PrimitiveValue, Project, Rotation, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, Widget, WidgetType } from "../Domain/models";
+import type { Asset, Binding, Condition, ConditionMode, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, type EditorCommandId } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
@@ -18,7 +20,7 @@ import type { DeviceProfileRegistry } from "./profile-registry";
 
 type ViewMode = "design" | "preview";
 type CanvasTool = "select" | "pan";
-type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Tools";
+type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Asset" | "Tools";
 type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
 type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Simulator" | "Validation" | "Export" | "Shortcuts";
 type BindingModalState = { widgetId: string } | null;
@@ -83,7 +85,7 @@ type CanvasInteractionState =
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 
-const menuKeys: MenuKey[] = ["File", "Edit", "View", "Project", "Theme", "Scene", "Widget", "Tools"];
+const menuKeys: MenuKey[] = ["File", "Edit", "View", "Project", "Theme", "Scene", "Widget", "Asset", "Tools"];
 const settingsCategories: SettingsCategory[] = ["General", "Appearance", "Editor", "Canvas", "Assets", "Simulator", "Validation", "Export", "Shortcuts"];
 const assetCategories: { id: AssetCategory; label: string }[] = [
   { id: "depot", label: "Asset Depot" },
@@ -149,7 +151,8 @@ function resolveCanonicalNode(project: Project, id: string): ResolvedNode | unde
 }
 
 function collectTreeNodeIds(project: Project): string[] {
-  const ids = [project.id];
+  const ids = [project.id, "assets"];
+  for (const asset of project.assets) ids.push(asset.id);
   for (const group of project.themeProjectGroups) {
     ids.push(group.id);
     for (const theme of group.themeProjects) {
@@ -164,6 +167,30 @@ function collectTreeNodeIds(project: Project): string[] {
     }
   }
   return ids;
+}
+
+/** Counts every canonical reference to an Asset so a delete can explain its impact. */
+function countAssetReferences(project: Project, assetId: string): number {
+  let count = 0;
+  if (project.defaultAssetIds?.includes(assetId)) count += 1;
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      count += theme.resources.filter((id) => id === assetId).length;
+      count += (theme.defaultAssetIds ?? []).filter((id) => id === assetId).length;
+      for (const rotation of theme.rotations) {
+        for (const scene of rotation.scenes) {
+          for (const widget of scene.widgets) {
+            count += (widget.assetIds ?? []).filter((id) => id === assetId).length;
+            if (widget.audioAssetId === assetId) count += 1;
+            if (widget.mediaSlide?.assetId === assetId) count += 1;
+            if (widget.mediaSlide?.audioAssetId === assetId) count += 1;
+            count += widget.bindings.filter((binding) => binding.contentId === assetId).length;
+          }
+        }
+      }
+    }
+  }
+  return count;
 }
 
 /** Default names stay unique so identically-named scenes/widgets never
@@ -304,11 +331,16 @@ type DraftNumberFieldProps = {
   min: number;
   max: number;
   ariaLabel: string;
+  /** Refuse fractions instead of letting the Core silently reject them (D5-01). */
+  integer?: boolean;
+  /** Decimal places the domain accepts; a finer value is reported, not silently rounded. */
+  decimals?: number;
+  step?: number;
   onCommit: (value: number) => void;
 };
 
-/** Draft-per-field numeric input shared by non-geometry properties (zIndex, priority). */
-function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: DraftNumberFieldProps) {
+/** Draft-per-field numeric input shared by non-geometry properties (zIndex, priority, durations). */
+function DraftNumberField({ value, disabled, min, max, ariaLabel, integer = false, decimals, onCommit }: DraftNumberFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -331,6 +363,17 @@ function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: Dr
     if (draft.trim() === "" || !Number.isFinite(parsed)) {
       setFeedback("invalid — reverted");
       return;
+    }
+    if (integer && !Number.isInteger(parsed)) {
+      setFeedback("whole numbers only — reverted");
+      return;
+    }
+    if (decimals !== undefined) {
+      const factor = 10 ** decimals;
+      if (Math.round(parsed * factor) !== parsed * factor) {
+        setFeedback(`${decimals} decimal place${decimals === 1 ? "" : "s"} only — reverted`);
+        return;
+      }
     }
     const clamped = Math.min(max, Math.max(min, parsed));
     setFeedback(clamped !== parsed ? `clamped to ${clamped}` : null);
@@ -363,11 +406,13 @@ type DraftTextFieldProps = {
   disabled: boolean;
   placeholder?: string;
   ariaLabel: string;
+  /** Changing this token moves focus into the field and selects it (F2 rename). */
+  focusToken?: string | null;
   onCommit: (value: string) => void;
 };
 
 /** Draft-per-field text input for rename surfaces: commit once on blur/Enter, Escape reverts. */
-function DraftTextField({ value, disabled, placeholder, ariaLabel, onCommit }: DraftTextFieldProps) {
+function DraftTextField({ value, disabled, placeholder, ariaLabel, focusToken, onCommit }: DraftTextFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -377,6 +422,11 @@ function DraftTextField({ value, disabled, placeholder, ariaLabel, onCommit }: D
     const timer = window.setTimeout(() => setFeedback(null), 2600);
     return () => window.clearTimeout(timer);
   }, [feedback]);
+  useEffect(() => {
+    if (!focusToken || disabled) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [focusToken, disabled]);
   const commit = () => {
     if (discardRef.current) {
       discardRef.current = false;
@@ -421,12 +471,17 @@ function DraftTextField({ value, disabled, placeholder, ariaLabel, onCommit }: D
 
 export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistry }) {
   const projectStorage = useMemo(() => typeof window === "undefined" ? undefined : new LocalStorageProjectStorage(window.localStorage), []);
+  const assetImportSource = useMemo(() => typeof document === "undefined" ? undefined : createAssetImportSource(document), []);
+  const projectFileGateway = useMemo(() => typeof document === "undefined" ? undefined : createProjectFileGateway(document), []);
+  // Boot outcome is captured, not swallowed: a stored project that failed the
+  // load gate must be REPORTED, with its raw payload preserved, instead of
+  // silently becoming a blank scaffold (D3-10).
+  const bootOutcome = useMemo(() => projectStorage?.read() ?? { status: "empty" as const }, [projectStorage]);
   const documentStore = useMemo(() => {
     const store = new InMemoryDocumentStore(new CommandHistory(), projectStorage);
-    const restored = projectStorage?.load();
-    store.open(restored ?? createEmptyProject());
+    store.open(bootOutcome.status === "loaded" ? bootOutcome.project : createEmptyProject());
     return store;
-  }, [projectStorage]);
+  }, [projectStorage, bootOutcome]);
   const documentSubscribe = useMemo(() => (listener: () => void) => documentStore.subscribe(listener), [documentStore]);
   const documentSnapshotReader = useMemo(() => () => documentStore.getSnapshot(), [documentStore]);
   const documentSnapshot = useSyncExternalStore(documentSubscribe, documentSnapshotReader, documentSnapshotReader);
@@ -465,7 +520,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [clipboard, setClipboard] = useState<{ widgets: Widget[]; cut: boolean } | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmRequest | null>(null);
   const [duplicateMode, setDuplicateMode] = useState(false);
-  const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show" });
+  const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "" });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
   const [runtimeValues, setRuntimeValues] = useState<Record<string, PrimitiveValue | null>>({});
@@ -478,6 +533,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [snapGuides, setSnapGuides] = useState<readonly SnapGuide[]>([]);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; kind: SelectionKind } | null>(null);
   const [canvasViewportSize, setCanvasViewportSize] = useState({ width: 0, height: 0 });
+  // Explicit navigation state. Deriving the edited Theme/Rotation/Scene from
+  // the Explorer selection made the canvas show the FIRST theme whenever the
+  // selection did not resolve to one (L-11), and left Scene switching with no
+  // control surface at all (L-09/L-10). Navigation is UI state — it never
+  // enters the document — but it is now explicit, switchable and reconciled.
+  const [activeThemeId, setActiveThemeId] = useState<string | null>(null);
+  const [activeRotationAngle, setActiveRotationAngle] = useState<RotationAngle>(0);
+  const [activeSceneId, setActiveSceneId] = useState<string | null>(null);
+  const [renameRequestId, setRenameRequestId] = useState<string | null>(null);
+  const [newProjectDraft, setNewProjectDraft] = useState<{ name: string; profileId: string } | null>(null);
+  const [sceneConditionDraft, setSceneConditionDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean }>({ stateId: "", operator: "equals", value: "", negated: false });
   const canvasScreenRef = useRef<HTMLDivElement>(null);
   const activePointerIdRef = useRef<number | null>(null);
   const geometryOverridesRef = useRef<Record<string, Geometry>>({});
@@ -493,7 +559,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const activeSelectionLabel = selectedIds.length > 1 ? `${selectedIds.length} items selected` : selection?.label ?? "Nothing selected";
   const profileStatus = activeProfile ? `${activeProfile.name} · ${availableProfiles.length} profile${availableProfiles.length === 1 ? "" : "s"} registered` : `DeviceProfile unavailable · ${availableProfiles.length} registered`;
   const resolvedSelection = useMemo(() => selection ? resolveCanonicalNode(project, selection.id) : undefined, [project, selection]);
-  const runtimeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
+  // Every Theme Project in document order, so the Theme switcher and the
+  // active-theme fallback share one list.
+  const allThemes = useMemo(() => groups.flatMap((currentGroup) => currentGroup.themeProjects), [groups]);
+  const activeTheme = allThemes.find((theme) => theme.id === activeThemeId) ?? allThemes[0];
+  // Rotation is keyed by ANGLE, not id: every Theme Project has exactly the
+  // four canonical angles, so R90 stays R90 when the designer switches theme.
+  const activeRotationNode = activeTheme?.rotations.find((rotation) => rotation.angle === activeRotationAngle) ?? activeTheme?.rotations[0];
+  const activeSceneNode = activeRotationNode?.scenes.find((scene) => scene.id === activeSceneId) ?? activeRotationNode?.scenes[0];
+  const runtimeRotation = activeRotationNode;
   // Explicit Scene activation order: document order is the V1 simulator's
   // tie-break (runtime activation-order tracking arrives with the real
   // simulator transport, recorded as deferred).
@@ -531,6 +605,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setMenuOpen(null);
   };
 
+  /**
+   * Preview Mode evaluates the runtime; it is an inspection surface. Editing
+   * commands refuse there and say so, instead of silently mutating a document
+   * the designer believes is read-only (D5-19).
+   */
+  const blockedInPreview = (command: string): boolean => {
+    if (viewMode !== "preview") return false;
+    logAction(`${command} is not available in Preview Mode - switch to Design Mode to edit`, "WARN");
+    return true;
+  };
   const undo = () => {
     if (documentStore.undo()) logAction("> undo()", "EVENT");
   };
@@ -557,9 +641,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     });
   }, [project]);
 
-  const createProject = () => {
+  const createProject = (name = "Untitled Project", profileId = project.deviceProfileId) => {
     cancelCanvasInteraction();
-    const nextProject = createEmptyProject("Untitled Project");
+    const profile = profileRegistry.get(profileId) ?? availableProfiles[0];
+    const nextProject = createEmptyProject(name, profile);
     documentStore.create(nextProject);
     setSelection(null);
     setSelectedIds([]);
@@ -570,21 +655,36 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setSimulationStatus("idle");
     setDeploymentStatus("Not built");
     setClipboard(null);
+    setActiveThemeId(null);
+    setActiveRotationAngle(0);
+    setActiveSceneId(null);
     clearGeometryPreview();
-    logAction("New document created", "EVENT");
+    logAction(`New document created · ${nextProject.name} · ${profile?.name ?? profileId}`, "EVENT");
   };
 
   const requestNewProject = () => {
+    setNewProjectDraft({ name: "Untitled Project", profileId: project.deviceProfileId });
+    setMenuOpen(null);
+  };
+
+  const confirmNewProject = () => {
+    const draft = newProjectDraft;
+    if (!draft) return;
+    const create = () => {
+      setNewProjectDraft(null);
+      createProject(draft.name.trim() || "Untitled Project", draft.profileId);
+    };
     if (documentSnapshot.isDirty && savedSettings.confirmDestructive) {
+      setNewProjectDraft(null);
       setConfirmState({
         title: "New Project",
         message: "The current project has unsaved changes. Creating a new project discards them.",
         confirmLabel: "Discard & Create",
-        onConfirm: () => createProject(),
+        onConfirm: () => createProject(draft.name.trim() || "Untitled Project", draft.profileId),
       });
       return;
     }
-    createProject();
+    create();
   };
 
   const saveDocument = () => {
@@ -626,41 +726,185 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return true;
   };
 
+  // ---- Asset lifecycle -----------------------------------------------------
+
+  const importAssets = async (): Promise<boolean> => {
+    if (!assetImportSource) {
+      logAction("Asset import is unavailable in this build", "WARN");
+      return false;
+    }
+    const drafts = await assetImportSource.pick({
+      acceptedExtensions: activeProfile?.supportedFormats,
+      sourcePrefix: "assets",
+    });
+    if (!drafts.length) {
+      logAction("Asset import cancelled or no supported file selected", "WARN");
+      return false;
+    }
+    const existingNames = project.assets.map((asset) => asset.name);
+    const named = drafts.map((draft) => {
+      const name = uniqueDefaultName(draft.name, existingNames);
+      existingNames.push(name);
+      return { ...draft, name };
+    });
+    const result = editorApplication.addAssets(named);
+    if (!result.changed) {
+      logAction("Asset import produced no valid asset record", "WARN");
+      return false;
+    }
+    const createdIds = result.createdIds ?? [];
+    setLeftDockTab("assets");
+    activatePanel("assets");
+    setAssetCategory("depot");
+    if (createdIds.length === 1) {
+      const asset = project.assets.find((candidate) => candidate.id === createdIds[0]);
+      setSelectedIds([createdIds[0]]);
+      setSelection({ id: createdIds[0], label: named[0].name, kind: "asset", detail: asset?.mediaType ?? named[0].mediaType });
+    }
+    logAction(`${createdIds.length} asset(s) imported via ${assetImportSource.kind}`, "EVENT");
+    return true;
+  };
+
+  const deleteAssetsCommand = (assetIds: readonly string[]): boolean => {
+    if (blockedInPreview("Delete Asset")) return false;
+    if (!assetIds.length) return false;
+    const usage = assetIds.map((assetId) => ({ assetId, uses: countAssetReferences(project, assetId) }));
+    const referenced = usage.filter((entry) => entry.uses > 0);
+    const run = () => {
+      const result = editorApplication.removeAssets(assetIds);
+      if (!result.changed) {
+        logAction("Delete Asset failed: the asset is no longer in the project", "WARN");
+        return false;
+      }
+      setSelection((current) => current && assetIds.includes(current.id) ? null : current);
+      setSelectedIds((current) => current.filter((id) => !assetIds.includes(id)));
+      logAction(`${assetIds.length} asset(s) deleted${referenced.length ? " with their references cleared" : ""}`, "EVENT");
+      return true;
+    };
+    if (referenced.length && savedSettings.confirmDestructive) {
+      setConfirmState({
+        title: "Delete Asset",
+        message: `${referenced.length} of ${assetIds.length} asset(s) are still referenced (${referenced.reduce((total, entry) => total + entry.uses, 0)} reference(s)). Deleting clears those references so the project stays valid. This is undoable.`,
+        confirmLabel: "Delete & Clear References",
+        onConfirm: run,
+      });
+      return true;
+    }
+    return run();
+  };
+
+  // ---- Project files -------------------------------------------------------
+
+  const exportProjectFile = async (): Promise<boolean> => {
+    if (!projectFileGateway) {
+      logAction("Export Project File is unavailable in this build", "WARN");
+      return false;
+    }
+    try {
+      const fileName = await projectFileGateway.exportProject(project);
+      logAction(`Project exported to ${fileName}`, "EVENT");
+      return true;
+    } catch (error) {
+      logAction(`Export Project File failed: ${error instanceof Error ? error.message : "unknown error"}`, "ERROR");
+      return false;
+    }
+  };
+
+  const applyOpenedProject = (opened: Project, origin: string) => {
+    cancelCanvasInteraction();
+    // An imported document is NOT the persisted one, so it starts dirty and the
+    // designer has to Save deliberately (D3-02).
+    documentStore.adopt(opened);
+    setSelection(null);
+    setSelectedIds([]);
+    setViewMode("design");
+    setExpandedNodes({});
+    setRuntimeValues({});
+    setRuntimeSettings({});
+    setSimulationStatus("idle");
+    setDeploymentStatus("Not built");
+    setClipboard(null);
+    setActiveThemeId(null);
+    setActiveRotationAngle(0);
+    setActiveSceneId(null);
+    clearGeometryPreview();
+    logAction(origin, "EVENT");
+  };
+
+  const importProjectFile = async (): Promise<boolean> => {
+    if (!projectFileGateway) {
+      logAction("Import Project File is unavailable in this build", "WARN");
+      return false;
+    }
+    const load = async () => {
+      const result = await projectFileGateway.importProject();
+      if (!result) {
+        logAction("Import Project File cancelled", "WARN");
+        return;
+      }
+      if (!result.ok) {
+        logAction(`Import Project File refused '${result.fileName}': ${result.reason}`, "ERROR");
+        return;
+      }
+      applyOpenedProject(result.project, `Project imported from ${result.fileName}`);
+    };
+    if (documentSnapshot.isDirty && savedSettings.confirmDestructive) {
+      setConfirmState({
+        title: "Import Project File",
+        message: "The current project has unsaved changes. Importing another project discards them.",
+        confirmLabel: "Discard & Import",
+        onConfirm: () => { void load(); },
+      });
+      return true;
+    }
+    await load();
+    return true;
+  };
+
+  const addThemeProjectGroupCommand = (): boolean => {
+    const name = uniqueDefaultName("New Theme Group", groups.map((currentGroup) => currentGroup.name));
+    const result = editorApplication.addThemeProjectGroup(name);
+    if (!result.changed) return false;
+    const createdId = result.createdIds?.[0];
+    if (createdId) {
+      setExpandedNodes((current) => ({ ...current, [project.id]: true, [createdId]: true }));
+      setSelectedIds([createdId]);
+      setSelection({ id: createdId, label: name, kind: "theme-group", detail: "0 theme projects" });
+    }
+    logAction("Theme Project Group added", "EVENT");
+    return true;
+  };
+
   const addThemeProject = (): boolean => {
     const groupId = resolvedSelection?.group?.id ?? group?.id;
     if (!groupId) return false;
-    const result = editorApplication.addThemeProject(groupId, undefined, activeProfile?.display);
+    const result = editorApplication.addThemeProject(groupId, uniqueDefaultName("New Theme Project", allThemes.map((theme) => theme.name)), activeProfile?.display);
     if (result.changed) {
       const createdId = result.createdIds?.[0];
       if (createdId) {
         setExpandedNodes((current) => ({ ...current, [groupId]: true, [createdId]: true }));
+        // Navigation follows creation: otherwise the canvas keeps showing the
+        // previous theme while the inspector shows the new one (found live).
+        setActiveThemeId(createdId);
+        setActiveSceneId(null);
         setSelectedIds([createdId]);
-        setSelection({ id: createdId, label: "New Theme Project", kind: "theme" });
+        const created = resolveCanonicalNode(documentStore.getCurrent() ?? project, createdId)?.theme;
+        setSelection({ id: createdId, label: created?.name ?? "New Theme Project", kind: "theme" });
       }
       logAction("Theme Project added", "EVENT");
     }
     return result.changed;
   };
 
-  const addRotation = (): boolean => {
-    const themeId = resolvedSelection?.theme?.id;
-    if (!themeId || !activeProfile) return false;
-    const result = editorApplication.addRotation(themeId, 0, activeProfile.display);
-    if (result.changed) {
-      const createdId = result.createdIds?.[0];
-      if (createdId) {
-        setExpandedNodes((current) => ({ ...current, [themeId]: true, [createdId]: true }));
-        setSelectedIds([createdId]);
-        setSelection({ id: createdId, label: "R0", kind: "rotation", detail: `${activeProfile.display.width} × ${activeProfile.display.height}` });
-      }
-      logAction("Rotation added", "EVENT");
-    }
-    return result.changed;
-  };
-
   const addScene = (): boolean => {
-    const rotationId = resolvedSelection?.rotation?.id;
-    if (!rotationId) return false;
+    if (blockedInPreview("Add Scene")) return false;
+    // Navigation is authoritative: Add Scene targets the Rotation / Form the
+    // canvas is showing, so it works from the switcher, the menu and the tree.
+    const rotationId = activeRotationNode?.id ?? resolvedSelection?.rotation?.id;
+    if (!rotationId) {
+      logAction("Add Scene blocked: no Rotation / Form is active", "WARN");
+      return false;
+    }
     const rotation = resolveCanonicalNode(project, rotationId)?.rotation;
     const name = uniqueDefaultName("New Scene", rotation?.scenes.map((scene) => scene.name) ?? []);
     const result = editorApplication.addScene(rotationId, name);
@@ -668,6 +912,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       const createdId = result.createdIds?.[0];
       if (createdId) {
         setExpandedNodes((current) => ({ ...current, [rotationId]: true }));
+        setActiveSceneId(createdId);
         setSelectedIds([createdId]);
         setSelection({ id: createdId, label: name, kind: "scene", detail: "Priority 0" });
       }
@@ -677,6 +922,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const addWidget = (widgetType: string): boolean => {
+    if (blockedInPreview("Add Widget")) return false;
     const sceneId = activeScene?.id;
     if (!sceneId || !activeRotation || !activeProfile) {
       logAction("Add Widget blocked: select an active Scene first", "WARN");
@@ -718,9 +964,236 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return true;
   };
 
+  // ---- Widget configuration (type-specific half of a Widget) ---------------
+
+  const configureWidget = (patch: Parameters<typeof editorApplication.setWidgetConfiguration>[2], label: string): boolean => {
+    if (blockedInPreview("Widget configuration")) return false;
+    const sceneId = activeScene?.id;
+    const widget = resolvedSelection?.widget;
+    if (!sceneId || !widget || resolvedSelection?.scene?.id !== sceneId) {
+      logAction("Widget configuration requires a single selected widget in the active Scene", "WARN");
+      return false;
+    }
+    const result = editorApplication.setWidgetConfiguration(sceneId, widget.id, patch);
+    if (result.changed) logAction(`${label} · ${widget.name}`, "EVENT");
+    else logAction(`${label} rejected: the value is not valid for this widget`, "WARN");
+    return result.changed;
+  };
+
+  const setWidgetContentValue = (key: string, value: unknown): boolean => {
+    const widget = resolvedSelection?.widget;
+    if (!widget) return false;
+    const nextContent = { ...(widget.content ?? {}) } as Record<string, unknown>;
+    if (value === undefined || value === "" || value === null) delete nextContent[key];
+    else nextContent[key] = value;
+    return configureWidget({ content: Object.keys(nextContent).length ? nextContent : undefined }, `Set ${key}`);
+  };
+
+  const setWidgetStyleValue = (key: string, value: unknown): boolean => {
+    const widget = resolvedSelection?.widget;
+    if (!widget) return false;
+    const nextStyle = { ...(widget.style ?? {}) } as Record<string, unknown>;
+    if (value === undefined || value === "" || value === null) delete nextStyle[key];
+    else nextStyle[key] = value;
+    return configureWidget({ style: Object.keys(nextStyle).length ? nextStyle : undefined }, `Set ${key}`);
+  };
+
+  const changeWidgetType = (widgetType: string): boolean => {
+    if (blockedInPreview("Change Widget Type")) return false;
+    const widget = resolvedSelection?.widget;
+    if (!widget || widget.widgetType === widgetType) return false;
+    if (!activeProfile?.supportedWidgetTypes.includes(widgetType)) {
+      logAction(`Widget type '${widgetType}' is not supported by the active DeviceProfile`, "WARN");
+      return false;
+    }
+    const run = () => configureWidget({ widgetType }, `Change widget type to ${widgetType}`);
+    // Changing type discards the previous type's content/style, so the user is
+    // told before the data goes (it stays undoable either way).
+    if ((widget.content || widget.style || widget.mediaSlide) && savedSettings.confirmDestructive) {
+      setConfirmState({
+        title: "Change Widget Type",
+        message: `Changing '${widget.name}' from ${widget.widgetType} to ${widgetType} clears its ${widget.widgetType}-specific configuration. Geometry, z-order and bindings are kept. This is undoable.`,
+        confirmLabel: "Change Type",
+        onConfirm: run,
+      });
+      return true;
+    }
+    return run();
+  };
+
+  const setWidgetAssetIds = (assetIds: readonly string[]): boolean => configureWidget({ assetIds }, "Set asset references");
+
+  // ---- Scene lifecycle & activation ---------------------------------------
+
+  const duplicateSceneCommand = (sceneId: string | undefined): boolean => {
+    if (blockedInPreview("Duplicate Scene")) return false;
+    if (!sceneId) return false;
+    const result = editorApplication.duplicateSelection([sceneId]);
+    if (!result.changed) {
+      logAction("Duplicate Scene failed", "WARN");
+      return false;
+    }
+    const createdId = result.createdIds?.[0];
+    if (createdId) {
+      setActiveSceneId(createdId);
+      setSelectedIds([createdId]);
+      setSelection({ id: createdId, label: `${resolveCanonicalNode(project, sceneId)?.scene?.name ?? "Scene"} Copy`, kind: "scene" });
+    }
+    logAction("Scene duplicated", "EVENT");
+    return true;
+  };
+
+  const moveActiveScene = (direction: 1 | -1): boolean => {
+    if (blockedInPreview("Move Scene")) return false;
+    const rotation = activeRotationNode;
+    const sceneId = activeSceneNode?.id;
+    if (!rotation || !sceneId) return false;
+    const fromIndex = rotation.scenes.findIndex((scene) => scene.id === sceneId);
+    const toIndex = fromIndex + direction;
+    if (fromIndex < 0 || toIndex < 0 || toIndex >= rotation.scenes.length) {
+      logAction(direction < 0 ? "The Scene is already first" : "The Scene is already last", "WARN");
+      return false;
+    }
+    const result = editorApplication.moveScene(rotation.id, sceneId, toIndex);
+    if (result.changed) logAction(`Scene moved to position ${toIndex + 1}`, "EVENT");
+    return result.changed;
+  };
+
+  const commitSceneActivation = (conditions: readonly Condition[], mode: ConditionMode | undefined): boolean => {
+    if (blockedInPreview("Scene activation")) return false;
+    const sceneId = resolvedSelection?.scene?.id ?? activeSceneNode?.id;
+    if (!sceneId) return false;
+    const result = editorApplication.setSceneActivation(sceneId, conditions, mode);
+    if (result.changed) logAction(`Scene activation updated · ${conditions.length} condition(s) · ${mode ?? "all"}`, "EVENT");
+    else logAction("Scene activation rejected: the condition is incomplete", "WARN");
+    return result.changed;
+  };
+
+  const addSceneCondition = (): boolean => {
+    const scene = resolvedSelection?.scene ?? activeSceneNode;
+    if (!scene || !sceneConditionDraft.stateId) {
+      logAction("Add Activation Condition: choose a DeviceProfile runtime reference first", "WARN");
+      return false;
+    }
+    const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === sceneConditionDraft.stateId);
+    if (!definition) return false;
+    // Picking a boolean runtime reference means "when it holds": an empty
+    // draft must not silently commit "false" (found live).
+    const rawValue = definition.type === "boolean" && sceneConditionDraft.value === "" ? "true" : sceneConditionDraft.value;
+    const value = coerceBindingDraftValue(rawValue, definition.type);
+    if (value === null) {
+      logAction("Add Activation Condition: the value does not match the runtime reference type", "WARN");
+      return false;
+    }
+    const isSetting = profileSettings.some((candidate) => candidate.id === definition.id);
+    const condition: Condition = {
+      ...(isSetting ? { source: "setting" as const } : {}),
+      stateId: sceneConditionDraft.stateId,
+      operator: sceneConditionDraft.operator as Condition["operator"],
+      value,
+      ...(sceneConditionDraft.negated ? { negated: true } : {}),
+    };
+    const changed = commitSceneActivation([...scene.activationConditions, condition], scene.activationConditionMode ?? "all");
+    if (changed) setSceneConditionDraft({ stateId: "", operator: "equals", value: "", negated: false });
+    return changed;
+  };
+
+  const removeSceneCondition = (index: number): boolean => {
+    const scene = resolvedSelection?.scene ?? activeSceneNode;
+    if (!scene) return false;
+    return commitSceneActivation(scene.activationConditions.filter((_, current) => current !== index), scene.activationConditionMode ?? "all");
+  };
+
+  const setThemeResources = (themeId: string, assetIds: readonly string[]): boolean => {
+    const result = editorApplication.setThemeResources(themeId, assetIds);
+    if (result.changed) logAction(`Theme resources updated · ${assetIds.length} asset(s)`, "EVENT");
+    return result.changed;
+  };
+
+  const duplicateThemeCommand = (themeId: string | undefined): boolean => {
+    if (blockedInPreview("Duplicate Theme Project")) return false;
+    if (!themeId) return false;
+    const result = editorApplication.duplicateSelection([themeId]);
+    if (!result.changed) {
+      logAction("Duplicate Theme Project failed", "WARN");
+      return false;
+    }
+    const createdId = result.createdIds?.[0];
+    if (createdId) {
+      setActiveThemeId(createdId);
+      setActiveSceneId(null);
+      setSelectedIds([createdId]);
+      setSelection({ id: createdId, label: `${resolveCanonicalNode(project, themeId)?.theme?.name ?? "Theme"} Copy`, kind: "theme" });
+    }
+    logAction("Theme Project duplicated with all four rotations", "EVENT");
+    return true;
+  };
+
+  /** Deletes one named node from a menu without depending on the current selection. */
+  const deleteNodeCommand = (nodeId: string | undefined, kindLabel: string): boolean => {
+    if (blockedInPreview("Delete")) return false;
+    if (!nodeId) return false;
+    const resolved = resolveCanonicalNode(project, nodeId);
+    if (!resolved) return false;
+    if (resolved.kind === "rotation") {
+      logAction("Delete refused: a Theme Project must keep exactly Rotation/Form R0, R90, R180 and R270.", "WARN");
+      return false;
+    }
+    const label = "name" in resolved.node ? String(resolved.node.name) : kindLabel;
+    const run = () => {
+      const result = editorApplication.deleteSelection([nodeId]);
+      if (!result.changed) {
+        logAction(`Delete refused: ${kindLabel} '${label}' cannot be removed (a project must keep at least one Theme Project Group).`, "WARN");
+        return false;
+      }
+      setSelection((current) => current?.id === nodeId ? null : current);
+      setSelectedIds((current) => current.filter((id) => id !== nodeId));
+      logAction(`${kindLabel} deleted: ${label}`, "EVENT");
+      return true;
+    };
+    if (savedSettings.confirmDestructive) {
+      setConfirmState({ title: `Delete ${kindLabel}`, message: `Delete ${kindLabel} '${label}' and everything inside it? This is undoable.`, confirmLabel: "Delete", onConfirm: run });
+      return true;
+    }
+    return run();
+  };
+
+  const resetZoom = () => {
+    setZoom(100);
+    setPan({ x: 0, y: 0 });
+    logAction("Zoom reset to 100%", "EVENT");
+    setMenuOpen(null);
+  };
+
+  /** F2 / Edit ▸ Rename: reveals Properties and focuses the canonical Name field. */
+  const requestRename = () => {
+    if (!selection) return;
+    activatePanel("properties");
+    setRenameRequestId(selection.id);
+    setMenuOpen(null);
+  };
+
   const performDeleteSelection = (): boolean => {
+    if (blockedInPreview("Delete")) return false;
     if (!selectedIds.length) return false;
     const kinds = selectedIds.map((id) => resolveCanonicalNode(project, id)?.kind).filter((kind): kind is SelectionKind => Boolean(kind));
+    const allAssets = kinds.length > 0 && kinds.every((kind) => kind === "asset");
+    if (allAssets) {
+      const result = editorApplication.removeAssets(selectedIds);
+      if (!result.changed) return false;
+      setSelection(null);
+      setSelectedIds([]);
+      logAction(`${selectedIds.length} asset(s) deleted with their references cleared`, "EVENT");
+      return true;
+    }
+    if (kinds.some((kind) => kind === "asset")) {
+      logAction("Delete blocked: mixed asset and hierarchy selection. Select assets only or hierarchy nodes only.", "WARN");
+      return false;
+    }
+    if (kinds.some((kind) => kind === "rotation")) {
+      logAction("Delete refused: a Theme Project must keep exactly Rotation/Form R0, R90, R180 and R270.", "WARN");
+      return false;
+    }
     const allWidgets = kinds.length > 0 && kinds.every((kind) => kind === "widget");
     if (kinds.some((kind) => kind === "widget") && !allWidgets) {
       logAction("Delete blocked: mixed widget and container selection. Select widgets only or containers only.", "WARN");
@@ -748,7 +1221,20 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const deleteSelectionCommand = (): boolean => {
+    if (blockedInPreview("Delete")) return false;
     if (!selectedIds.length) return false;
+    const kinds = selectedIds.map((id) => resolveCanonicalNode(project, id)?.kind).filter((kind): kind is SelectionKind => Boolean(kind));
+    // Refusals are reported BEFORE the confirmation prompt: asking the user to
+    // confirm a delete that the Core will refuse is misleading (D2-05/D2-09).
+    if (kinds.some((kind) => kind === "rotation")) {
+      logAction("Delete refused: a Theme Project must keep exactly Rotation/Form R0, R90, R180 and R270.", "WARN");
+      return false;
+    }
+    if (kinds.some((kind) => kind === "theme-group") && groups.length === 1) {
+      logAction("Delete refused: a project must keep at least one Theme Project Group.", "WARN");
+      return false;
+    }
+    if (kinds.length > 0 && kinds.every((kind) => kind === "asset")) return deleteAssetsCommand(selectedIds);
     if (savedSettings.confirmDestructive) {
       setConfirmState({
         title: "Delete Selection",
@@ -762,8 +1248,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const duplicateSelectionCommand = (): boolean => {
+    if (blockedInPreview("Duplicate")) return false;
     if (!selectedIds.length) return false;
     const kinds = selectedIds.map((id) => resolveCanonicalNode(project, id)?.kind).filter((kind): kind is SelectionKind => Boolean(kind));
+    if (kinds.some((kind) => kind === "rotation")) {
+      logAction("Duplicate refused: duplicating a Rotation / Form would break the canonical four (R0/R90/R180/R270).", "WARN");
+      return false;
+    }
+    if (kinds.some((kind) => kind === "asset")) {
+      logAction("Duplicate is not defined for Assets — import the file again or reuse the same asset.", "WARN");
+      return false;
+    }
     const allWidgets = kinds.length > 0 && kinds.every((kind) => kind === "widget");
     if (kinds.some((kind) => kind === "widget") && !allWidgets) {
       logAction("Duplicate blocked: mixed widget and container selection.", "WARN");
@@ -818,6 +1313,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const pasteSelection = (): boolean => {
+    if (blockedInPreview("Paste")) return false;
     if (!clipboard || !clipboard.widgets.length || !activeScene?.id) {
       logAction("Paste requires a copied widget and an active Scene", "WARN");
       return false;
@@ -835,12 +1331,35 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const setDeviceProfile = (profileId: string): boolean => {
-    const result = editorApplication.setProjectDeviceProfile(profileId);
-    if (result.changed) logAction(`Device Profile switched to ${profileId}`, "EVENT");
-    return result.changed;
+    const target = profileRegistry.get(profileId);
+    if (!target) {
+      logAction(`Device Profile '${profileId}' is not registered`, "WARN");
+      return false;
+    }
+    if (target.id === project.deviceProfileId) return false;
+    const run = () => {
+      // The display geometry travels with the switch: leaving stale Rotation
+      // dimensions behind silently corrupts every scene-unit coordinate (L-18).
+      const result = editorApplication.setProjectDeviceProfile(target.id, target.display);
+      if (result.changed) logAction(`Device Profile switched to ${target.name} · rotations re-dimensioned to ${target.display.width} × ${target.display.height}`, "EVENT");
+      return result.changed;
+    };
+    const unsupportedTypes = [...new Set(allThemes.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.map((widget) => widget.widgetType)))))]
+      .filter((widgetType) => !target.supportedWidgetTypes.includes(widgetType));
+    const message = [
+      `Every Rotation / Form is re-dimensioned to ${target.display.width} × ${target.display.height} (R90/R270 swapped) and widgets are clamped back inside the display.`,
+      unsupportedTypes.length ? `Widget type(s) ${unsupportedTypes.join(", ")} are not supported by ${target.name} and will be reported by validation.` : "",
+      "This is undoable.",
+    ].filter(Boolean).join(" ");
+    if (savedSettings.confirmDestructive) {
+      setConfirmState({ title: "Switch Device Profile", message, confirmLabel: "Switch Profile", onConfirm: run });
+      return true;
+    }
+    return run();
   };
 
   const toggleWidgetProperty = (property: "locked" | "visible" | "enabled"): boolean => {
+    if (blockedInPreview("Widget toggle")) return false;
     const sceneId = activeScene?.id;
     const selected = activeScene?.widgets.filter((widget) => selectedWidgetIds.includes(widget.id)) ?? [];
     if (!sceneId || !selected.length) {
@@ -904,17 +1423,71 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Add Binding: the condition value does not match its DeviceProfile type", "WARN");
       return false;
     }
+    // `source` MUST be recorded: a runtime SETTING validated against the state
+    // registry is reported as UNKNOWN_RUNTIME_REFERENCE and can never match
+    // (D5-10). The Binding editor offers settings, so it must label them.
+    const isSetting = profileSettings.some((candidate) => candidate.id === definition.id);
+    const condition: Condition = {
+      ...(isSetting ? { source: "setting" as const } : {}),
+      stateId: bindingDraft.stateId,
+      operator: bindingDraft.operator as Condition["operator"],
+      value,
+      ...(bindingDraft.negated ? { negated: true } : {}),
+    };
+    // "Add condition to selected binding" extends an existing rule instead of
+    // creating a second single-condition binding (D5-11).
+    if (bindingDraft.targetBindingId) {
+      const target = widget.bindings.find((binding) => binding.id === bindingDraft.targetBindingId);
+      if (!target) {
+        logAction("Add Binding: the target binding no longer exists", "WARN");
+        return false;
+      }
+      const nextBindings = widget.bindings.map((binding) => binding.id === target.id ? { ...binding, conditions: [...binding.conditions, condition] } : binding);
+      const extended = editorApplication.replaceWidgetBindings(sceneId, widget.id, nextBindings);
+      if (extended.changed) {
+        logAction(`Condition added to binding ${target.action}`, "EVENT");
+        setBindingDraft((current) => ({ ...current, stateId: "", value: "", negated: false }));
+      }
+      return extended.changed;
+    }
     const binding: Binding = {
       id: `binding-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
       widgetId: widget.id,
-      conditions: [{ stateId: bindingDraft.stateId, operator: bindingDraft.operator as Binding["conditions"][number]["operator"], value, negated: bindingDraft.negated || undefined }],
+      conditions: [condition],
+      conditionMode: bindingDraft.conditionMode,
       action: bindingDraft.action as Binding["action"],
+      ...(bindingDraft.contentId ? { contentId: bindingDraft.contentId } : {}),
     };
     const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, [...widget.bindings, binding]);
     if (result.changed) {
       logAction(`Binding added: ${bindingDraft.stateId} → ${bindingDraft.action}`, "EVENT");
-      setBindingDraft({ stateId: "", operator: "equals", value: "", negated: false, action: "show" });
+      setBindingDraft({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "" });
     }
+    return result.changed;
+  };
+
+  const setBindingConditionMode = (bindingId: string, mode: ConditionMode): boolean => {
+    const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
+    const sceneId = resolved?.scene?.id;
+    const widget = resolved?.widget;
+    if (!sceneId || !widget) return false;
+    const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, widget.bindings.map((binding) => binding.id === bindingId ? { ...binding, conditionMode: mode } : binding));
+    if (result.changed) logAction(`Binding condition mode set to ${mode}`, "EVENT");
+    return result.changed;
+  };
+
+  const removeBindingCondition = (bindingId: string, index: number): boolean => {
+    const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
+    const sceneId = resolved?.scene?.id;
+    const widget = resolved?.widget;
+    const binding = widget?.bindings.find((candidate) => candidate.id === bindingId);
+    if (!sceneId || !widget || !binding) return false;
+    if (binding.conditions.length <= 1) {
+      logAction("A binding requires at least one condition — remove the whole binding instead", "WARN");
+      return false;
+    }
+    const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, widget.bindings.map((candidate) => candidate.id === bindingId ? { ...candidate, conditions: candidate.conditions.filter((_, current) => current !== index) } : candidate));
+    if (result.changed) logAction("Binding condition removed", "EVENT");
     return result.changed;
   };
 
@@ -1042,6 +1615,14 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const selectNode = (node: TreeNode, additive = false) => {
     if (node.disabled) return;
     const canonical = resolveCanonicalNode(project, node.id);
+    if (!canonical) {
+      // Synthetic grouping rows carry no canonical identity; selecting one
+      // used to leave the inspector on its empty state while the tree showed
+      // a selected row (L-05).
+      logAction(`${node.kind} is a grouping row and cannot be selected`, "WARN");
+      return;
+    }
+    syncNavigationTo(canonical);
     const normalizedKind = node.kind.toLowerCase();
     const kind: SelectionKind = canonical?.kind ?? (normalizedKind.includes("resource") || normalizedKind.includes("unsupported") ? "asset" : "canvas");
     const nodeType = canonical?.widget?.widgetType ?? node.nodeType ?? node.kind;
@@ -1077,6 +1658,56 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     logAction("Canvas selection cleared");
   };
 
+  // ---- Navigation (Theme / Rotation / Scene) -------------------------------
+  // Navigation is explicit UI state. Selecting a node in any surface pulls
+  // navigation along, and the switchers set it directly, so the canvas always
+  // shows the context the designer last pointed at.
+
+  const navigateToTheme = (themeId: string) => {
+    setActiveThemeId(themeId);
+    setActiveSceneId(null);
+    setMenuOpen(null);
+  };
+
+  const navigateToRotation = (angle: RotationAngle) => {
+    setActiveRotationAngle(angle);
+    setActiveSceneId(null);
+    setMenuOpen(null);
+  };
+
+  const navigateToScene = (sceneId: string) => {
+    setActiveSceneId(sceneId);
+    setMenuOpen(null);
+  };
+
+  const syncNavigationTo = (resolved: ResolvedNode | undefined) => {
+    if (!resolved) return;
+    if (resolved.theme) setActiveThemeId(resolved.theme.id);
+    if (resolved.rotation) setActiveRotationAngle(resolved.rotation.angle);
+    if (resolved.scene) setActiveSceneId(resolved.scene.id);
+  };
+
+  const stepScene = (direction: 1 | -1) => {
+    const scenes = activeRotationNode?.scenes ?? [];
+    if (scenes.length < 2) {
+      logAction(scenes.length === 0 ? "No Scene in the active Rotation / Form" : "The active Rotation / Form has a single Scene", "WARN");
+      return;
+    }
+    const index = scenes.findIndex((scene) => scene.id === activeSceneNode?.id);
+    const next = scenes[(((index < 0 ? 0 : index) + direction) + scenes.length) % scenes.length];
+    navigateToScene(next.id);
+    logAction(`Scene: ${next.name}`, "EVENT");
+  };
+
+  const stepRotation = (direction: 1 | -1) => {
+    const angles = (activeTheme?.rotations ?? []).map((rotation) => rotation.angle);
+    if (angles.length < 2) return;
+    const index = angles.indexOf(activeRotationNode?.angle ?? angles[0]);
+    const next = angles[(((index < 0 ? 0 : index) + direction) + angles.length) % angles.length];
+    navigateToRotation(next);
+    logAction(`Rotation / Form: R${next}`, "EVENT");
+  };
+
   const toggleExpanded = (nodeId: string) => setExpandedNodes((current) => ({ ...current, [nodeId]: !current[nodeId] }));
 
   const renderTreeNode = (node: TreeNode, depth = 0): ReactNode => {
@@ -1099,11 +1730,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     );
   };
 
+  const themeResourceCount = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources))).size;
   const projectTree: TreeNode = {
     id: project.id,
     label: project.name,
     kind: "Project",
-    detail: `Schema v${project.schemaVersion}`,
+    detail: `Schema v${project.schemaVersion} · ${activeProfile?.name ?? project.deviceProfileId}`,
     children: [
       ...groups.map((currentGroup) => ({
         id: currentGroup.id,
@@ -1112,13 +1744,28 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         detail: `${currentGroup.themeProjects.length} theme project${currentGroup.themeProjects.length === 1 ? "" : "s"}`,
         children: getThemeNodes(currentGroup),
       })),
-      { id: "resources", label: "Resources", kind: "Resources", detail: `${groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)).length} theme resources` },
-      { id: "unsupported", label: "Unsupported Files", kind: "Unsupported Files", detail: "Not imported" },
+      {
+        // Real Assets subtree: every child resolves to a canonical Asset, so
+        // selecting one opens a real inspector. The container itself carries no
+        // canonical identity and is therefore not selectable (L-05).
+        id: "assets",
+        label: "Assets",
+        kind: "Assets",
+        disabled: true,
+        detail: `${project.assets.length} asset${project.assets.length === 1 ? "" : "s"} · ${themeResourceCount} theme resource${themeResourceCount === 1 ? "" : "s"}`,
+        children: project.assets.map((asset) => ({
+          id: asset.id,
+          label: asset.name,
+          kind: "Asset",
+          nodeType: asset.mediaType,
+          detail: `${asset.mediaType} · ${countAssetReferences(project, asset.id) > 0 ? `${countAssetReferences(project, asset.id)} reference(s)` : "unused"}`,
+        })),
+      },
     ],
   };
 
-  const activeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
-  const activeScene = resolvedSelection?.scene ?? runtime.activeScene ?? activeRotation?.scenes[0];
+  const activeRotation = activeRotationNode;
+  const activeScene = activeSceneNode;
   const canvasWidgets = activeScene?.widgets ?? [];
   // Preview Mode evaluates the runtime: the runtime-active Scene is rendered
   // with its bindings applied. Design Mode edits the Explorer-selected Scene.
@@ -1160,6 +1807,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return { left: bounds.left + borderLeft, top: bounds.top + borderTop, width: Math.max(0, bounds.width - borderLeft - borderRight), height: Math.max(0, bounds.height - borderTop - borderBottom) };
   };
   const selectedWidgetIds = selectedIds.filter((id) => canvasWidgets.some((widget) => widget.id === id));
+  const selectedAssetIds = selectedIds.filter((id) => project.assets.some((asset) => asset.id === id));
   const selectedSceneWidgets = activeScene?.widgets.filter((widget) => selectedWidgetIds.includes(widget.id)) ?? [];
   const selectedWidgetsAllLocked = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.locked);
   const selectedWidgetsAllVisible = selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((widget) => widget.visible);
@@ -1560,8 +2208,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     // focus is inside one of their text inputs (found live: Escape in the
     // Settings number input silently did nothing).
     if (confirmState) return;
+    if (newProjectDraft) {
+      if (event.key === "Escape") { event.preventDefault(); setNewProjectDraft(null); }
+      if (event.key === "Enter" && !isCanvasKeyboardExcludedTarget(target)) { event.preventDefault(); confirmNewProject(); }
+      return;
+    }
     if (settingsOpen) {
       if (event.key === "Escape") { event.preventDefault(); cancelSettings(); }
+      // Enter commits the dialog from any of its fields (D3-08); a text field
+      // still gets its native key first because we only act on plain Enter.
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); saveSettings(); }
       return;
     }
     if (bindingModal) {
@@ -1590,13 +2246,21 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const pointerActive = canvasPointerRef.current.mode !== "idle";
     if (descriptor?.id === "undo" && !pointerActive) { event.preventDefault(); undo(); return; }
-    if (descriptor?.id === "redo" && !pointerActive) { event.preventDefault(); redo(); return; }
+    if ((descriptor?.id === "redo" || descriptor?.id === "redo-alt") && !pointerActive) { event.preventDefault(); redo(); return; }
     if (descriptor?.id === "save" && !pointerActive) { event.preventDefault(); saveDocument(); return; }
     if (descriptor?.id === "new" && !pointerActive) { event.preventDefault(); requestNewProject(); return; }
     if (descriptor?.id === "copy" && !pointerActive) { event.preventDefault(); copySelection(); return; }
     if (descriptor?.id === "cut" && !pointerActive) { event.preventDefault(); cutSelection(); return; }
     if (descriptor?.id === "paste" && !pointerActive) { event.preventDefault(); pasteSelection(); return; }
     if (descriptor?.id === "select-all" && !pointerActive) { event.preventDefault(); selectAllCommand(); return; }
+    if (descriptor?.id === "rename" && !pointerActive) { event.preventDefault(); requestRename(); return; }
+    if (descriptor?.id === "zoom-reset" && !pointerActive) { event.preventDefault(); resetZoom(); return; }
+    // Navigation family (Alt+Arrow): `calculateNudgeStep` refuses Alt, so these
+    // can never be confused with a geometry nudge.
+    if (descriptor?.id === "scene-next" && !pointerActive) { event.preventDefault(); stepScene(1); return; }
+    if (descriptor?.id === "scene-previous" && !pointerActive) { event.preventDefault(); stepScene(-1); return; }
+    if (descriptor?.id === "rotation-next" && !pointerActive) { event.preventDefault(); stepRotation(1); return; }
+    if (descriptor?.id === "rotation-previous" && !pointerActive) { event.preventDefault(); stepRotation(-1); return; }
     if ((descriptor?.id === "delete" || descriptor?.id === "delete-backspace") && !pointerActive) {
       event.preventDefault();
       deleteSelectionCommand();
@@ -1658,6 +2322,23 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     });
   }, [activeScene?.id, project]);
 
+  // Navigation reconciliation: a deleted or undone Theme/Scene must not leave
+  // the canvas pointing at a node that no longer exists.
+  useEffect(() => {
+    if (activeThemeId && !allThemes.some((theme) => theme.id === activeThemeId)) setActiveThemeId(null);
+    if (activeSceneId && !(activeRotationNode?.scenes ?? []).some((scene) => scene.id === activeSceneId)) setActiveSceneId(null);
+  }, [project, activeThemeId, activeSceneId, activeRotationNode?.id]);
+
+  // Boot recovery notice: reported once, with the preserved backup key so the
+  // rejected payload can be inspected rather than assumed lost.
+  useEffect(() => {
+    if (bootOutcome.status === "rejected") {
+      logAction(`Stored project not loaded: ${bootOutcome.reason}. A new blank project was created${bootOutcome.backupKey ? `; the rejected data is preserved under '${bootOutcome.backupKey}'` : ""}.`, "ERROR");
+      setConsoleTab("console");
+    } else if (bootOutcome.status === "loaded") {
+      logAction("Saved project restored from local storage", "EVENT");
+    }
+  }, [bootOutcome]);
   // Program settings consumers (ST-02/INT-11/12): every saved setting is
   // wired to a real effect.
   useEffect(() => { setGridVisible(savedSettings.showGrid); }, [savedSettings.showGrid]);
@@ -1736,17 +2417,68 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const renderSnapGuide = (guide: SnapGuide) => <div key={`${guide.axis}-${guide.kind}-${guide.position}-${guide.widgetId ?? "grid"}`} className={`snap-guide snap-guide-${guide.axis} snap-guide-${guide.kind}`} style={guide.axis === "x" ? { left: `${(guide.position / canvasWidth) * 100}%` } : { top: `${(guide.position / canvasHeight) * 100}%` }} aria-hidden="true" />;
 
+  /**
+   * Type-aware widget body. A display template is text, digits, direction
+   * glyphs and media — rendering every type as the same labelled rectangle
+   * made Preview useless for checking a template (L-21/D5-16). Design Mode
+   * shows the authored value; Preview Mode substitutes the runtime value that
+   * the widget's declared source state provides.
+   */
+  const renderWidgetBody = (widget: Widget, effect: { hidden?: boolean; playback?: Binding["action"]; contentId?: string } | undefined) => {
+    const language = typeof runtimeSettings.language === "string" ? runtimeSettings.language : undefined;
+    const byLanguage = (widget.content?.textByLanguage ?? {}) as Record<string, unknown>;
+    const localized = language && typeof byLanguage[language] === "string" ? String(byLanguage[language]) : undefined;
+    const authoredText = typeof widget.content?.text === "string" ? widget.content.text : "";
+    const text = localized ?? authoredText;
+    const sourceStateId = typeof widget.content?.sourceStateId === "string" ? widget.content.sourceStateId : undefined;
+    const sourceValue = sourceStateId ? runtimeValues[sourceStateId] : undefined;
+    if (widget.widgetType === "text" || widget.widgetType === "warning") {
+      return text
+        ? <span className={`widget-render widget-render-text ${widget.widgetType === "warning" ? "is-warning" : ""}`}>{text}</span>
+        : <span className="widget-render widget-render-empty">{widget.name}<small>no text set</small></span>;
+    }
+    if (widget.widgetType === "digit") {
+      const mapping = activeTheme?.floorMappings?.find((candidate) => candidate.id === widget.content?.floorMappingId);
+      const mapped = mapping?.entries.find((entry) => String(entry.firmwareValue) === String(sourceValue))?.displayValue;
+      const shown = previewActive
+        ? mapped ?? (sourceValue === undefined || sourceValue === null ? "--" : String(sourceValue))
+        : mapped ?? (sourceStateId ? `[${sourceStateId}]` : "88");
+      return <span className="widget-render widget-render-digit" title={sourceStateId ? `Value source: ${sourceStateId}` : "No value source selected"}>{shown}</span>;
+    }
+    if (widget.widgetType === "direction") {
+      const style = String(widget.style?.directionStyleId ?? activeProfile?.directionStyles?.[0] ?? "");
+      const raw = previewActive && sourceValue !== undefined && sourceValue !== null ? String(sourceValue).toLowerCase() : style.toLowerCase();
+      const glyph = raw.includes("up") ? "▲" : raw.includes("down") ? "▼" : "◆";
+      return <span className="widget-render widget-render-direction" title={style ? `Direction style: ${style}` : "Profile default direction style"}>{glyph}</span>;
+    }
+    if (widget.widgetType === "media") {
+      const assetId = effect?.contentId ?? widget.mediaSlide?.assetId ?? widget.assetIds?.[0];
+      const asset = assetId ? project.assets.find((candidate) => candidate.id === assetId) : undefined;
+      return (
+        <span className="widget-render widget-render-media">
+          <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>
+          <strong>{asset?.name ?? (assetId ? `${assetId} (unresolved)` : "No asset")}</strong>
+          <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.duration}s${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
+        </span>
+      );
+    }
+    return <span className="widget-render widget-render-empty">{widget.name}<small>{widget.widgetType}</small></span>;
+  };
+
   const renderCanvasWidget = (widget: Widget) => {
     // Canonical corrections §8: invisible widgets are NOT rendered. They stay
     // selectable through the Explorer and show their selection bounds.
     const effect = bindingEffects[widget.id];
     const effectiveVisible = previewActive && effect?.hidden === true ? false : widget.visible;
     if (!effectiveVisible) return null;
+    // `enabled: false` means the widget exists in the layout but the runtime
+    // does not present it; Preview honours that, Design Mode marks it (D5-03).
+    if (previewActive && !widget.enabled) return null;
     const geometry = previewGeometry(widget);
     const selected = selectedIds.includes(widget.id);
     const style = { left: `${(geometry.x / canvasWidth) * 100}%`, top: `${(geometry.y / canvasHeight) * 100}%`, width: `${(geometry.width / canvasWidth) * 100}%`, height: `${(geometry.height / canvasHeight) * 100}%`, zIndex: widget.zIndex };
     const handles: ResizeHandle[] = ["n", "e", "s", "w", "nw", "ne", "sw", "se"];
-    return <div key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (isCanvasClickSuppressed()) { consumeCanvasClickSuppression(); return; } selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }, event.shiftKey || isCanonicalModifier(event)); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }); }}><span>{widget.name}</span><small>{widget.widgetType}{widget.locked ? " · locked" : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>{selected && selectedWidgetIds.length === 1 && !widget.locked && !previewActive && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
+    return <div key={widget.id} className={`canvas-widget widget-type-${widget.widgetType} ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""} ${widget.enabled ? "" : "is-disabled-widget"} ${previewActive ? "is-preview" : ""}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}${widget.enabled ? "" : " disabled"}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (isCanvasClickSuppressed()) { consumeCanvasClickSuppression(); return; } selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }, event.shiftKey || isCanonicalModifier(event)); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : "Visible" }); }}>{renderWidgetBody(widget, effect)}{!previewActive && <small className="canvas-widget-tag">{widget.name}{widget.locked ? " · locked" : ""}{widget.enabled ? "" : " · disabled"}</small>}{selected && selectedWidgetIds.length === 1 && !widget.locked && !previewActive && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
   };
 
   const shortcutFor = (id: string): string | undefined => {
@@ -1756,9 +2488,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const menuItems: Record<MenuKey, MenuItem[]> = {
     File: [
-      { label: "New Project", shortcut: shortcutFor("new"), onClick: requestNewProject },
-      { label: "Open Project", onClick: openProject },
-      { label: "Save", shortcut: shortcutFor("save"), disabled: !documentSnapshot.isDirty, onClick: saveDocument },
+      { label: "New Project…", shortcut: shortcutFor("new"), onClick: requestNewProject },
+      { label: "Revert to Saved", disabled: !projectStorage, title: projectStorage ? "Discard changes and reload the last saved project from local storage" : "Local storage is unavailable in this build", onClick: openProject },
+      { label: "Import Project File…", disabled: !projectFileGateway, title: projectFileGateway ? "Open a portable .tdproj.json project document" : "File access is unavailable in this build", onClick: () => { void importProjectFile(); } },
+      { label: "Export Project File…", disabled: !projectFileGateway, title: projectFileGateway ? "Write the project out as a portable .tdproj.json document" : "File access is unavailable in this build", onClick: () => { void exportProjectFile(); } },
+      { label: "Save", shortcut: shortcutFor("save"), title: documentSnapshot.isDirty ? "Save changes to local storage" : "Already saved — writes the current state again", onClick: saveDocument },
     ],
     Edit: [
       { label: "Undo", shortcut: shortcutFor("undo"), disabled: !commandHistory.canUndo, title: commandHistory.canUndo ? undefined : "No commands to undo", onClick: undo },
@@ -1766,7 +2500,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Cut", shortcut: shortcutFor("cut"), disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? undefined : "Requires a selected widget", onClick: cutSelection },
       { label: "Copy", shortcut: shortcutFor("copy"), disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? undefined : "Requires a selected widget", onClick: copySelection },
       { label: "Paste", shortcut: shortcutFor("paste"), disabled: !clipboard, title: clipboard ? undefined : "Nothing copied", onClick: pasteSelection },
-      { label: "Delete Selection", shortcut: "Delete", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
+      { label: "Select All in Scene", shortcut: shortcutFor("select-all"), disabled: !canvasWidgets.length, title: canvasWidgets.length ? undefined : "The active Scene has no widget", onClick: selectAllCommand },
+      { label: "Rename Selection", shortcut: shortcutFor("rename"), disabled: !selection, title: selection ? "Focus the Name field in Properties" : "Nothing selected", onClick: requestRename },
+      { label: "Delete Selection", shortcut: "Delete", disabled: !selectedIds.length, title: selectedIds.length ? undefined : "Nothing selected", onClick: deleteSelectionCommand },
       { label: "Reset Layout", onClick: resetLayout },
     ],
     View: [
@@ -1775,36 +2511,116 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Properties", onClick: () => activatePanel("properties") },
       { label: "Simulator", onClick: () => activatePanel("simulator") },
       { label: "Console / Output", onClick: () => activatePanel("console") },
+      { label: "Zoom to 100%", shortcut: shortcutFor("zoom-reset"), disabled: zoom === 100 && pan.x === 0 && pan.y === 0, onClick: resetZoom },
+      { label: "Next Rotation / Form", shortcut: shortcutFor("rotation-next"), onClick: () => stepRotation(1) },
+      { label: "Next Scene", shortcut: shortcutFor("scene-next"), onClick: () => stepScene(1) },
       { label: "Reset Layout", onClick: resetLayout },
     ],
     Project: [
-      { label: "Validate Project", onClick: () => { if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
-      ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name}`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : undefined, onClick: () => setDeviceProfile(profile.id) })),
+      { label: "Validate Project", onClick: () => { activatePanel("console"); setConsoleTab("validation"); if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
+      { label: "Add Theme Project Group", onClick: addThemeProjectGroupCommand },
+      ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name} (${profile.display.width}×${profile.display.height})`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : "Switch profile and re-dimension every Rotation / Form", onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
     ],
     Theme: [
-      { label: "Add Theme Project", onClick: addThemeProject },
+      { label: "Add Theme Project", disabled: groups.length === 0, title: groups.length === 0 ? "Add a Theme Project Group first" : undefined, onClick: addThemeProject },
+      { label: "Duplicate Theme Project", disabled: !activeTheme, title: activeTheme ? `Duplicate ${activeTheme.name} with all four rotations` : "No Theme Project", onClick: () => duplicateThemeCommand(activeTheme?.id) },
+      { label: "Delete Theme Project", disabled: !activeTheme, title: activeTheme ? `Delete ${activeTheme.name}` : "No Theme Project", onClick: () => deleteNodeCommand(activeTheme?.id, "Theme Project") },
     ],
     Scene: [
-      { label: "Add Scene", disabled: !resolvedSelection?.rotation, onClick: addScene },
+      { label: "Add Scene", disabled: !activeRotationNode, title: activeRotationNode ? `Add a Scene to R${activeRotationNode.angle}` : "No Rotation / Form is active", onClick: addScene },
+      { label: "Duplicate Scene", disabled: !activeSceneNode, title: activeSceneNode ? `Duplicate ${activeSceneNode.name}` : "No active Scene", onClick: () => duplicateSceneCommand(activeSceneNode?.id) },
+      { label: "Move Scene Earlier", disabled: !activeSceneNode || (activeRotationNode?.scenes.findIndex((scene) => scene.id === activeSceneNode?.id) ?? 0) <= 0, onClick: () => moveActiveScene(-1) },
+      { label: "Move Scene Later", disabled: !activeSceneNode || (activeRotationNode?.scenes.findIndex((scene) => scene.id === activeSceneNode?.id) ?? -1) >= (activeRotationNode?.scenes.length ?? 0) - 1, onClick: () => moveActiveScene(1) },
+      { label: "Edit Scene Activation", disabled: !activeSceneNode, title: activeSceneNode ? "Select the Scene and open its activation rule in Properties" : "No active Scene", onClick: () => { if (activeSceneNode) selectNode({ id: activeSceneNode.id, label: activeSceneNode.name, kind: "Scene", detail: `Priority ${activeSceneNode.priority}` }); activatePanel("properties"); } },
       { label: "Hide All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(false) },
       { label: "Show All Widgets", disabled: !activeScene?.id || canvasWidgets.length === 0, onClick: () => setAllWidgetsVisibility(true) },
-      { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
-      { label: "Test Scene", onClick: () => activatePanel("simulator") },
+      { label: "Delete Scene", disabled: !activeSceneNode, onClick: () => deleteNodeCommand(activeSceneNode?.id, "Scene") },
+      { label: "Test Scene in Simulator", disabled: !activeSceneNode, onClick: () => { activatePanel("simulator"); traceRuntime(); } },
     ],
     Widget: [
-      ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, onClick: () => addWidget(widgetType) })),
+      ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, title: activeScene?.id ? undefined : "Requires an active Scene", onClick: () => addWidget(widgetType) })),
       { label: selectedWidgetsAllLocked ? "Unlock Selection" : "Lock Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("locked") },
       { label: selectedWidgetsAllVisible ? "Hide Selection" : "Show Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("visible") },
+      { label: "Bring To Front", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("bring-to-front") },
+      { label: "Send To Back", disabled: !resolvedSelection?.widget, onClick: () => changeWidgetZOrder("send-to-back") },
       { label: "Duplicate Selection", disabled: !selectedIds.length, onClick: duplicateSelectionCommand },
       { label: "Duplicate Mode (click to place)", disabled: !selectedWidgetIds.length, onClick: enterDuplicateMode },
       { label: "Delete Selection", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
-      { label: "Binding Editor", disabled: !resolvedSelection?.widget, onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
+      { label: "Binding Editor", disabled: !resolvedSelection?.widget, title: resolvedSelection?.widget ? undefined : "Requires a single selected widget", onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
+    ],
+    Asset: [
+      { label: "Import Asset…", disabled: !assetImportSource, title: assetImportSource ? "Register image, video or audio files in the project" : "Asset import is unavailable in this build", onClick: () => { void importAssets(); } },
+      { label: "Open Asset Browser", onClick: () => activatePanel("assets") },
+      { label: "Delete Selected Asset", disabled: !selectedAssetIds.length, title: selectedAssetIds.length ? "Delete the asset and clear every reference to it" : "Select an asset in the Asset Browser", onClick: () => deleteAssetsCommand(selectedAssetIds) },
+      { label: "Theme Resources", disabled: !activeTheme, title: activeTheme ? "Select the Theme Project and edit which assets ship with it" : "No Theme Project", onClick: () => { if (activeTheme) selectNode({ id: activeTheme.id, label: activeTheme.name, kind: "Theme Project" }); activatePanel("properties"); } },
     ],
     Tools: [
       { label: "Diagnostics", onClick: () => activatePanel("console") },
       { label: "Program Settings", onClick: () => setSettingsOpen(true) },
     ],
+  };
+
+  const renderCanvasNavigator = () => {
+    const rotations = activeTheme?.rotations ?? [];
+    const scenes = activeRotationNode?.scenes ?? [];
+    const sceneIndex = scenes.findIndex((scene) => scene.id === activeSceneNode?.id);
+    return (
+      <div className="canvas-navigator" aria-label="Theme, rotation and scene navigation">
+        <div className="navigator-row">
+          <label className="navigator-field">
+            <span>Theme</span>
+            <select aria-label="Active Theme Project" value={activeTheme?.id ?? ""} disabled={allThemes.length === 0} onChange={(event) => navigateToTheme(event.target.value)}>
+              {allThemes.length === 0 ? <option value="">No Theme Project</option> : allThemes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+            </select>
+          </label>
+          <div className="rotation-switcher" role="group" aria-label="Rotation / Form">
+            {rotations.length === 0 ? <span className="navigator-empty">No rotations</span> : rotations.map((rotation) => (
+              <button
+                key={rotation.id}
+                type="button"
+                className={rotation.angle === activeRotationNode?.angle ? "active" : ""}
+                aria-pressed={rotation.angle === activeRotationNode?.angle}
+                title={`Rotation / Form R${rotation.angle} · ${rotation.width} × ${rotation.height} · ${rotation.scenes.length} scene(s)`}
+                onClick={() => navigateToRotation(rotation.angle)}
+              >R{rotation.angle}</button>
+            ))}
+          </div>
+          <span className="navigator-dims" title="Active Rotation / Form logical size in scene units">{activeRotationNode ? `${activeRotationNode.width} × ${activeRotationNode.height}` : "—"}</span>
+          <span className="navigator-spacer" />
+          <span className="navigator-scene-count">{scenes.length} scene{scenes.length === 1 ? "" : "s"}</span>
+        </div>
+        <div className="scene-switcher-row">
+          <div className="scene-switcher" role="tablist" aria-label="Scenes in the active Rotation / Form">
+            {scenes.map((scene) => {
+              const isActive = scene.id === activeSceneNode?.id;
+              const runtimeCandidate = runtime.activeSceneId === scene.id;
+              return (
+                <button
+                  key={scene.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  className={`scene-tab ${isActive ? "active" : ""} ${scene.enabled === false ? "is-scene-disabled" : ""}`}
+                  title={`${scene.name} · priority ${scene.priority} · ${scene.widgets.length} widget(s)${scene.enabled === false ? " · disabled" : ""}${scene.activationConditions.length ? ` · ${scene.activationConditions.length} activation condition(s)` : " · always eligible"}`}
+                  onClick={() => selectNode({ id: scene.id, label: scene.name, kind: "Scene", detail: `Priority ${scene.priority}` })}
+                >
+                  <strong>{scene.name}</strong>
+                  <small>{scene.widgets.length}{scene.enabled === false ? " · off" : ""}{runtimeCandidate ? " · live" : ""}</small>
+                </button>
+              );
+            })}
+            {scenes.length === 0 && <span className="navigator-empty">This Rotation / Form has no Scene yet</span>}
+          </div>
+          <div className="scene-switcher-actions">
+            <button type="button" className="small-action" disabled={!activeRotationNode} title="Add a Scene to the active Rotation / Form" onClick={addScene}>+ Scene</button>
+            <button type="button" className="small-action" disabled={sceneIndex <= 0} aria-label="Move active Scene earlier" title="Move the active Scene earlier (activation order tie-break)" onClick={() => moveActiveScene(-1)}>↑</button>
+            <button type="button" className="small-action" disabled={sceneIndex < 0 || sceneIndex >= scenes.length - 1} aria-label="Move active Scene later" title="Move the active Scene later" onClick={() => moveActiveScene(1)}>↓</button>
+            <button type="button" className="small-action" disabled={!activeSceneNode} title="Duplicate the active Scene with all of its widgets" onClick={() => duplicateSceneCommand(activeSceneNode?.id)}>Duplicate</button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderPanelHeader = (panel: PanelId, kicker: string, title: string) => (
@@ -1835,19 +2651,59 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   );
 
   const resourceAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)));
-  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => widget.assetIds ?? []))))));
-  const assetsForCategory = assetCategory === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)) : assetCategory === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)) : [];
-  const filteredAssets = assetsForCategory.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || asset.mediaType.toLowerCase().includes(assetSearch.toLowerCase()));
+  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => [...(widget.assetIds ?? []), ...(widget.audioAssetId ? [widget.audioAssetId] : []), ...(widget.mediaSlide ? [widget.mediaSlide.assetId, ...(widget.mediaSlide.audioAssetId ? [widget.mediaSlide.audioAssetId] : [])] : [])]))))));
+  const supportedFormatSet = new Set((activeProfile?.supportedFormats ?? []).map((format) => format.toLowerCase()));
+  // "Unsupported" is a real, derived category: an asset whose extension the
+  // active DeviceProfile does not declare (the exact ASSET_FORMAT_UNSUPPORTED
+  // rule). It is no longer a hardcoded empty list (L-04/D1-06).
+  const unsupportedAssetIds = new Set(
+    supportedFormatSet.size === 0
+      ? []
+      : project.assets.filter((asset) => {
+        const extension = /\.([a-z0-9]+)$/i.exec(asset.sourcePath)?.[1].toLowerCase();
+        return Boolean(extension) && !supportedFormatSet.has(extension as string);
+      }).map((asset) => asset.id),
+  );
+  const assetCountFor = (category: AssetCategory): number => category === "depot"
+    ? project.assets.length
+    : category === "resources"
+      ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)).length
+      : category === "scene"
+        ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)).length
+        : project.assets.filter((asset) => unsupportedAssetIds.has(asset.id)).length;
+  const assetsForCategory = assetCategory === "depot"
+    ? project.assets
+    : assetCategory === "resources"
+      ? project.assets.filter((asset) => resourceAssetIds.has(asset.id))
+      : assetCategory === "scene"
+        ? project.assets.filter((asset) => sceneAssetIds.has(asset.id))
+        : project.assets.filter((asset) => unsupportedAssetIds.has(asset.id));
+  const filteredAssets = assetsForCategory.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || asset.mediaType.toLowerCase().includes(assetSearch.toLowerCase()) || asset.sourcePath.toLowerCase().includes(assetSearch.toLowerCase()));
+  const assetGlyph = (mediaType: string) => mediaType === "audio" ? "♫" : mediaType === "video" ? "▶" : "▧";
   const renderAssets = () => (
     <>
       {renderPanelHeader("assets", "LIBRARY", "Asset Browser")}
       {renderDockTabs("left")}
-      <div className="asset-search"><input aria-label="Search assets" placeholder="Search depot" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></div>
-      <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{category.id === "depot" ? 0 : category.id === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)).length : category.id === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)).length : 0}</small></button>)}</div>
-      <div className="asset-list">
-        {filteredAssets.length > 0 ? filteredAssets.map((asset) => <button type="button" className="asset-row" key={asset.id} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: asset.mediaType })}><span className="asset-type">{asset.mediaType === "audio" ? "♫" : asset.mediaType === "video" ? "▶" : "▧"}</span><span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.id}</small></span></button>) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Unsupported Files is empty" : "No assets in this scope"}</strong><span>{assetCategory === "depot" ? "Depot library content is not Project Resources and unused depot assets are not exported." : assetCategory === "unsupported" ? "Unsupported files cannot become widgets or enter normal export." : "Project Resources and Scene Content are derived from canonical references."}</span></div>}
+      <div className="asset-toolbar">
+        <button type="button" className="small-action primary-action" disabled={!assetImportSource} title={assetImportSource ? `Import media files into the project (${assetImportSource.kind})` : "Asset import is unavailable in this build"} onClick={() => { void importAssets(); }}>Import…</button>
+        <button type="button" className="small-action" disabled={!selectedAssetIds.length} title={selectedAssetIds.length ? "Delete the selected asset and clear its references" : "Select an asset first"} onClick={() => deleteAssetsCommand(selectedAssetIds)}>Delete</button>
+        <span className="asset-toolbar-note">{project.assets.length} asset{project.assets.length === 1 ? "" : "s"}</span>
       </div>
-      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Asset Depot, Resources, Scene Content and Unsupported Files remain separate surfaces.</span></div>
+      <div className="asset-search"><input aria-label="Search assets" placeholder="Search name, type or path" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></div>
+      <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{assetCountFor(category.id)}</small></button>)}</div>
+      <div className="asset-list">
+        {filteredAssets.length > 0 ? filteredAssets.map((asset) => {
+          const uses = countAssetReferences(project, asset.id);
+          return (
+            <button type="button" className={`asset-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`} key={asset.id} aria-current={selectedIds.includes(asset.id) ? "true" : undefined} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: `${asset.mediaType} · ${uses > 0 ? `${uses} reference(s)` : "unused"}` })}>
+              <span className="asset-type">{assetGlyph(asset.mediaType)}</span>
+              <span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.sourcePath}</small></span>
+              <span className={`asset-usage ${uses > 0 ? "is-used" : ""}`} title={uses > 0 ? `${uses} canonical reference(s)` : "Not referenced by any Theme resource, Widget or Binding"}>{uses > 0 ? `×${uses}` : "unused"}</span>
+            </button>
+          );
+        }) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{project.assets.length === 0 ? "No assets in this project yet" : assetSearch ? "No asset matches the search" : assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Every asset format is supported by the active DeviceProfile" : assetCategory === "resources" ? "No asset is declared as a Theme resource" : "No asset is referenced by a Scene widget"}</strong><span>{project.assets.length === 0 ? "Use Import… to register image, video or audio files. The package carries logical asset records; binary media is materialized by the deployment adapter." : assetCategory === "resources" ? "Select a Theme Project and tick assets in Theme Resources to ship them with the theme." : assetCategory === "scene" ? "Assign an asset to a widget in Properties → Media to make it Scene Content." : "Assets appear in the Depot as soon as they are imported."}</span>{project.assets.length === 0 && assetImportSource ? <button type="button" className="context-action" onClick={() => { void importAssets(); }}>Import Asset</button> : null}</div>}
+      </div>
+      <div className="panel-footnote"><span className="footnote-mark">i</span><span>Depot lists every imported asset. Resources, Scene Content and Unsupported are derived from canonical references.</span></div>
     </>
   );
 
@@ -1879,6 +2735,255 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (result.changed) logAction(`Set widget ${field}`, "EVENT");
   };
 
+  const assetsOfType = (mediaType?: MediaType): readonly Asset[] => mediaType ? project.assets.filter((asset) => asset.mediaType === mediaType) : project.assets;
+
+  const renderAssetSelect = (label: string, value: string | undefined, mediaType: MediaType | undefined, onChange: (assetId: string | undefined) => void, hint?: string) => {
+    const options = assetsOfType(mediaType);
+    return (
+      <div className="property-row property-row-edit">
+        <span>{label}</span>
+        <select
+          aria-label={label}
+          value={value ?? ""}
+          disabled={options.length === 0}
+          title={options.length === 0 ? `No ${mediaType ?? "media"} asset is imported yet — use Asset Browser → Import…` : hint}
+          onChange={(event) => onChange(event.target.value === "" ? undefined : event.target.value)}
+        >
+          <option value="">{options.length === 0 ? `No ${mediaType ?? "media"} asset imported` : "None"}</option>
+          {options.map((asset) => <option key={asset.id} value={asset.id}>{asset.name}</option>)}
+          {value && !options.some((asset) => asset.id === value) && <option value={value}>{`${value} (unresolved)`}</option>}
+        </select>
+      </div>
+    );
+  };
+
+  /** Type-specific content/style editor. Every field maps to a canonical `content`/`style` key. */
+  const renderWidgetContentSection = (widget: Widget) => {
+    const languages = activeProfile?.languages ?? [];
+    const stateOptions = activeProfile?.runtimeStates ?? [];
+    const textValue = typeof widget.content?.text === "string" ? widget.content.text : "";
+    const byLanguage = (widget.content?.textByLanguage ?? {}) as Record<string, unknown>;
+    if (widget.widgetType === "text" || widget.widgetType === "warning") {
+      return (
+        <section className="property-section">
+          <div className="property-section-title">{widget.widgetType === "text" ? "Text" : "Warning"}</div>
+          <div className="property-row property-row-edit"><span>{widget.widgetType === "text" ? "Text" : "Message"}</span><DraftTextField value={textValue} disabled={false} placeholder="Not set" ariaLabel={`${widget.widgetType} content text`} onCommit={(value) => setWidgetContentValue("text", value)} /></div>
+          {languages.length > 1 && languages.map((language) => (
+            <div className="property-row property-row-edit" key={language}>
+              <span>Text · {language}</span>
+              <DraftTextField
+                value={typeof byLanguage[language] === "string" ? String(byLanguage[language]) : ""}
+                disabled={false}
+                placeholder="Falls back to Text"
+                ariaLabel={`${widget.widgetType} text for ${language}`}
+                onCommit={(value) => {
+                  const next = { ...byLanguage } as Record<string, unknown>;
+                  if (value.trim() === "") delete next[language];
+                  else next[language] = value;
+                  setWidgetContentValue("textByLanguage", Object.keys(next).length ? next : undefined);
+                }}
+              />
+            </div>
+          ))}
+          <p className="property-note">DeviceProfile languages: {languages.length ? languages.join(", ") : "none declared"}. A language without its own text falls back to Text.</p>
+        </section>
+      );
+    }
+    if (widget.widgetType === "digit") {
+      const styles = activeProfile?.digitStyles ?? [];
+      const mappings = activeTheme?.floorMappings ?? [];
+      return (
+        <section className="property-section">
+          <div className="property-section-title">Digit</div>
+          <div className="property-row property-row-edit">
+            <span>Digit Style</span>
+            <select aria-label="Digit style" value={String(widget.style?.digitStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("digitStyleId", event.target.value)}>
+              <option value="">{activeProfile?.defaultDigitStyleId ? `Profile default (${activeProfile.defaultDigitStyleId})` : "Profile default"}</option>
+              {styles.map((style) => <option key={style} value={style}>{style}</option>)}
+            </select>
+          </div>
+          <div className="property-row property-row-edit">
+            <span>Value Source</span>
+            <select aria-label="Digit runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value)}>
+              <option value="">Not bound</option>
+              {stateOptions.map((state) => <option key={state.id} value={state.id}>{state.displayName} ({state.type})</option>)}
+            </select>
+          </div>
+          <div className="property-row property-row-edit">
+            <span>Floor Mapping</span>
+            <select aria-label="Floor mapping" value={String(widget.content?.floorMappingId ?? "")} disabled={mappings.length === 0} title={mappings.length === 0 ? "This Theme Project declares no Floor Mapping" : undefined} onChange={(event) => setWidgetContentValue("floorMappingId", event.target.value)}>
+              <option value="">{mappings.length === 0 ? "No Floor Mapping in this theme" : "Raw firmware value"}</option>
+              {mappings.map((mapping) => <option key={mapping.id} value={mapping.id}>{mapping.id} ({mapping.entries.length} entries)</option>)}
+            </select>
+          </div>
+        </section>
+      );
+    }
+    if (widget.widgetType === "direction") {
+      const styles = activeProfile?.directionStyles ?? [];
+      return (
+        <section className="property-section">
+          <div className="property-section-title">Direction</div>
+          <div className="property-row property-row-edit">
+            <span>Direction Style</span>
+            <select aria-label="Direction style" value={String(widget.style?.directionStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("directionStyleId", event.target.value)}>
+              <option value="">Profile default</option>
+              {styles.map((style) => <option key={style} value={style}>{style}</option>)}
+            </select>
+          </div>
+          <div className="property-row property-row-edit">
+            <span>Value Source</span>
+            <select aria-label="Direction runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value)}>
+              <option value="">Not bound</option>
+              {stateOptions.map((state) => <option key={state.id} value={state.id}>{state.displayName} ({state.type})</option>)}
+            </select>
+          </div>
+        </section>
+      );
+    }
+    return null;
+  };
+
+  /** Media capability + Media Slide editor; the Media Slide is only valid on the media widget type. */
+  const renderWidgetMediaSection = (widget: Widget) => {
+    const visualTypes = (activeProfile?.supportedMediaTypes ?? []).filter((mediaType): mediaType is VisualMediaType => mediaType !== "audio");
+    const slide = widget.mediaSlide;
+    const isMedia = widget.widgetType === "media";
+    return (
+      <section className="property-section">
+        <div className="property-section-title">Media / Assets</div>
+        {isMedia && (
+          <div className="property-row property-row-edit">
+            <span>Visual Type</span>
+            <select aria-label="Media visual type" value={widget.mediaType ?? ""} onChange={(event) => configureWidget({ mediaType: (event.target.value || undefined) as VisualMediaType | undefined }, "Set media type")}>
+              <option value="">Not selected</option>
+              {visualTypes.map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}
+            </select>
+          </div>
+        )}
+        {isMedia && widget.mediaType && (
+          <>
+            {renderAssetSelect("Slide Asset", slide?.assetId, widget.mediaType, (assetId) => {
+              if (!assetId) {
+                configureWidget({ mediaSlide: undefined }, "Clear media slide");
+                return;
+              }
+              const next: MediaSlideContent = { mediaType: widget.mediaType as VisualMediaType, assetId, duration: slide?.duration ?? 5, ...(slide?.loop !== undefined ? { loop: slide.loop } : {}), ...(slide?.repeatCount !== undefined ? { repeatCount: slide.repeatCount } : {}), ...(slide?.audioAssetId ? { audioAssetId: slide.audioAssetId } : {}), ...(slide?.volume !== undefined ? { volume: slide.volume } : {}), ...(slide?.continuePlayback !== undefined ? { continuePlayback: slide.continuePlayback } : {}) };
+              configureWidget({ mediaSlide: next }, "Set media slide asset");
+            })}
+            {slide && (
+              <>
+                <div className="property-row property-row-edit"><span>Duration (s)</span><DraftNumberField value={String(slide.duration)} disabled={false} min={0} max={3600} step={0.1} decimals={1} ariaLabel="Media slide duration in seconds" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, duration: Math.round(value * 10) / 10 } }, "Set slide duration")} /></div>
+                <div className="property-row property-row-edit"><span>Loop</span><input type="checkbox" aria-label="Media slide loop" checked={slide.loop === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, loop: event.target.checked } }, "Set slide loop")} /></div>
+                <div className="property-row property-row-edit"><span>Repeat Count</span><DraftNumberField value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media slide repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set slide repeat count")} /></div>
+                {renderAssetSelect("Slide Audio", slide.audioAssetId, "audio", (assetId) => configureWidget({ mediaSlide: { ...slide, audioAssetId: assetId } }, "Set slide audio"))}
+              </>
+            )}
+            {renderAssetSelect("Attached Audio", widget.audioAssetId, "audio", (assetId) => configureWidget({ audioAssetId: assetId }, "Set attached audio"))}
+          </>
+        )}
+        <div className="property-row property-row-edit">
+          <span>Add Asset Reference</span>
+          <select aria-label="Add asset reference" value="" disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet — use Asset Browser → Import…" : undefined} onChange={(event) => { if (event.target.value) setWidgetAssetIds([...(widget.assetIds ?? []), event.target.value]); }}>
+            <option value="">{project.assets.length === 0 ? "No asset imported" : "Choose an asset…"}</option>
+            {project.assets.filter((asset) => !(widget.assetIds ?? []).includes(asset.id)).map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}
+          </select>
+        </div>
+        {(widget.assetIds ?? []).length > 0 ? (
+          <ul className="reference-list">
+            {(widget.assetIds ?? []).map((assetId, index) => {
+              const asset = project.assets.find((candidate) => candidate.id === assetId);
+              return (
+                <li key={`${assetId}-${index}`}>
+                  <span>{assetGlyph(asset?.mediaType ?? "image")} {asset?.name ?? `${assetId} (unresolved)`}</span>
+                  <button type="button" className="reference-remove" aria-label={`Remove asset reference ${asset?.name ?? assetId}`} onClick={() => setWidgetAssetIds((widget.assetIds ?? []).filter((_, current) => current !== index))}>×</button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p className="property-note">No asset reference. Asset references are exported as Scene Content.</p>}
+      </section>
+    );
+  };
+
+  /** Scene activation rule editor: the runtime uses this to pick the active Scene. */
+  const renderSceneActivationSection = (scene: Scene) => {
+    const definitions = [...profileStates, ...profileSettings];
+    const draftDefinition = definitions.find((candidate) => candidate.id === sceneConditionDraft.stateId);
+    const operators = draftDefinition?.operators ?? ["equals", "not-equals", "greater-than", "less-than", "contains"];
+    return (
+      <section className="property-section">
+        <div className="property-section-title">Scene Activation</div>
+        <div className="property-row property-row-edit">
+          <span>Match</span>
+          <select aria-label="Activation condition mode" value={scene.activationConditionMode ?? "all"} onChange={(event) => commitSceneActivation(scene.activationConditions, event.target.value as ConditionMode)}>
+            <option value="all">All conditions (AND)</option>
+            <option value="any">Any condition (OR)</option>
+          </select>
+        </div>
+        {scene.activationConditions.length === 0
+          ? <p className="property-note">No condition: this Scene is always eligible and wins only by priority and order.</p>
+          : (
+            <ul className="reference-list">
+              {scene.activationConditions.map((condition, index) => {
+                const definition = definitions.find((candidate) => candidate.id === condition.stateId);
+                return (
+                  <li key={`${condition.stateId}-${index}`}>
+                    <span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? `${condition.stateId} (unresolved)`} <code>{condition.operator} {String(condition.value)}</code>{condition.source === "setting" ? " · setting" : ""}</span>
+                    <button type="button" className="reference-remove" aria-label={`Remove activation condition ${index + 1}`} onClick={() => removeSceneCondition(index)}>×</button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        <div className="condition-draft">
+          <select aria-label="Activation runtime reference" value={sceneConditionDraft.stateId} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, stateId: event.target.value, operator: "equals" }))}>
+            <option value="">Runtime reference…</option>
+            {profileStates.map((state) => <option key={state.id} value={state.id}>{state.displayName} · state</option>)}
+            {profileSettings.map((setting) => <option key={setting.id} value={setting.id}>{setting.displayName} · setting</option>)}
+          </select>
+          <select aria-label="Activation operator" value={sceneConditionDraft.operator} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, operator: event.target.value }))}>
+            {operators.map((operator) => <option key={operator} value={operator}>{operator}</option>)}
+          </select>
+          {draftDefinition?.type === "boolean"
+            ? <select aria-label="Activation value" value={sceneConditionDraft.value || "true"} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, value: event.target.value }))}><option value="true">true</option><option value="false">false</option></select>
+            : draftDefinition?.type === "enum" && draftDefinition.enumValues
+              ? <select aria-label="Activation value" value={sceneConditionDraft.value} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, value: event.target.value }))}><option value="">value…</option>{draftDefinition.enumValues.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+              : <input aria-label="Activation value" placeholder="value" value={sceneConditionDraft.value} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, value: event.target.value }))} />}
+          <label className="condition-negate"><input type="checkbox" checked={sceneConditionDraft.negated} onChange={(event) => setSceneConditionDraft((current) => ({ ...current, negated: event.target.checked }))} /> NOT</label>
+          <button type="button" className="small-action" disabled={!sceneConditionDraft.stateId} onClick={addSceneCondition}>Add</button>
+        </div>
+      </section>
+    );
+  };
+
+  const renderThemeResourcesSection = (theme: ThemeProject) => (
+    <section className="property-section">
+      <div className="property-section-title">Theme Resources</div>
+      <PropertyRow label="Rotations" value={String(theme.rotations.length)} />
+      <PropertyRow label="Floor Mappings" value={String(theme.floorMappings?.length ?? 0)} />
+      {project.assets.length === 0
+        ? <p className="property-note">No asset is imported. Resources declare which assets ship with this Theme Project (manifest resourceAssetIds).</p>
+        : (
+          <ul className="reference-list checkbox-list">
+            {project.assets.map((asset) => (
+              <li key={asset.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={theme.resources.includes(asset.id)}
+                    aria-label={`Ship ${asset.name} with ${theme.name}`}
+                    onChange={(event) => setThemeResources(theme.id, event.target.checked ? [...theme.resources, asset.id] : theme.resources.filter((id) => id !== asset.id))}
+                  />
+                  <span>{assetGlyph(asset.mediaType)} {asset.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+    </section>
+  );
+
   const renderProperties = () => {
     const multi = selectedIds.length > 1;
     const node = resolvedSelection;
@@ -1892,26 +2997,42 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     };
     const issueCount = validation.issues.filter((issue) => Boolean(selection && issue.path?.includes(selection.id))).length;
     const geometryEditable = canvasPointer.mode === "idle" && selectedCanonical.some((current) => Boolean(current.widget && !current.widget.locked));
+    // The advertised maximum must be the value the scene-bounds clamp will
+    // NOT alter, otherwise the "clamped to N" feedback reports a number the
+    // command then changes again (D5-02).
+    const geometryBound = (field: keyof Geometry): number => {
+      const rotationWidth = activeRotation?.width ?? 0;
+      const rotationHeight = activeRotation?.height ?? 0;
+      const widgets = selectedCanonical.map((current) => current.widget).filter((candidate): candidate is Widget => Boolean(candidate));
+      if (!widgets.length) return field === "x" || field === "width" ? rotationWidth : rotationHeight;
+      const limits = widgets.map((candidate) => {
+        const geometry = canonicalGeometry(candidate);
+        if (field === "x") return rotationWidth - geometry.width;
+        if (field === "y") return rotationHeight - geometry.height;
+        if (field === "width") return rotationWidth - geometry.x;
+        return rotationHeight - geometry.y;
+      });
+      return Math.max(0, Math.min(...limits));
+    };
     return (
       <>
         {renderPanelHeader("properties", "INSPECTOR", "Properties")}
         {renderDockTabs("right")}
         <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{selection?.detail ?? "Nothing selected · Project context"}</small></div></div>
         {selection && node ? <div className="properties-scroll">
-          <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField value={String(node.node.name)} disabled={false} ariaLabel="Display name" onCommit={renameSelectedNode} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
+          <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField value={String(node.node.name)} disabled={false} ariaLabel="Display name" focusToken={renameRequestId === selection.id ? renameRequestId : null} onCommit={renameSelectedNode} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
           <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
-            <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
-            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
-            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
-            {widget.widgetType === "digit" && <section className="property-section"><div className="property-section-title">Digit</div><PropertyRow label="Style" value={String(widget.style?.digitStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Floor Mapping" value={String(widget.content?.floorMappingId ?? "Not selected")} /></section>}
-            {widget.widgetType === "direction" && <section className="property-section"><div className="property-section-title">Direction</div><PropertyRow label="Style" value={String(widget.style?.directionStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Variant" value={String(widget.content?.variant ?? "Profile-defined")} /></section>}
-            {widget.widgetType === "media" && <section className="property-section"><div className="property-section-title">Media</div><PropertyRow label="Visual" value={widget.mediaType ?? "Not selected"} /><PropertyRow label="Attached Audio" value={widget.audioAssetId ?? "None"} muted /></section>}
+            <section className="property-section"><div className="property-section-title">Widget</div>{multi ? <PropertyRow label="Widget Type" value={valueFor((current) => current.widget?.widgetType)} /> : <div className="property-row property-row-edit"><span>Widget Type</span><select aria-label="Widget type" value={widget.widgetType} onChange={(event) => changeWidgetType(event.target.value)}>{(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => <option key={widgetType} value={widgetType}>{defaultWidgetName(widgetType)}</option>)}{!(activeProfile?.supportedWidgetTypes ?? []).includes(widget.widgetType) && <option value={widget.widgetType}>{widget.widgetType} (unsupported)</option>}</select></div>}<div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
+            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
+            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? `${widget.mediaSlide.mediaType} · ${widget.mediaSlide.duration}s` : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
+            {!multi && renderWidgetContentSection(widget)}
+            {!multi && renderWidgetMediaSection(widget)}
           </>}
-          {node.scene && <section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField value={String(node.scene.priority)} disabled={false} min={0} max={10} ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Activation Conditions" value={`${node.scene.activationConditions.length} · ${node.scene.activationConditionMode ?? "all"}`} /><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>}
-          {node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /></section>}
-          {node.theme && <section className="property-section"><div className="property-section-title">Theme Project</div><PropertyRow label="Rotations" value={String(node.theme.rotations.length)} /><PropertyRow label="Resources" value={String(node.theme.resources.length)} /><PropertyRow label="Floor Mappings" value={String(node.theme.floorMappings?.length ?? 0)} /></section>}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><PropertyRow label="Media Type" value={node.asset.mediaType} /><PropertyRow label="Source" value={node.asset.sourcePath} /><PropertyRow label="Stable ID" value={node.asset.id} muted /></section>}
+          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField value={String(node.scene.priority)} disabled={false} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
+          {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
+          {node.kind === "theme" && node.theme && renderThemeResourcesSection(node.theme)}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType} onChange={(event) => { const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: event.target.value as MediaType }); if (result.changed) logAction(`Asset media type set to ${event.target.value}`, "EVENT"); }}><option value="image">image</option><option value="video">video</option><option value="audio">audio</option></select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
         </div> : <div className="properties-empty"><span className="empty-panel-icon">□</span><strong>Select a canonical item to inspect</strong><span>Project, Theme Group, Theme, Rotation, Scene, Asset and profile-defined Widget selections resolve from the Project Model.</span></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
@@ -1989,7 +3110,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" aria-orientation="vertical" aria-valuenow={leftWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 10))}>+</button></div></div>
-            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!isCanvasClickSuppressed()) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCaptureLost} onContextMenu={(event) => {
+            {renderCanvasNavigator()}
+            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!isCanvasClickSuppressed()) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN STUDIO" : previewActive ? `RUNTIME PREVIEW - ${runtime.activeScene?.name ?? ""}` : "RUNTIME PREVIEW - NO SCENE ACTIVATES"}</div>{viewMode === "preview" && !previewActive && <div className="preview-inactive-note" role="status"><strong>No Scene activates with the current runtime inputs</strong><span>{runtime.candidates.length === 0 ? "This Rotation / Form has no Scene." : `${runtime.candidates.length} Scene(s) were evaluated and none matched. Set the runtime states in the Simulator, or relax a Scene Activation rule.`}</span><span className="preview-inactive-hint">The canvas below still shows the Design Mode layout; it is not a runtime result.</span></div>}<div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCaptureLost} onContextMenu={(event) => {
       event.preventDefault();
       event.stopPropagation();
       const point = toCanvasPoint(event);
@@ -2017,8 +3139,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
       <footer className="statusbar"><span><span className={`status-led ${validation.valid ? "" : "is-error"}`} aria-hidden="true" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span aria-live="polite">{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 
-      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{["equals", "not-equals", "greater-than", "less-than", "contains"].map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId} onClick={addBinding}>Add Binding</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code>{binding.conditions.length > 1 && <button type="button" className="reference-remove" aria-label={`Remove condition ${conditionIndex + 1}`} onClick={() => removeBindingCondition(binding.id, conditionIndex)}>x</button>}</div>; })}</div><label className="binding-mode-row"><span>Match</span><select aria-label={`Condition mode for ${binding.action} binding`} value={binding.conditionMode ?? "all"} onChange={(event) => setBindingConditionMode(binding.id, event.target.value as ConditionMode)}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ? (project.assets.find((asset) => asset.id === binding.contentId)?.name ?? `${binding.contentId} (unresolved)`) : "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{(bindingDraftDefinition?.operators ?? ["equals", "not-equals", "greater-than", "less-than", "contains"]).map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label className="binding-field"><span>Match</span><select aria-label="Binding condition mode" value={bindingDraft.conditionMode} disabled={Boolean(bindingDraft.targetBindingId)} onChange={(event) => setBindingDraft((current) => ({ ...current, conditionMode: event.target.value as ConditionMode }))}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label>{(bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && <label className="binding-field"><span>Content Asset</span><select aria-label="Binding content asset" value={bindingDraft.contentId} disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet - use Asset Browser Import" : undefined} onChange={(event) => setBindingDraft((current) => ({ ...current, contentId: event.target.value }))}><option value="">{project.assets.length === 0 ? "No asset imported" : "Select asset..."}</option>{project.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}</select></label>}<label className="binding-field"><span>Add to</span><select aria-label="Add condition to existing binding" value={bindingDraft.targetBindingId} onChange={(event) => setBindingDraft((current) => ({ ...current, targetBindingId: event.target.value }))}><option value="">New binding</option>{(bindingWidget?.bindings ?? []).map((binding) => <option key={binding.id} value={binding.id}>{binding.action} ({binding.conditions.length} condition{binding.conditions.length === 1 ? "" : "s"})</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId || ((bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && !bindingDraft.contentId && !bindingDraft.targetBindingId)} onClick={addBinding}>{bindingDraft.targetBindingId ? "Add Condition" : "Add Binding"}</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation"><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={cancelSettings}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" autoFocus className="settings-button-secondary" onClick={cancelSettings}>Cancel</button><button type="button" className="settings-button-primary" onClick={saveSettings}>Save / Apply &amp; Close</button></div></footer></section></div>}
+
+      {newProjectDraft && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">PROJECT</span><h2 id="new-project-title">New Project</h2></div></header><div className="confirm-body"><label className="dialog-field"><span>Project name</span><input autoFocus aria-label="New project name" value={newProjectDraft.name} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, name: event.target.value } : current)} /></label><label className="dialog-field"><span>Device Profile</span><select aria-label="New project device profile" value={newProjectDraft.profileId} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, profileId: event.target.value } : current)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}</select></label><p className="dialog-note">The project is created with one Theme Project Group, one Theme Project and the canonical four Rotation / Form variants sized from the chosen display.</p></div><footer className="settings-footer"><div><button type="button" className="settings-button-secondary" onClick={() => setNewProjectDraft(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={confirmNewProject}>Create Project</button></div></footer></section></div>}
 
       {confirmState && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CONFIRMATION</span><h2 id="confirm-title">{confirmState.title}</h2></div></header><div className="confirm-body"><p>{confirmState.message}</p></div><footer className="settings-footer"><div><button type="button" autoFocus className="settings-button-secondary" onClick={() => setConfirmState(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { const action = confirmState.onConfirm; setConfirmState(null); action(); }}>{confirmState.confirmLabel}</button></div></footer></section></div>}
     </div>

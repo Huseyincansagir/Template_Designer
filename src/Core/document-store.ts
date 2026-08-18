@@ -16,6 +16,7 @@ export interface DocumentStore {
   subscribe(listener: () => void): () => void;
   open(project: Project): void;
   create(project: Project): void;
+  adopt(project: Project): void;
   close(): void;
   save(): void;
   replaceCurrent(project: Project): void;
@@ -65,7 +66,30 @@ export class InMemoryDocumentStore implements DocumentStore {
     this.refreshSnapshot();
   }
 
-  create(project: Project): void { this.open(project); }
+  /**
+   * A brand new document must actually reach the persistence slot: leaving the
+   * previously saved project there while the UI reported "Saved" meant a reload
+   * silently resurrected the old project (D3-02).
+   */
+  create(project: Project): void {
+    this.currentProject = project;
+    this.storage?.save(project);
+    this.savedProject = project;
+    this.runWithoutSnapshotRefresh(() => this.history.clear());
+    this.refreshSnapshot();
+  }
+
+  /**
+   * Adopts a document that is NOT the persisted one (project-file import). It
+   * starts dirty on purpose so the dirty indicator never claims that an
+   * imported project is already stored.
+   */
+  adopt(project: Project): void {
+    this.currentProject = project;
+    this.savedProject = undefined;
+    this.runWithoutSnapshotRefresh(() => this.history.clear());
+    this.refreshSnapshot();
+  }
 
   close(): void {
     this.currentProject = undefined;

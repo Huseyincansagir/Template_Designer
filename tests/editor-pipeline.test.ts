@@ -97,20 +97,18 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(current(store).themeProjectGroups[0].themeProjects).toHaveLength(1);
   });
 
-  it("adds a Rotation without changing the Theme Project parent", () => {
-    const { project, themeId } = hierarchyProject();
+  it("refuses to delete or duplicate a Rotation so the canonical four always survive", () => {
+    const { project, rotationId } = hierarchyProject();
     const { store, editor } = setup(project);
     const before = structuredClone(current(store));
-    expect(editor.addRotation(themeId, 90, foundationDeviceProfile.display).changed).toBe(true);
-    const after = structuredClone(current(store));
-    const theme = after.themeProjectGroups[0].themeProjects[0];
-    expect(theme.id).toBe(themeId);
-    expect(theme.rotations).toHaveLength(2);
-    expect(theme.rotations[1]).toMatchObject({ angle: 90, width: 1280, height: 720, scenes: [] });
-    expect(store.undo()).toBe(true);
+    // There is deliberately no Add Rotation command, so a Rotation delete or
+    // duplicate would leave a structurally invalid Theme Project the UI could
+    // never repair.
+    expect(editor.deleteSelection([rotationId]).changed).toBe(false);
+    expect(editor.duplicateSelection([rotationId]).changed).toBe(false);
     expect(current(store)).toEqual(before);
-    expect(store.redo()).toBe(true);
-    expect(current(store)).toEqual(after);
+    expect(store.getSnapshot().history.undoCount).toBe(0);
+    expect("addRotation" in editor).toBe(false);
   });
 
   it("adds a Scene as a real Scene object and preserves its hierarchy", () => {
@@ -162,19 +160,30 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(current(store)).toEqual(after);
   });
 
-  it("moves Widgets by order while preserving their geometry and content", () => {
+  it("re-dimensions every Rotation and clamps widgets when the DeviceProfile changes", () => {
     const { project, sceneId } = hierarchyProject();
     const { store, editor } = setup(project);
     const before = structuredClone(current(store));
-    expect(editor.moveWidget(sceneId, "w3", 0).changed).toBe(true);
-    const after = structuredClone(current(store));
-    const widgets = after.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets;
-    expect(widgets.map((item) => item.id)).toEqual(["w3", "w1", "w2"]);
-    expect(widgets.find((item) => item.id === "w3")).toEqual(expect.objectContaining({ geometry: { x: 30, y: 10, width: 100, height: 40 }, content: { text: "w3" } }));
+    // A profile switch is a geometry-contract change: stale Rotation
+    // dimensions would silently corrupt every scene-unit coordinate.
+    expect(editor.setProjectDeviceProfile("compact-profile", { width: 240, height: 320 }).changed).toBe(true);
+    const after = current(store);
+    expect(after.deviceProfileId).toBe("compact-profile");
+    for (const rotation of after.themeProjectGroups[0].themeProjects[0].rotations) {
+      const expected = rotation.angle === 90 || rotation.angle === 270 ? { width: 320, height: 240 } : { width: 240, height: 320 };
+      expect({ width: rotation.width, height: rotation.height }).toEqual(expected);
+      for (const scene of rotation.scenes) {
+        for (const item of scene.widgets) {
+          expect(item.geometry.x).toBeGreaterThanOrEqual(0);
+          expect(item.geometry.y).toBeGreaterThanOrEqual(0);
+          expect(item.geometry.x + item.geometry.width).toBeLessThanOrEqual(rotation.width);
+          expect(item.geometry.y + item.geometry.height).toBeLessThanOrEqual(rotation.height);
+        }
+      }
+    }
+    expect(sceneId.length).toBeGreaterThan(0);
     expect(store.undo()).toBe(true);
     expect(current(store)).toEqual(before);
-    expect(store.redo()).toBe(true);
-    expect(current(store)).toEqual(after);
   });
 
   it("edits Widget properties immutably and restores exact state", () => {
@@ -220,7 +229,7 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(editor.addScene("missing-rotation").changed).toBe(false);
     expect(editor.moveScene(rotationId, "scene-1", 0).changed).toBe(false);
     expect(editor.moveScene("missing-rotation", "scene-1", 0).changed).toBe(false);
-    expect(editor.moveWidget("scene-1", "missing-widget", 0).changed).toBe(false);
+    expect(editor.setWidgetConfiguration("scene-1", "missing-widget", { content: { text: "x" } }).changed).toBe(false);
     expect(editor.deleteSelection(["missing-node"]).changed).toBe(false);
     expect(editor.duplicateSelection([]).changed).toBe(false);
     expect(current(store)).toBe(before);

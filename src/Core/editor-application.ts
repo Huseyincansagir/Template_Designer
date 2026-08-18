@@ -1,8 +1,19 @@
-import type { Binding, DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { Asset, Binding, Condition, DeviceProfile, Geometry, MediaType, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 import { InMemoryDocumentStore } from "./document-store";
 
 export type ProjectMutation = (project: Project) => Project;
 export type MutationResult = { readonly changed: boolean; readonly createdIds?: readonly string[] };
+
+/** Logical asset record an import source produces; the stable ID is allocated by the Core. */
+export type AssetDraft = {
+  readonly name: string;
+  readonly sourcePath: string;
+  readonly mediaType: MediaType;
+  readonly metadata?: Readonly<Record<string, string | number | boolean>>;
+};
+
+/** Widget configuration patch: the type-specific half of a Widget that geometry commands never touch. */
+export type WidgetConfigurationPatch = Partial<Pick<Widget, "widgetType" | "mediaType" | "assetIds" | "audioAssetId" | "mediaSlide" | "content" | "style">>;
 
 function clone<T>(value: T): T { return structuredClone(value); }
 function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
@@ -50,6 +61,12 @@ function countWidgetOccurrences(project: Project, widgetId: string): number {
   return project.themeProjectGroups.reduce((groupCount, group) => groupCount + group.themeProjects.reduce((themeCount, theme) => themeCount + theme.rotations.reduce((rotationCount, rotation) => rotationCount + rotation.scenes.reduce((sceneCount, scene) => sceneCount + scene.widgets.filter((widget) => widget.id === widgetId).length, 0), 0), 0), 0);
 }
 
+/** True when any of the given ids identifies a Rotation/Form node. */
+function containsRotationId(project: Project, ids: readonly string[]): boolean {
+  const candidates = new Set(ids);
+  return project.themeProjectGroups.some((group) => group.themeProjects.some((theme) => theme.rotations.some((rotation) => candidates.has(rotation.id))));
+}
+
 function validScopedWidgetIds(project: Project, sceneId: string, ids: readonly string[]): boolean {
   const scene = findUniqueScene(project, sceneId);
   if (!scene || !ids.length || new Set(ids).size !== ids.length) return false;
@@ -83,6 +100,65 @@ function mapScenes(rotation: Rotation, map: (scene: Scene) => Scene): Rotation {
 
 function mapWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
   return { ...scene, widgets: scene.widgets.map(map) };
+}
+
+/**
+ * Depth-flattening helpers. Every canonical mutation below the Project walks
+ * the same four levels; expressing that walk once removes the nested-closure
+ * bracket hazard and keeps each command readable.
+ */
+function mapAllScenes(project: Project, map: (scene: Scene, rotation: Rotation, theme: ThemeProject) => Scene): Project {
+  return {
+    ...project,
+    themeProjectGroups: project.themeProjectGroups.map((group) => ({
+      ...group,
+      themeProjects: group.themeProjects.map((theme) => ({
+        ...theme,
+        rotations: theme.rotations.map((rotation) => ({
+          ...rotation,
+          scenes: rotation.scenes.map((scene) => map(scene, rotation, theme)),
+        })),
+      })),
+    })),
+  };
+}
+
+function mapAllWidgets(project: Project, map: (widget: Widget) => Widget): Project {
+  return mapAllScenes(project, (scene) => ({ ...scene, widgets: scene.widgets.map(map) }));
+}
+
+function mapAllThemes(project: Project, map: (theme: ThemeProject) => ThemeProject): Project {
+  return {
+    ...project,
+    themeProjectGroups: project.themeProjectGroups.map((group) => ({
+      ...group,
+      themeProjects: group.themeProjects.map(map),
+    })),
+  };
+}
+
+function isMediaType(value: unknown): value is MediaType {
+  return value === "image" || value === "video" || value === "audio";
+}
+
+/** Fits a geometry inside a Rotation's logical space without inverting it. */
+function clampGeometry(geometry: Geometry, bounds: { width: number; height: number }): Geometry {
+  if (!isValidGeometry(geometry)) return geometry;
+  const width = Math.min(geometry.width, bounds.width);
+  const height = Math.min(geometry.height, bounds.height);
+  return {
+    width,
+    height,
+    x: Math.min(Math.max(0, geometry.x), Math.max(0, bounds.width - width)),
+    y: Math.min(Math.max(0, geometry.y), Math.max(0, bounds.height - height)),
+  };
+}
+
+function normalizeAssetDraft(draft: AssetDraft): AssetDraft | undefined {
+  const name = draft.name.trim();
+  const sourcePath = draft.sourcePath.trim();
+  if (name.length === 0 || sourcePath.length === 0 || !isMediaType(draft.mediaType)) return undefined;
+  return { name, sourcePath, mediaType: draft.mediaType, metadata: draft.metadata };
 }
 
 function duplicateWidget(widget: Widget, id: string = newId("widget")): Widget {
@@ -179,17 +255,6 @@ export class EditorApplication {
     return result.changed ? { changed: true, createdIds: [id] } : result;
   }
 
-  addRotation(themeId: string, angle: RotationAngle = 0, display?: DeviceProfile["display"]): MutationResult {
-    if (!display || !Number.isFinite(display.width) || !Number.isFinite(display.height) || display.width <= 0 || display.height <= 0) return { changed: false };
-    const dimensions = rotationDimensions(display, angle);
-    const id = newId("rotation");
-    const result = this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
-      ...theme,
-      rotations: [...theme.rotations, { id, angle, ...dimensions, scenes: [] }],
-    } : theme)));
-    return result.changed ? { changed: true, createdIds: [id] } : result;
-  }
-
   addScene(rotationId: string, name = "New Scene"): MutationResult {
     const id = newId("scene");
     const result = this.execute(`Add Scene: ${name}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => rotation.id === rotationId ? {
@@ -231,6 +296,168 @@ export class EditorApplication {
       return { ...scene, widgets: [...scene.widgets, widget] };
     })))));
     return result.changed ? { changed: true, createdIds: [id] } : result;
+  }
+
+  /**
+   * Creates a sibling Theme Project Group. Without this the hierarchy had
+   * exactly one group forever: the scaffold created it and no command could
+   * add another, while delete refused to remove the last one.
+   */
+  addThemeProjectGroup(name = "New Theme Group"): MutationResult {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) return { changed: false };
+    const id = newId("theme-group");
+    const result = this.execute(`Add Theme Group: ${trimmed}`, (project) => ({
+      ...project,
+      themeProjectGroups: [...project.themeProjectGroups, { id, name: trimmed, themeProjects: [] }],
+    }));
+    return result.changed ? { changed: true, createdIds: [id] } : result;
+  }
+
+  /**
+   * Registers logical Asset records in the Project scope. One import is one
+   * undoable command regardless of how many files the source produced. The
+   * Core allocates every stable ID; import sources only supply the logical
+   * record (name / sourcePath / mediaType / metadata), which is exactly what
+   * the deployment package carries (`export.ts` asset records are logical,
+   * `binary: false`).
+   */
+  addAssets(drafts: readonly AssetDraft[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || drafts.length === 0) return { changed: false };
+    const normalized = drafts.map(normalizeAssetDraft);
+    if (normalized.some((draft) => draft === undefined)) return { changed: false };
+    const accepted = normalized as readonly AssetDraft[];
+    const created = accepted.map((draft) => ({ id: newId("asset"), ...draft } as Asset));
+    const label = created.length === 1 ? `Import Asset: ${created[0].name}` : `Import ${created.length} Assets`;
+    const result = this.execute(label, (project) => ({ ...project, assets: [...project.assets, ...clone(created)] }));
+    return result.changed ? { changed: true, createdIds: created.map((asset) => asset.id) } : result;
+  }
+
+  addAsset(draft: AssetDraft): MutationResult {
+    return this.addAssets([draft]);
+  }
+
+  setAssetProperties(assetId: string, patch: Partial<Pick<Asset, "name" | "sourcePath" | "mediaType" | "metadata">>): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !current.assets.some((asset) => asset.id === assetId)) return { changed: false };
+    if (patch.name !== undefined && patch.name.trim().length === 0) return { changed: false };
+    if (patch.sourcePath !== undefined && patch.sourcePath.trim().length === 0) return { changed: false };
+    if (patch.mediaType !== undefined && !isMediaType(patch.mediaType)) return { changed: false };
+    const cleanPatch: Partial<Asset> = {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.sourcePath !== undefined ? { sourcePath: patch.sourcePath.trim() } : {}),
+      ...(patch.mediaType !== undefined ? { mediaType: patch.mediaType } : {}),
+      ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
+    };
+    return this.execute("Edit Asset", (project) => ({
+      ...project,
+      assets: project.assets.map((asset) => asset.id === assetId ? { ...asset, ...clone(cleanPatch) } : asset),
+    }));
+  }
+
+  /**
+   * Deletes Assets and purges every reference to them in the same undoable
+   * command. Leaving dangling references behind would produce
+   * MISSING_REFERENCED_ASSET validation errors the user cannot repair, so the
+   * canonical delete is reference-complete: Theme resources/defaults, Project
+   * defaults, Widget assetIds/audioAssetId/mediaSlide and Binding contentId.
+   */
+  removeAssets(assetIds: readonly string[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !assetIds.length) return { changed: false };
+    const removed = new Set(assetIds.filter((id) => current.assets.some((asset) => asset.id === id)));
+    if (!removed.size) return { changed: false };
+    const keepIds = (ids: readonly string[] | undefined) => ids?.filter((id) => !removed.has(id));
+    const label = removed.size === 1 ? "Delete Asset" : `Delete ${removed.size} Assets`;
+    return this.execute(label, (project) => {
+      const withoutAssets: Project = {
+        ...project,
+        assets: project.assets.filter((asset) => !removed.has(asset.id)),
+        ...(project.defaultAssetIds ? { defaultAssetIds: keepIds(project.defaultAssetIds) } : {}),
+      };
+      const withThemes = mapAllThemes(withoutAssets, (theme) => ({
+        ...theme,
+        resources: theme.resources.filter((id) => !removed.has(id)),
+        ...(theme.defaultAssetIds ? { defaultAssetIds: keepIds(theme.defaultAssetIds) } : {}),
+      }));
+      return mapAllWidgets(withThemes, (widget) => {
+        const slideBroken = Boolean(widget.mediaSlide && removed.has(widget.mediaSlide.assetId));
+        return {
+          ...widget,
+          ...(widget.assetIds ? { assetIds: widget.assetIds.filter((id) => !removed.has(id)) } : {}),
+          ...(widget.audioAssetId && removed.has(widget.audioAssetId) ? { audioAssetId: undefined } : {}),
+          ...(widget.mediaSlide
+            ? slideBroken
+              ? { mediaSlide: undefined }
+              : { mediaSlide: { ...widget.mediaSlide, ...(widget.mediaSlide.audioAssetId && removed.has(widget.mediaSlide.audioAssetId) ? { audioAssetId: undefined } : {}) } }
+            : {}),
+          bindings: widget.bindings.map((binding) => binding.contentId && removed.has(binding.contentId) ? { ...binding, contentId: undefined } : binding),
+        };
+      });
+    });
+  }
+
+  /**
+   * Replaces a Theme Project's resource list. `ThemeProject.resources` is the
+   * canonical "ship this asset with the theme" declaration consumed by
+   * `manifest.resourceAssetIds`; without an editor the export scope could
+   * never contain anything.
+   */
+  setThemeResources(themeId: string, assetIds: readonly string[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current) return { changed: false };
+    const known = new Set(current.assets.map((asset) => asset.id));
+    if (!assetIds.every((id) => known.has(id)) || new Set(assetIds).size !== assetIds.length) return { changed: false };
+    const themeExists = current.themeProjectGroups.some((group) => group.themeProjects.some((theme) => theme.id === themeId));
+    if (!themeExists) return { changed: false };
+    return this.execute("Edit Theme Resources", (project) => mapAllThemes(project, (theme) => theme.id === themeId ? { ...theme, resources: [...assetIds] } : theme));
+  }
+
+  /**
+   * Type-specific Widget configuration: widgetType, media capability, asset
+   * references and the free-form `content` / `style` records. Geometry, lock
+   * and visibility keep their own commands. Changing `widgetType` clears the
+   * previous type's `content` / `style` and any media-only fields, because
+   * carrying a digit style on a text widget would be data the runtime and
+   * validation must then reject.
+   */
+  setWidgetConfiguration(sceneId: string, widgetId: string, patch: WidgetConfigurationPatch): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !validScopedWidgetIds(current, sceneId, [widgetId])) return { changed: false };
+    if (patch.widgetType !== undefined && patch.widgetType.trim().length === 0) return { changed: false };
+    if (patch.mediaType !== undefined && patch.mediaType !== null && !isMediaType(patch.mediaType)) return { changed: false };
+    const known = new Set(current.assets.map((asset) => asset.id));
+    if (patch.assetIds !== undefined && !patch.assetIds.every((id) => known.has(id))) return { changed: false };
+    if (patch.audioAssetId !== undefined && patch.audioAssetId !== undefined && patch.audioAssetId !== null && !known.has(patch.audioAssetId)) return { changed: false };
+    if (patch.mediaSlide !== undefined && patch.mediaSlide !== null && !known.has(patch.mediaSlide.assetId)) return { changed: false };
+    return this.execute("Edit Widget Configuration", (project) => mapAllScenes(project, (scene) => {
+      if (scene.id !== sceneId) return scene;
+      return mapWidgets(scene, (widget) => {
+        if (widget.id !== widgetId) return widget;
+        const nextType = patch.widgetType?.trim() ?? widget.widgetType;
+        const typeChanged = nextType !== widget.widgetType;
+        const base: Widget = typeChanged
+          ? { ...widget, widgetType: nextType, content: undefined, style: undefined, mediaType: undefined, audioAssetId: undefined, mediaSlide: undefined }
+          : widget;
+        const applied: Widget = {
+          ...base,
+          ...(patch.mediaType !== undefined ? { mediaType: patch.mediaType ?? undefined } : {}),
+          ...(patch.assetIds !== undefined ? { assetIds: [...patch.assetIds] } : {}),
+          ...(patch.audioAssetId !== undefined ? { audioAssetId: patch.audioAssetId ?? undefined } : {}),
+          ...(patch.mediaSlide !== undefined ? { mediaSlide: patch.mediaSlide ? clone(patch.mediaSlide) : undefined } : {}),
+          ...(patch.content !== undefined ? { content: patch.content ? clone(patch.content) : undefined } : {}),
+          ...(patch.style !== undefined ? { style: patch.style ? clone(patch.style) : undefined } : {}),
+        };
+        // A Media Slide is only valid on the media widget type, and audio is
+        // only a Media/Media-Slide capability (validation.ts rules
+        // MEDIA_SLIDE_WIDGET_TYPE_INVALID / AUDIO_BINDING_SCOPE_INVALID).
+        const cleaned: Widget = applied.widgetType === "media"
+          ? applied
+          : { ...applied, mediaSlide: undefined, audioAssetId: applied.mediaSlide ? applied.audioAssetId : undefined };
+        return cleaned;
+      });
+    }));
   }
 
   moveScene(rotationId: string, sceneId: string, toIndex: number): MutationResult {
@@ -276,12 +503,21 @@ export class EditorApplication {
     });
   }
 
-  setSceneProperties(sceneId: string, patch: Partial<Pick<Scene, "name" | "priority" | "enabled" | "activationConditionMode">>): MutationResult {
+  setSceneProperties(sceneId: string, patch: Partial<Pick<Scene, "name" | "priority" | "enabled" | "activationConditionMode" | "activationConditions">>): MutationResult {
     if (patch.name !== undefined && patch.name.trim().length === 0) return { changed: false };
     if (patch.priority !== undefined && (!Number.isInteger(patch.priority) || patch.priority < 0 || patch.priority > 10)) return { changed: false };
+    // Activation conditions decide which Scene the device shows; a condition
+    // without a runtime reference could never evaluate, so it is refused here
+    // rather than persisted for validation to report later.
+    if (patch.activationConditions !== undefined && !patch.activationConditions.every((condition) => typeof condition.stateId === "string" && condition.stateId.trim().length > 0)) return { changed: false };
     const current = this.documents.getCurrent();
     if (!current || !findUniqueScene(current, sceneId)) return { changed: false };
     return this.execute("Edit Scene Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, ...clone(patch), ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) } : scene)))));
+  }
+
+  /** Scene activation editor: replaces the activation rule in one undoable command. */
+  setSceneActivation(sceneId: string, conditions: readonly Condition[], mode: Scene["activationConditionMode"]): MutationResult {
+    return this.setSceneProperties(sceneId, { activationConditions: conditions, activationConditionMode: mode });
   }
 
   setWidgetsVisibilityInScene(sceneId: string, ids: readonly string[], visible: boolean): MutationResult {
@@ -336,21 +572,40 @@ export class EditorApplication {
     return this.execute("Edit Widget Bindings", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => widget.id === widgetId ? { ...widget, bindings: clone(bindings) } : widget) } : scene)))));
   }
 
-  setProjectDeviceProfile(profileId: string): MutationResult {
+  /**
+   * Switching DeviceProfile is a geometry-contract change, not a label change.
+   * Rotation dimensions are re-derived from the new display (with the R90/R270
+   * swap) and every widget is clamped back inside its Rotation, so a profile
+   * switch can never leave stale dimensions or stranded widgets behind. The
+   * whole re-shape is one undoable command.
+   */
+  setProjectDeviceProfile(profileId: string, display?: DeviceProfile["display"]): MutationResult {
     if (profileId.trim().length === 0) return { changed: false };
-    return this.execute("Switch Device Profile", (project) => ({ ...project, deviceProfileId: profileId }));
-  }
-
-  moveWidget(sceneId: string, widgetId: string, toIndex: number): MutationResult {
-    return this.execute("Move Widget", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
-      if (scene.id !== sceneId || toIndex < 0 || toIndex >= scene.widgets.length) return scene;
-      const fromIndex = scene.widgets.findIndex((widget) => widget.id === widgetId);
-      if (fromIndex < 0 || fromIndex === toIndex) return scene;
-      const widgets = [...scene.widgets];
-      const [widget] = widgets.splice(fromIndex, 1);
-      widgets.splice(toIndex, 0, widget);
-      return { ...scene, widgets };
-    })))));
+    const usableDisplay = display && Number.isFinite(display.width) && Number.isFinite(display.height) && display.width > 0 && display.height > 0 ? display : undefined;
+    return this.execute("Switch Device Profile", (project) => {
+      const withProfile: Project = { ...project, deviceProfileId: profileId };
+      if (!usableDisplay) return withProfile;
+      return {
+        ...withProfile,
+        themeProjectGroups: withProfile.themeProjectGroups.map((group) => ({
+          ...group,
+          themeProjects: group.themeProjects.map((theme) => ({
+            ...theme,
+            rotations: theme.rotations.map((rotation) => {
+              const dimensions = rotationDimensions(usableDisplay, rotation.angle);
+              return {
+                ...rotation,
+                ...dimensions,
+                scenes: rotation.scenes.map((scene) => ({
+                  ...scene,
+                  widgets: scene.widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, dimensions) })),
+                })),
+              };
+            }),
+          })),
+        })),
+      };
+    });
   }
 
   setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
@@ -410,6 +665,10 @@ export class EditorApplication {
     if (!ids.length) return { changed: false };
     const current = this.documents.getCurrent();
     if (current) {
+      // Canonical invariant: a Theme Project contains exactly R0/R90/R180/R270
+      // and there is deliberately no Add Rotation command, so deleting a
+      // Rotation would leave a structurally invalid theme with no UI repair.
+      if (containsRotationId(current, ids)) return { changed: false };
       const selected = new Set(ids);
       const remainingGroups = current.themeProjectGroups.filter((group) => !selected.has(group.id));
       // Deleting the last Theme Project Group leaves the editor with no
@@ -504,6 +763,9 @@ export class EditorApplication {
     const current = this.documents.getCurrent();
     const selected = new Set(ids);
     if (!current) return { changed: false };
+    // Duplicating a Rotation would create a fifth Rotation/Form and break the
+    // canonical exactly-four rule (validation REQUIRED_ROTATIONS_MISSING).
+    if (containsRotationId(current, ids)) return { changed: false };
     const copyIds = buildDuplicateIdMap(current, selected);
     const createdIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
     const result = this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {

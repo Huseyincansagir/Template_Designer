@@ -1,11 +1,11 @@
 import { Component, StrictMode, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { foundationDeviceProfile } from "./Domain/factories";
+import { compactDeviceProfile, foundationDeviceProfile } from "./Domain/factories";
 import { App } from "./App/App";
 import { createDeviceProfileRegistry } from "./App/profile-registry";
 import "./App/app.css";
 
-const profileRegistry = createDeviceProfileRegistry([foundationDeviceProfile]);
+const profileRegistry = createDeviceProfileRegistry([foundationDeviceProfile, compactDeviceProfile]);
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
   state: { error: Error | null } = { error: null };

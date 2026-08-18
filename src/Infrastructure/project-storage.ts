@@ -5,9 +5,20 @@ import type { Project } from "../Domain/models";
  * storage APIs directly; the DocumentStore delegates Save/Open through this
  * adapter (AGENTS.md: UI → Application Service → Platform Adapter).
  */
+export type ProjectLoadOutcome =
+  | { readonly status: "empty" }
+  | { readonly status: "loaded"; readonly project: Project }
+  | { readonly status: "rejected"; readonly reason: string; readonly backupKey?: string };
+
 export interface ProjectStorage {
   save(project: Project): void;
   load(): Project | null;
+  /**
+   * Same read as `load`, but it reports WHY nothing came back. Silently falling
+   * back to a blank scaffold hid the fact that a stored project had been
+   * discarded (D3-10); the UI needs the reason to tell the user.
+   */
+  read(): ProjectLoadOutcome;
   clear(): void;
 }
 
@@ -29,7 +40,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * to the ErrorBoundary with no user recovery path. Anything below this bar
  * is treated as absent and the app boots to the canonical scaffold.
  */
-function isLoadableProject(value: unknown): value is Project {
+export function isLoadableProject(value: unknown): value is Project {
   if (!isRecord(value)) return false;
   const candidate = value;
   if (
@@ -74,14 +85,41 @@ export class LocalStorageProjectStorage implements ProjectStorage {
   }
 
   load(): Project | null {
+    const outcome = this.read();
+    return outcome.status === "loaded" ? outcome.project : null;
+  }
+
+  read(): ProjectLoadOutcome {
+    let raw: string | null = null;
     try {
-      const raw = this.storage.getItem(PROJECT_STORAGE_KEY);
-      if (!raw) return null;
-      const parsed: unknown = JSON.parse(raw);
-      return isLoadableProject(parsed) ? parsed : null;
+      raw = this.storage.getItem(PROJECT_STORAGE_KEY);
     } catch {
-      // Corrupt or unavailable storage must never crash the editor boot.
-      return null;
+      return { status: "rejected", reason: "local storage is unavailable" };
+    }
+    if (!raw) return { status: "empty" };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: "rejected", reason: "the stored project is not valid JSON", backupKey: this.preserve(raw) };
+    }
+    if (!isLoadableProject(parsed)) {
+      return { status: "rejected", reason: "the stored project is structurally incomplete", backupKey: this.preserve(raw) };
+    }
+    return { status: "loaded", project: parsed };
+  }
+
+  /**
+   * Keeps the rejected payload under a timestamped key instead of letting the
+   * next Save overwrite it. Recovery evidence must survive the fallback.
+   */
+  private preserve(raw: string): string | undefined {
+    const key = `${PROJECT_STORAGE_KEY}.rejected`;
+    try {
+      this.storage.setItem(key, raw);
+      return key;
+    } catch {
+      return undefined;
     }
   }
 

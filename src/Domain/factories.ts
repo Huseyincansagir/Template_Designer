@@ -44,6 +44,41 @@ export const foundationDeviceProfile: DeviceProfile = {
   },
 };
 
+/**
+ * A second shipped profile so "choose a device" is a real workflow and not a
+ * disabled control. It differs from the Foundation profile in the two ways
+ * that matter to a template: display geometry and media capability. Both
+ * profiles declare all four canonical Rotation/Form angles, so switching
+ * between them never invalidates the exactly-four rule — it re-dimensions.
+ */
+export const compactDeviceProfile: DeviceProfile = {
+  id: "compact-profile",
+  name: "Compact Display Profile",
+  display: { width: 480, height: 800 },
+  supportedRotations: [0, 90, 180, 270],
+  supportedWidgetTypes: ["media", "digit", "direction", "warning", "text"],
+  supportedMediaTypes: ["image", "audio"],
+  supportedFormats: ["png", "jpg", "jpeg", "mp3", "wav"],
+  runtimeStates: [
+    { id: "fire", displayName: "Fire", type: "boolean", category: "safety", simulator: true },
+    { id: "floor", displayName: "Floor", type: "integer", category: "position", operators: ["equals", "not-equals", "greater-than", "less-than"], simulator: true },
+    { id: "door_state", displayName: "Door State", type: "enum", category: "position", enumValues: ["closed", "opening", "opening-completed"], simulator: true },
+  ],
+  runtimeSettings: [
+    { id: "language", displayName: "Language", type: "enum", enumValues: ["en", "tr"], defaultValue: "en", persistence: "persistent" },
+  ],
+  languages: ["en", "tr"],
+  fonts: ["firmware-default"],
+  digitStyles: ["digit-compact"],
+  defaultDigitStyleId: "digit-compact",
+  directionStyles: ["direction-default"],
+  audioCapabilities: {
+    supportsAnnouncement: true,
+    supportsMediaAudio: true,
+    maxPriority: 50,
+  },
+};
+
 function newId(prefix: string): string {
   return `${prefix}-${typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`;
 }
@@ -78,26 +113,28 @@ export function createThemeProject(
   };
 }
 
-export function createEmptyThemeProjectGroup(): ThemeProjectGroup {
+export function createEmptyThemeProjectGroup(display: DeviceProfile["display"] = foundationDeviceProfile.display): ThemeProjectGroup {
   return {
     id: newId("theme-group"),
     name: "Untitled Theme Group",
-    themeProjects: [createThemeProject()],
+    themeProjects: [createThemeProject("New Theme Project", display)],
   };
 }
 
 /**
  * A new project boots into a canonically shaped hierarchy (one Theme Project
  * Group containing one Theme Project with all four required rotations) so the
- * editing loop — rotation → scene → widget — is immediately reachable.
+ * editing loop — rotation → scene → widget — is immediately reachable. The
+ * DeviceProfile is chosen at creation time, so Rotation dimensions are correct
+ * from the first frame instead of needing a later re-shape.
  */
-export function createEmptyProject(name = "Untitled Project"): Project {
+export function createEmptyProject(name = "Untitled Project", profile: DeviceProfile = foundationDeviceProfile): Project {
   return {
     id: newId("project"),
     schemaVersion: 1,
-    name,
-    deviceProfileId: foundationDeviceProfile.id,
-    themeProjectGroups: [createEmptyThemeProjectGroup()],
+    name: name.trim() || "Untitled Project",
+    deviceProfileId: profile.id,
+    themeProjectGroups: [createEmptyThemeProjectGroup(profile.display)],
     assets: [],
     metadata: {},
   };
