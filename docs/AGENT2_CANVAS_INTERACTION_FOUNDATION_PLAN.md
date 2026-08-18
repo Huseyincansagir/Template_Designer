@@ -81,11 +81,11 @@ The implementation must not redesign the Properties Panel, Docking System, Asset
 
 ## 4. Canonical interaction contract
 
-The following rules are treated as the baseline contract unless a more specific repository specification or an approved product decision supersedes them.
+The following rules are treated as the baseline contract unless a more specific repository specification or an approved product decision supersedes them. The decisions in Section 6A are now approved for Agent 2 implementation.
 
 ### 4.1 Coordinate model
 
-Widget geometry is expressed in Scene coordinates as `{ x, y, width, height }`. The active Scene and Rotation dimensions are read from canonical state; the implementation must not hard-code a device size or widget whitelist. The Scene content origin is intended to be the top-left of the active display surface, with positive `x` to the right and positive `y` downward.
+Widget geometry is expressed in Scene coordinates as `{ x, y, width, height }`. The active Scene and Rotation dimensions are read from canonical state; the implementation must not hard-code a device size or widget whitelist. The Scene content origin is the top-left of the active display surface, with positive `x` to the right and positive `y` downward.
 
 The implementation must centralize pure conversion functions with explicit inputs and outputs:
 
@@ -96,55 +96,67 @@ canvasToScene(canvasPoint, sceneFrame)
 sceneToCanvas(scenePoint, sceneFrame)
 ```
 
-The exact transform type should be small and serializable, for example viewport origin, pan offset, zoom scale, and scene dimensions. Screen coordinates are CSS pixels. Geometry calculations may use floating-point values; normalization and commit precision must follow the existing Domain convention rather than silently introducing a new rounding policy.
+Screen coordinates are CSS pixels. Geometry calculations may use floating-point values. Commit normalization/precision must follow the existing Domain convention and must not introduce an unrelated rounding policy.
 
 Canvas display must preserve the active Rotation/Form aspect ratio. Panel resize may change the viewport and letterboxing, but it must not change Widget geometry.
 
 ### 4.2 Pointer lifecycle
 
-Only the primary pointer button starts selection, drag, resize, or marquee. A click and a drag must be distinguished by a defined movement threshold. Pointer capture must be acquired for an active gesture and released on commit, cancellation, `pointercancel`, lost pointer capture, or window focus loss.
+Only the primary pointer button starts selection, drag, resize, or marquee. A drag/marquee begins only after movement exceeds **4 CSS pixels**. Movement at or below that threshold is treated as a click.
 
-`Escape`, `pointercancel`, lost pointer capture, and window blur cancel the active drag or resize without committing a mutation and without adding a history entry. If the movement remains below the click threshold, the gesture behaves as a selection click rather than a move.
+Canvas captures the active pointer when an interaction begins and releases capture on commit, cancel, `pointercancel`, lost pointer capture, or window blur.
+
+`Escape`, `pointercancel`, lost pointer capture, and window blur cancel the active drag or resize without committing a mutation and without adding a history entry. A canceled interaction restores the exact initial preview state.
 
 ### 4.3 Hit testing
 
 Hit testing is a pure function. It receives a Canvas/Scene point and the renderable widget set and returns a Widget ID or `null`.
 
-The function must respect geometry, visibility/interactivity semantics, and effective z-order. For overlapping widgets, the topmost widget wins. The implementation must define the tie-break rule for equal z-order and whether a boundary point is considered inside; these decisions must not be scattered through React event handlers.
+The function must respect geometry, visibility/interactivity semantics, and effective z-order. For overlapping widgets, the topmost widget wins. If two widgets have equal effective z-order, **active Scene document order is the deterministic tie-break**; stable Widget ID is used only as a final deterministic tie-break if document order cannot distinguish the candidates.
 
-Invisible widgets are not rendered but remain selectable through Explorer and selection bounds, in accordance with the repository UI specification. If direct Canvas hit testing for invisible widgets is intentionally excluded, that behavior must be stated and tested rather than implied.
+A point on a widget boundary is considered inside the widget for hit testing.
+
+Invisible widgets are not hit-testable directly from the Canvas. They remain selectable through Explorer and selection-bounds interactions. This behavior must be tested explicitly.
 
 ### 4.4 Selection
 
-Selection is transient UI state and must contain unique IDs. A normal click selects one widget; an empty Canvas click clears selection. `Ctrl`/`Cmd` and the repository-confirmed multi-select modifiers toggle or add selection. Selection ordering must be deterministic and must use one explicit rule, such as active Scene document order or effective z-order.
+Selection is transient UI state and must contain unique IDs. A normal click selects one widget; an empty Canvas click clears selection. `Ctrl`/`Cmd` toggles/adds selection.
 
-Selection state must be shared coherently by Canvas and Explorer. A selection change must not mutate the Project document or create a history entry. When a selection contains locked and unlocked widgets, locked widgets remain selectable and visible in the selection, but only unlocked widgets are eligible for geometry mutation.
+**Selection ordering is active Scene document/widget order.** Additive selection must preserve deterministic Scene order rather than click-arrival order. Selection arrays must never contain duplicate IDs.
+
+Selection state must be shared coherently by Canvas and Explorer. A selection change must not mutate the Project document or create a history entry.
+
+Locked widgets remain selectable and visible in selection. Only unlocked widgets are eligible for geometry mutation.
 
 ### 4.5 Marquee
 
-A pointer down on empty Canvas followed by movement beyond the drag threshold starts marquee selection. The marquee rectangle is normalized and remains transient. A widget is selected when its bounds intersect the marquee rectangle, with edge-touch behavior explicitly defined and tested. Additive marquee selection uses `Ctrl`/`Cmd` or the repository-confirmed modifier. Empty non-additive marquee selection clears the previous selection.
+A pointer down on empty Canvas followed by movement beyond the **4 CSS pixel** drag threshold starts marquee selection. The marquee rectangle is normalized and remains transient.
 
-Marquee selection must never mutate the Project or create a history entry.
+A widget is selected when its bounds intersect the marquee rectangle. **Edge-touch counts as intersection**; intersection tests are inclusive at boundaries.
+
+Additive marquee selection uses `Ctrl`/`Cmd`. Empty non-additive marquee selection clears the previous selection.
+
+Marquee selection never mutates the Project or creates a history entry.
 
 ### 4.6 Movement
 
-At pointer down, capture the initial geometry of all eligible selected widgets. During pointer movement, calculate a delta in Scene coordinates and produce transient preview geometry. Every eligible widget receives the same delta, so relative spacing is preserved.
+At pointer down, capture the initial geometry of all eligible selected widgets. During pointer movement, calculate a delta in Scene coordinates and produce transient preview geometry. Every eligible widget receives the same delta, preserving relative spacing.
 
-On pointer up, compare the preview against the initial geometry. A changed gesture dispatches exactly one `EditorApplication.setWidgetGeometries()` call and therefore one logical history entry. A no-op gesture dispatches no mutation and creates no history entry. A canceled gesture restores the exact initial preview and creates no history entry.
+On pointer up, compare preview against initial geometry. A changed gesture dispatches exactly one `EditorApplication.setWidgetGeometries()` call and therefore one logical history entry. A no-op gesture dispatches no mutation and creates no history entry. A canceled gesture restores the exact initial preview and creates no history entry.
 
-Locked widgets must not be moved. If a selection contains both locked and unlocked widgets, the locked widgets stay in place while unlocked widgets receive the common delta. If all selected widgets are locked, the interaction is a no-op and must not create a history entry.
+Locked widgets are excluded from geometry mutation. If a selection contains both locked and unlocked widgets, locked widgets remain in place while unlocked widgets receive the common delta. If all selected widgets are locked, the gesture is a no-op.
 
 ### 4.7 Resize
 
-Resize calculations are pure functions and operate on initial geometry plus a pointer delta. Left, right, top, bottom, and corner handles must support width/height changes, minimum dimensions, and negative-size prevention. When resizing from a left or top edge would cross the minimum dimension, the opposite edge must remain stable according to the chosen handle contract.
+Resize calculations are pure functions and operate on initial geometry plus pointer delta. Left, right, top, bottom, and corner handles support width/height changes, minimum dimensions, and negative-size prevention.
 
-Multi-widget resize is a product decision that must be resolved before implementation. The plan must not silently choose between independent resize and selection-bounding-box resize. Whichever behavior is approved must have explicit geometry and history tests.
+**Multi-widget resize uses the selection bounding box as the reference frame.** The active resize handle transforms the mutable selected widgets relative to that bounding box; relative positions and proportions inside the selection are preserved. Locked widgets retain their original geometry and are excluded from the transform. If no mutable widget remains, resize is a no-op.
 
-Locked widgets cannot be resized. A canceled resize must restore the exact initial geometry and create no history entry.
+The resize operation must remain one logical history entry per completed gesture. Cancellation restores the exact initial geometry and creates no history entry.
 
 ### 4.8 Snapping
 
-Snapping calculations are pure and must be separated from mutation. The planned primitives are:
+Snapping calculations are pure and separated from mutation. The planned primitives are:
 
 ```text
 snapValue(value, configuration)
@@ -153,35 +165,48 @@ snapGeometry(candidate, configuration, otherGeometries)
 calculateSnapGuides(candidate, configuration, otherGeometries)
 ```
 
-Grid snapping, nearby edge snapping, and nearby center snapping must be deterministic. Thresholds, priority between grid/edge/center snapping, axis independence, self-snap exclusion, equal-distance tie-breaks, and multi-selection reference geometry must be explicit before implementation. Snap guides are transient visualization only.
+The snap threshold is **6 Scene units**.
 
-Grid visibility must remain separate from snap enablement, as required by the UI design system.
+All eligible snap candidates within threshold are evaluated. The **nearest candidate wins** rather than using an unconditional snap-type priority. When candidates are at equal distance, the deterministic tie-break priority is:
+
+1. Grid
+2. Widget edge alignment
+3. Widget center alignment
+4. Stable candidate/Widget ID ordering
+
+Snapping is evaluated independently per axis when applicable. The active selection is excluded from self-snapping. For multi-selection, the **selection bounding box** is the snap reference geometry.
+
+Snap guides are transient visualization only. Grid visibility remains separate from snap enablement.
 
 ### 4.9 Keyboard
 
-Keyboard handlers must dispatch through application capabilities and must not mutate the Project directly. The repository-confirmed keyboard rules are:
+Keyboard handlers dispatch through application capabilities and never mutate Project directly. The canonical keyboard contract is:
 
-| Input | Planned behavior | Status to resolve |
-|---|---|---|
-| Arrow | Move selection by the normal snap-grid unit | Confirmed by UI specification |
-| `Ctrl`/`Cmd` + Arrow | Fine movement by the repository-defined grid/10 amount | Confirmed by UI specification |
-| `Shift` + `Ctrl`/`Cmd` + Arrow | Move by snap-grid × 5 | Confirmed by UI specification |
-| Delete / Backspace | `EditorApplication.deleteSelection()` | Required by Agent 2 prompt; application capability must be verified |
-| `Ctrl`/`Cmd` + A | Select all widgets in active Scene | Confirmed by UI specification |
-| Escape | Cancel active interaction | Confirmed |
-| `Ctrl`/`Cmd` + D | `EditorApplication.duplicateSelection()` | Required by Agent 2 prompt, but marked Proposed in the UI specification; resolve before implementation |
+| Input | Behavior |
+|---|---|
+| Arrow | Move selection by **1 Scene unit** |
+| `Ctrl`/`Cmd` + Arrow | Move selection by the configured **snap-grid unit** |
+| `Shift` + `Ctrl`/`Cmd` + Arrow | Move selection by **5 × snap-grid unit** |
+| Delete / Backspace | `EditorApplication.deleteSelection()` when supported |
+| `Ctrl`/`Cmd` + A | Select all widgets in active Scene |
+| Escape | Cancel active interaction |
+| `Ctrl`/`Cmd` + D | `EditorApplication.duplicateSelection()` |
 
-The prompt’s “Shift + Arrow” wording and the UI specification’s `Ctrl+Arrow` / `Shift+Ctrl+Arrow` wording are not identical. The repository’s canonical shortcut registry and product decision must settle this conflict before keyboard tests are finalized.
+The previous Agent 2 prompt wording that implied `Shift + Arrow` is superseded by this canonical shortcut table. `Ctrl/Cmd + Arrow` is the fine/grid movement modifier and `Shift + Ctrl/Cmd + Arrow` is the large movement modifier. The implementation must not add a separate `Shift + Arrow` movement mode.
+
+`Ctrl/Cmd + D` is approved because `EditorApplication.duplicateSelection()` exists in the Agent 1 canonical mutation layer. It must be implemented through that capability, not by Canvas-local duplication.
+
+Keyboard shortcuts must respect text-input/focus boundaries.
 
 ### 4.10 Context menu
 
-Canvas and Widget context menus must expose only real capabilities. Delete, duplicate, geometry movement, and property navigation must map to existing application commands or clearly defined new application methods. A command that is not implemented must be disabled or omitted; no fake command handlers or fake success logs are allowed.
+Canvas and Widget context menus expose only real capabilities. Delete, duplicate, geometry movement, and property navigation map to existing application commands or clearly defined application methods. Unsupported commands are disabled or omitted. No fake command handlers or fake success logs are allowed.
 
 ## 5. Implementation phases after approval
 
 ### Phase A — Contract and audit lock
 
-Re-read the applicable repository documents and inspect the complete current Canvas surface, including `App.tsx`, `canvas-interaction.ts`, `editor-commands.ts`, `editor-types.ts`, the Core mutation files, Domain models/factories, and all relevant tests. Resolve the open decisions in Section 6 before changing behavior. Record any dependency on another Agent’s scope instead of implementing it implicitly.
+Re-read the applicable repository documents and inspect the complete current Canvas surface, including `App.tsx`, `canvas-interaction.ts`, `editor-commands.ts`, `editor-types.ts`, the Core mutation files, Domain models/factories, and all relevant tests. Apply the approved Section 6A decisions before changing behavior. Record dependencies on another Agent’s scope instead of implementing them implicitly.
 
 ### Phase B — Pure interaction primitives
 
@@ -189,19 +214,19 @@ Create or refine small, pure, testable functions for coordinate conversion, rect
 
 ### Phase C — Interaction state machine
 
-Replace conflicting boolean flags with a clear interaction model. At minimum, interaction modes should cover `idle`, `marquee`, `dragging`, `resizing`, and `panning`; hover may remain an orthogonal transient state. State transitions must define pointer down, threshold crossing, pointer move, pointer up, Escape, pointer cancellation, lost capture, and focus loss.
+Replace conflicting boolean flags with a clear interaction model. At minimum, interaction modes should cover `idle`, `marquee`, `dragging`, `resizing`, and `panning`; hover may remain an orthogonal transient state. State transitions define pointer down, threshold crossing, pointer move, pointer up, Escape, pointer cancellation, lost capture, and focus loss.
 
 ### Phase D — React integration and rendering
 
-Connect the pure primitives to the existing store snapshot and transient preview state. Render canonical geometry when idle and preview geometry only during the active interaction. Add deterministic selection outlines, multi-selection bounds, resize handles, marquee feedback, hover feedback, active drag state, and snap guides without copying the entire Project into local state.
+Connect pure primitives to the existing store snapshot and transient preview state. Render canonical geometry when idle and preview geometry only during active interaction. Add deterministic selection outlines, multi-selection bounds, resize handles, marquee feedback, hover feedback, active drag state, and snap guides without copying the entire Project into local state.
 
 ### Phase E — Canonical command dispatch
 
-At each logical commit boundary, dispatch one application mutation for one completed drag or resize gesture. Use the existing `EditorApplication.setWidgetGeometries()`, `deleteSelection()`, and `duplicateSelection()` capabilities where available. Add an application command only when the existing API is an actual blocker; do not move mutation logic into Canvas helpers.
+At each logical commit boundary, dispatch one application mutation for one completed drag or resize gesture. Use existing `EditorApplication.setWidgetGeometries()`, `deleteSelection()`, and `duplicateSelection()` capabilities where available. Add an application command only when the existing API is an actual blocker; do not move mutation logic into Canvas helpers.
 
 ### Phase F — Keyboard and context commands
 
-Wire keyboard and context-menu behavior through the repository’s command/application layer. Respect focus and text-input boundaries so shortcuts do not interfere with editable fields. Resolve the `Ctrl+D` and arrow-modifier contract before adding tests.
+Wire keyboard and context-menu behavior through the repository’s command/application layer. Respect focus and text-input boundaries. Use the canonical shortcut table in Section 4.9.
 
 ### Phase G — Verification and regression
 
@@ -209,25 +234,58 @@ Run focused Canvas tests, the full Agent 1 test suite, type checking, production
 
 ## 6. Decisions required before implementation
 
-The following items are intentionally not guessed in this plan. They require confirmation from the repository’s canonical product/UI contract or explicit approval before implementation:
+The following decisions were initially open. They are now resolved by the approved contract in Section 6A.
 
-| Decision | Why it matters | Required output |
-|---|---|---|
-| Equal z-order tie-break | Determines deterministic hit testing | Exact ordering rule and a unit test |
-| Selection ordering | Determines stable selection arrays and multi-edit behavior | Document order, z-order, or another named rule |
-| Rectangle edge-touch | Determines marquee and hit-test boundary behavior | Inclusive/exclusive rule and tests |
-| Drag threshold | Separates click from move/marquee | Numeric CSS-pixel threshold |
-| Pointer cancellation | Prevents partial gestures from committing | Behavior for `pointercancel`, lost capture, and blur |
-| Multi-widget resize | Defines the actual UX and geometry algorithm | Bounding-box or independent-resize contract |
-| Snap threshold and priority | Prevents jitter and inconsistent guides | Numeric threshold, priority, axis/tie-break rules |
-| Multi-selection snapping | Defines the reference geometry for a group | Group bounds, active widget, or another explicit rule |
-| Keyboard step sizes | Makes keyboard movement testable | Exact normal, fine, and large step values |
-| Arrow modifier conflict | Prompt and UI spec currently differ | Canonical shortcut table |
-| `Ctrl/Cmd+D` status | Prompt requires it; UI spec marks it Proposed | Approved shortcut or documented deferral |
-| Zoom/pan gesture | Wheel/pinch and pan modifier are still Proposed in UI spec | Approved gesture and min/max/anchor behavior |
-| Invisible widget Canvas hit test | UI spec allows Explorer/selection-bounds selection | Exact Canvas behavior and test coverage |
+| Decision | Status |
+|---|---|
+| Equal z-order tie-break | Resolved: active Scene document order, stable ID final tie-break |
+| Selection ordering | Resolved: active Scene document/widget order |
+| Rectangle edge-touch | Resolved: inclusive |
+| Drag threshold | Resolved: 4 CSS pixels |
+| Pointer cancellation | Resolved: pointercancel/lost capture/window blur/Escape cancel with zero history |
+| Multi-widget resize | Resolved: selection bounding-box transform |
+| Snap threshold and priority | Resolved: 6 Scene units; nearest candidate; Grid > Edge > Center > stable ID on equal distance |
+| Multi-selection snapping | Resolved: selection bounding box |
+| Keyboard step sizes | Resolved: Arrow 1 Scene unit; Ctrl/Cmd+Arrow snap-grid; Shift+Ctrl/Cmd+Arrow 5× snap-grid |
+| Arrow modifier conflict | Resolved: Section 4.9 supersedes prior Shift+Arrow wording |
+| `Ctrl/Cmd+D` status | Resolved: approved |
+| Zoom/pan gesture | Deferred: no new product behavior is invented in Agent 2; preserve existing repository behavior and prepare only testable hooks if required |
+| Invisible widget Canvas hit test | Resolved: not Canvas-hit-testable; selectable through Explorer/selection bounds |
 
-Until these decisions are resolved, implementation may proceed only on the unambiguous pure primitives and the existing canonical pipeline; it must not invent product behavior for the unresolved items.
+### 6A. Approved interaction decisions
+
+These are canonical Agent 2 product decisions for implementation. They must not be silently changed during coding.
+
+- **Drag threshold:** 4 CSS pixels.
+- **Selection ordering:** active Scene document/widget order; unique IDs only.
+- **Equal z-order tie-break:** active Scene document order, then stable Widget ID as final deterministic tie-break.
+- **Hit-test boundary:** widget boundary points are inside.
+- **Marquee edge-touch:** inclusive; touching an edge counts as intersection.
+- **Pointer cancellation:** `pointercancel`, lost pointer capture, window blur, and Escape cancel the active interaction; no mutation and zero history entry.
+- **Locked widgets:** selectable, but excluded from geometry mutation. If no mutable widget remains, the gesture is a no-op.
+- **Multi-widget resize:** selection bounding-box transform; preserve relative positions/proportions of mutable selected widgets; locked widgets remain unchanged.
+- **Snap threshold:** 6 Scene units.
+- **Snap candidate selection:** evaluate all eligible candidates within threshold; nearest candidate wins.
+- **Snap tie-break:** Grid, then Widget Edge, then Widget Center, then stable candidate/Widget ID ordering when distances are equal.
+- **Multi-selection snapping reference:** selection bounding box.
+- **Arrow movement:** 1 Scene unit.
+- **Ctrl/Cmd + Arrow:** configured snap-grid unit.
+- **Shift + Ctrl/Cmd + Arrow:** 5 × configured snap-grid unit.
+- **Shift + Arrow alone:** not a movement shortcut.
+- **Ctrl/Cmd + D:** approved duplicate shortcut through `EditorApplication.duplicateSelection()`.
+- **Invisible widgets:** not Canvas-hit-testable; remain selectable via Explorer and selection-bounds interactions.
+- **Zoom/pan:** no new product gesture is invented in this phase; use the repository’s already-defined behavior where present and do not block the core interaction foundation on a new gesture contract.
+
+### 6B. Interaction contract precedence
+
+When implementing Agent 2, precedence is:
+
+1. Domain/runtime contract and canonical mutation semantics.
+2. This finalized Agent 2 interaction contract, especially Section 6A.
+3. UI Design System behavior that does not conflict with Section 6A.
+4. Existing prototype behavior only where it does not contradict the above.
+
+If an existing prototype conflicts with Section 6A, update the prototype to match the contract rather than preserving the old behavior.
 
 ## 7. Test plan
 
@@ -238,13 +296,13 @@ Add or extend `tests/canvas-interaction.test.ts` with deterministic tests for:
 | Group | Required coverage |
 |---|---|
 | Coordinates | Screen↔Canvas, Canvas↔Scene, zoom, pan, origin, aspect-ratio/letterbox handling |
-| Hit testing | Empty Canvas, one widget, overlap, z-order, equal-z tie-break, boundary behavior |
-| Selection | Single, clear, additive, toggle, unique IDs, deterministic ordering |
-| Marquee | Normalization, intersect, non-intersect, edge-touch, additive mode |
-| Drag | Single widget, multi-widget, common delta, locked-only no-op, mixed locked/unlocked, no-op, cancel |
-| Resize | Every edge, corners, minimum size, negative-size prevention, multi-resize contract, locked widget, cancel |
-| Snapping | Grid, edge, center, threshold, tie-break, no snap, guides, self-snap exclusion |
-| Keyboard | Arrow variants, Delete/Backspace, Escape, Ctrl/Cmd+A, approved duplicate shortcut |
+| Hit testing | Empty Canvas, one widget, overlap, z-order, equal-z tie-break, boundary behavior, invisible widget exclusion |
+| Selection | Single, clear, additive, toggle, unique IDs, deterministic Scene-document ordering |
+| Marquee | Normalization, intersect, non-intersect, inclusive edge-touch, additive mode |
+| Drag | Single widget, multi-widget, common delta, locked-only no-op, mixed locked/unlocked, no-op, cancel, 4px threshold |
+| Resize | Every edge, corners, minimum size, negative-size prevention, bounding-box multi-resize, locked widget, cancel |
+| Snapping | Grid, edge, center, 6-unit threshold, nearest-candidate selection, equal-distance tie-break, axis behavior, no snap, guides, self-snap exclusion, selection-bounds reference |
+| Keyboard | Arrow, Ctrl/Cmd+Arrow, Shift+Ctrl/Cmd+Arrow, Delete/Backspace, Escape, Ctrl/Cmd+A, Ctrl/Cmd+D |
 
 ### Integration and history tests
 
@@ -260,7 +318,7 @@ before
   -> exact after
 ```
 
-The history matrix must include one entry for single drag, multi-drag, resize, approved duplicate, and delete; zero entries for canceled drag, canceled resize, and no-op drag/resize. It must also verify that locked geometry creates no fake history entry and that the Canvas never bypasses `EditorApplication`.
+The history matrix must include one entry for single drag, multi-drag, resize, duplicate, and delete; zero entries for canceled drag, canceled resize, and no-op drag/resize. It must also verify that locked geometry creates no fake history entry and that the Canvas never bypasses `EditorApplication`.
 
 ### Regression suite
 
@@ -297,4 +355,4 @@ The intended acceptance criterion is:
 
 ## 10. Review checkpoint
 
-The next action after this planning commit is external review of this document and the unresolved decisions in Section 6. No Canvas implementation should be started until that review is complete or the remaining decisions are explicitly accepted as repository-defined behavior.
+The interaction contract has now been finalized in this planning document. No Canvas implementation should start outside the scope defined here. The next action is Agent 2 implementation against the finalized contract, followed by focused Canvas QA and full Agent 1 regression verification.
