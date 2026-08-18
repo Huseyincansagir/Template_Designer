@@ -51,7 +51,10 @@ export function conditionMatches(
 
   const source = condition.source ?? "state";
   const rawValue = (source === "setting" ? context.settings : context.values)?.[condition.stateId];
-  if (rawValue === undefined || rawValue === null) return false;
+  // An unset input never matches, but NEGATION applies to the match result,
+  // so a negated condition on an unset input is TRUE (symmetric NOT
+  // semantics: NOT(floor==6) holds while floor is unset).
+  if (rawValue === undefined || rawValue === null) return condition.negated === true;
   const value = coerceToDefinitionType(rawValue, definition.type);
   let matched = false;
 

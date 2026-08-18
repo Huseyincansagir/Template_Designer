@@ -47,4 +47,13 @@ describe("Runtime coercion (INT-55 remediation)", () => {
     expect(conditionMatches({ ...condition, operator: "greater-than" }, { values: { floor: "7" } }, foundationDeviceProfile)).toBe(true);
     expect(conditionMatches({ ...condition, operator: "not-equals" }, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(false);
   });
+
+  it("applies negation symmetrically, including on unset inputs", () => {
+    const condition = { stateId: "floor", operator: "equals" as const, value: 6, negated: true };
+    expect(conditionMatches(condition, { values: { floor: 6 } }, foundationDeviceProfile)).toBe(false);
+    expect(conditionMatches(condition, { values: { floor: 5 } }, foundationDeviceProfile)).toBe(true);
+    // NOT(floor==6) holds while floor is unset.
+    expect(conditionMatches(condition, { values: {} }, foundationDeviceProfile)).toBe(true);
+    expect(conditionMatches({ ...condition, negated: false }, { values: {} }, foundationDeviceProfile)).toBe(false);
+  });
 });

@@ -57,6 +57,7 @@ type MenuItem = {
   label: string;
   shortcut?: string;
   disabled?: boolean;
+  title?: string;
   onClick?: () => void;
 };
 
@@ -122,7 +123,7 @@ function PropertyRow({ label, value, muted = false }: { label: string; value: st
   return (
     <div className="property-row">
       <span>{label}</span>
-      <strong className={muted ? "property-muted" : undefined}>{value}</strong>
+      <strong className={muted ? "property-muted" : undefined} title={value}>{value}</strong>
     </div>
   );
 }
@@ -177,12 +178,23 @@ type GeometryFieldProps = {  label: string;
 function GeometryField({ label, field, value, multi, disabled, min, max, onCommit }: GeometryFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Escape abandons the draft synchronously: blur() fires commit() from the
+  // same render, where `draft` still holds the typed text, so the abandon
+  // decision must travel through a ref, not through state (S3-01).
+  const discardRef = useRef(false);
   useEffect(() => {
     if (!feedback) return;
     const timer = window.setTimeout(() => setFeedback(null), 2600);
     return () => window.clearTimeout(timer);
   }, [feedback]);
   const commit = () => {
+    if (discardRef.current) {
+      discardRef.current = false;
+      setDraft(null);
+      setFeedback(null);
+      return;
+    }
     if (draft === null) return;
     setDraft(null);
     const parsed = Number(draft);
@@ -193,11 +205,15 @@ function GeometryField({ label, field, value, multi, disabled, min, max, onCommi
     const clamped = Math.min(max, Math.max(min, parsed));
     setFeedback(clamped !== parsed ? `clamped to ${clamped}` : null);
     onCommit(field, clamped);
+    // A completed commit releases focus so the next Ctrl+Z targets the
+    // application, not the (now canonical) text field (S3-02).
+    inputRef.current?.blur();
   };
   return (
     <label className={`geometry-field ${feedback ? "has-feedback" : ""}`}>
       <span className="geometry-field-label">{label}<small>scene units</small></span>
       <input
+        ref={inputRef}
         type="text"
         inputMode="decimal"
         value={draft ?? (multi ? "" : String(value))}
@@ -208,8 +224,8 @@ function GeometryField({ label, field, value, multi, disabled, min, max, onCommi
         onChange={(event) => { setDraft(event.target.value); setFeedback(null); }}
         onBlur={commit}
         onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-          if (event.key === "Escape") { setDraft(null); setFeedback(null); (event.target as HTMLInputElement).blur(); }
+          if (event.key === "Enter") { event.preventDefault(); commit(); }
+          if (event.key === "Escape") { discardRef.current = true; setDraft(null); setFeedback(null); inputRef.current?.blur(); }
         }}
       />
       {feedback && <span className="geometry-feedback" id={`geometry-feedback-${label}`} role="status">{feedback}</span>}
@@ -280,12 +296,20 @@ type DraftNumberFieldProps = {
 function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: DraftNumberFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const discardRef = useRef(false);
   useEffect(() => {
     if (!feedback) return;
     const timer = window.setTimeout(() => setFeedback(null), 2600);
     return () => window.clearTimeout(timer);
   }, [feedback]);
   const commit = () => {
+    if (discardRef.current) {
+      discardRef.current = false;
+      setDraft(null);
+      setFeedback(null);
+      return;
+    }
     if (draft === null) return;
     setDraft(null);
     const parsed = Number(draft);
@@ -296,10 +320,12 @@ function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: Dr
     const clamped = Math.min(max, Math.max(min, parsed));
     setFeedback(clamped !== parsed ? `clamped to ${clamped}` : null);
     onCommit(clamped);
+    inputRef.current?.blur();
   };
   return (
     <span className={`draft-number-field ${feedback ? "has-feedback" : ""}`}>
       <input
+        ref={inputRef}
         type="text"
         inputMode="numeric"
         value={draft ?? String(value)}
@@ -308,8 +334,8 @@ function DraftNumberField({ value, disabled, min, max, ariaLabel, onCommit }: Dr
         onChange={(event) => { setDraft(event.target.value); setFeedback(null); }}
         onBlur={commit}
         onKeyDown={(event) => {
-          if (event.key === "Enter") commit();
-          if (event.key === "Escape") { setDraft(null); setFeedback(null); (event.target as HTMLInputElement).blur(); }
+          if (event.key === "Enter") { event.preventDefault(); commit(); }
+          if (event.key === "Escape") { discardRef.current = true; setDraft(null); setFeedback(null); inputRef.current?.blur(); }
         }}
       />
       {feedback && <small className="geometry-feedback" role="status">{feedback}</small>}
@@ -328,27 +354,53 @@ type DraftTextFieldProps = {
 /** Draft-per-field text input for rename surfaces: commit once on blur/Enter, Escape reverts. */
 function DraftTextField({ value, disabled, placeholder, ariaLabel, onCommit }: DraftTextFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const discardRef = useRef(false);
+  useEffect(() => {
+    if (!feedback) return;
+    const timer = window.setTimeout(() => setFeedback(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [feedback]);
   const commit = () => {
+    if (discardRef.current) {
+      discardRef.current = false;
+      setDraft(null);
+      setFeedback(null);
+      return;
+    }
     if (draft === null) return;
     setDraft(null);
     const trimmed = draft.trim();
-    if (trimmed.length === 0 || trimmed === value) return;
+    if (trimmed.length === 0) {
+      setFeedback("name cannot be empty — reverted");
+      return;
+    }
+    if (trimmed === value) {
+      inputRef.current?.blur();
+      return;
+    }
     onCommit(trimmed);
+    inputRef.current?.blur();
   };
   return (
-    <input
-      type="text"
-      value={draft ?? value}
-      disabled={disabled}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      onChange={(event) => setDraft(event.target.value)}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") commit();
-        if (event.key === "Escape") { setDraft(null); (event.target as HTMLInputElement).blur(); }
-      }}
-    />
+    <span className="draft-text-field">
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft ?? value}
+        disabled={disabled}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        onChange={(event) => { setDraft(event.target.value); setFeedback(null); }}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") { event.preventDefault(); commit(); }
+          if (event.key === "Escape") { discardRef.current = true; setDraft(null); setFeedback(null); inputRef.current?.blur(); }
+        }}
+      />
+      {feedback && <small className="geometry-feedback" role="status">{feedback}</small>}
+    </span>
   );
 }
 
@@ -367,8 +419,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
   const [leftDockTab, setLeftDockTab] = useState<"explorer" | "assets">("explorer");
   const [rightDockTab, setRightDockTab] = useState<"properties" | "simulator">("properties");
-  const [leftWidth, setLeftWidth] = useState(286);
-  const [rightWidth, setRightWidth] = useState(298);
+  const clampPanelWidth = (preferred: number) => {
+    const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
+    return Math.round(Math.min(preferred, Math.max(220, viewportWidth * 0.18)));
+  };
+  const [leftWidth, setLeftWidth] = useState(() => clampPanelWidth(286));
+  const [rightWidth, setRightWidth] = useState(() => clampPanelWidth(298));
   const [menuOpen, setMenuOpen] = useState<MenuKey | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -469,8 +525,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   // Selection reconciliation (INT-25/Scenario F): after undo/redo (or any
-  // project change) a selection that no longer resolves is cleared, and
-  // stale ids are pruned — no surface may keep pointing at a deleted node.
+  // project change) a selection that no longer resolves is cleared, stale
+  // ids are pruned, and the selection LABEL is re-derived from the canonical
+  // node so an undone rename can never leave a stale header (S3-03).
   useEffect(() => {
     setSelectedIds((current) => {
       const next = current.filter((id) => Boolean(resolveCanonicalNode(project, id)));
@@ -478,7 +535,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     });
     setSelection((current) => {
       if (!current) return current;
-      return resolveCanonicalNode(project, current.id) ? current : null;
+      const resolved = resolveCanonicalNode(project, current.id);
+      if (!resolved) return null;
+      const label = "name" in resolved.node ? String(resolved.node.name) : current.label;
+      return label === current.label ? current : { ...current, label };
     });
   }, [project]);
 
@@ -611,8 +671,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const width = 120;
     const height = 80;
-    const x = Math.max(0, Math.round(((activeRotation.width - width) / 2) / snapGridSize) * snapGridSize);
-    const y = Math.max(0, Math.round(((activeRotation.height - height) / 2) / snapGridSize) * snapGridSize);
+    // Cascade the insertion point so repeated Add Widget never stacks
+    // identical boxes on top of each other (S4-01): each new widget steps
+    // by the snap grid from the scene centre, wrapping after 8 steps.
+    const cascade = (activeScene?.widgets.length ?? 0) % 8;
+    const x = Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * snapGridSize) / snapGridSize) * snapGridSize);
+    const y = Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * snapGridSize) / snapGridSize) * snapGridSize);
     const result = editorApplication.addWidget(sceneId, widgetType, { x, y, width, height });
     if (!result.changed) {
       logAction("Add Widget failed", "WARN");
@@ -923,8 +987,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const resetLayout = () => {
     setPanelModes({ ...defaultPanelLayout });
-    setLeftWidth(286);
-    setRightWidth(298);
+    setLeftWidth(clampPanelWidth(286));
+    setRightWidth(clampPanelWidth(298));
     logAction("Workspace layout reset");
   };
 
@@ -1627,11 +1691,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Save", shortcut: shortcutFor("save"), disabled: !documentSnapshot.isDirty, onClick: saveDocument },
     ],
     Edit: [
-      { label: "Undo", shortcut: shortcutFor("undo"), disabled: !commandHistory.canUndo, onClick: undo },
-      { label: "Redo", shortcut: shortcutFor("redo"), disabled: !commandHistory.canRedo, onClick: redo },
-      { label: "Cut", shortcut: shortcutFor("cut"), disabled: !selectedWidgetIds.length, onClick: cutSelection },
-      { label: "Copy", shortcut: shortcutFor("copy"), disabled: !selectedWidgetIds.length, onClick: copySelection },
-      { label: "Paste", shortcut: shortcutFor("paste"), disabled: !clipboard, onClick: pasteSelection },
+      { label: "Undo", shortcut: shortcutFor("undo"), disabled: !commandHistory.canUndo, title: commandHistory.canUndo ? undefined : "No commands to undo", onClick: undo },
+      { label: "Redo", shortcut: shortcutFor("redo"), disabled: !commandHistory.canRedo, title: commandHistory.canRedo ? undefined : "No commands to redo", onClick: redo },
+      { label: "Cut", shortcut: shortcutFor("cut"), disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? undefined : "Requires a selected widget", onClick: cutSelection },
+      { label: "Copy", shortcut: shortcutFor("copy"), disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? undefined : "Requires a selected widget", onClick: copySelection },
+      { label: "Paste", shortcut: shortcutFor("paste"), disabled: !clipboard, title: clipboard ? undefined : "Nothing copied", onClick: pasteSelection },
       { label: "Delete Selection", shortcut: "Delete", disabled: !selectedIds.length, onClick: deleteSelectionCommand },
       { label: "Reset Layout", onClick: resetLayout },
     ],
@@ -1645,7 +1709,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     ],
     Project: [
       { label: "Validate Project", onClick: () => { if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
-      ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name}`, disabled: profile.id === project.deviceProfileId, onClick: () => setDeviceProfile(profile.id) })),
+      ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name}`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : undefined, onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
     ],
     Theme: [
@@ -1766,7 +1830,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{selection?.detail ?? "Nothing selected · Project context"}</small></div></div>
         {selection && node ? <div className="properties-scroll">
           <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField value={String(node.node.name)} disabled={false} ariaLabel="Display name" onCommit={renameSelectedNode} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
-          <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
+          <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
             <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.width ?? 0} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={activeRotation?.height ?? 0} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
@@ -1844,11 +1908,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     <div className="app-shell" onClick={() => menuOpen && setMenuOpen(null)}>
       <header className="application-bar">
         <div className="brand-block"><span className="brand-mark">TD</span><div><strong>Template Designer</strong><span className="muted">Design Studio · Foundation</span></div></div>
-        <nav className="menu-bar" aria-label="Application menu">{menuKeys.map((menu) => <div key={menu} className="menu-item-wrap"><button type="button" className={`menu-button ${menuOpen === menu ? "is-open" : ""}`} aria-haspopup="menu" aria-expanded={menuOpen === menu} onClick={(event) => { event.stopPropagation(); setMenuOpen((current) => current === menu ? null : menu); }}>{menu}</button>{menuOpen === menu && <div className="menu-popover" onClick={(event) => event.stopPropagation()}>{menuItems[menu].map((item) => <button key={item.label} type="button" className="menu-command" disabled={item.disabled} onClick={item.onClick}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>
+        <nav className="menu-bar" aria-label="Application menu">{menuKeys.map((menu) => <div key={menu} className="menu-item-wrap"><button type="button" className={`menu-button ${menuOpen === menu ? "is-open" : ""}`} aria-haspopup="menu" aria-expanded={menuOpen === menu} onClick={(event) => { event.stopPropagation(); setMenuOpen((current) => current === menu ? null : menu); }}>{menu}</button>{menuOpen === menu && <div className="menu-popover" onClick={(event) => event.stopPropagation()}>{menuItems[menu].map((item) => <button key={item.label} type="button" className="menu-command" disabled={item.disabled} title={item.title} onClick={item.onClick}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>
         <div className="topbar-actions"><span className="mode-chip"><span className="live-dot" /> {viewMode === "design" ? "Design Mode" : "Preview Mode"}</span><span className={`mode-chip ${documentSnapshot.isDirty ? "is-dirty" : "is-clean"}`}>{documentSnapshot.isDirty ? "Unsaved changes" : "Saved"}</span><button type="button" className="toolbar-button primary" onClick={requestNewProject}>New Project</button><button type="button" className="toolbar-button" disabled={!commandHistory.canUndo || canvasPointer.mode !== "idle"} onClick={undo} title={commandHistory.canUndo ? "Undo last command" : "No commands to undo"}>Undo</button><button type="button" className="toolbar-button" disabled={!commandHistory.canRedo || canvasPointer.mode !== "idle"} onClick={redo} title={commandHistory.canRedo ? "Redo last command" : "No commands to redo"}>Redo</button><button type="button" className="toolbar-button settings-button" onClick={() => setSettingsOpen(true)} title="Program Settings">⚙ Settings</button></div>
       </header>
 
-      <div className="document-tabs" aria-label="Open documents"><div className="document-tab-list"><div className="document-tab active"><button type="button" className="document-tab-main" onClick={() => logAction(`${project.name} is the open document`, "EVENT")}><span className="document-tab-icon">▧</span><span>{project.name}</span>{documentSnapshot.isDirty && <span className="dirty-indicator" title="Unsaved changes" />}</button><button type="button" className="tab-close" aria-label="The open document cannot be closed" onClick={() => logAction("The open document cannot be closed; use New Project", "WARN")} disabled>×</button></div></div><span className="document-tab-note">Single document foundation · {documentSnapshot.isDirty ? "Dirty" : "Clean"}</span><div className="tab-actions"><button type="button" className="icon-button" title="Reset layout" onClick={resetLayout}>↺</button></div></div>
+      <div className="document-tabs" aria-label="Open documents"><div className="document-tab-list"><div className="document-tab active"><button type="button" className="document-tab-main" onClick={() => logAction(`${project.name} is the open document`, "EVENT")}><span className="document-tab-icon">▧</span><span>{project.name}</span>{documentSnapshot.isDirty && <span className="dirty-indicator" title="Unsaved changes" />}</button><button type="button" className="tab-close" aria-label="The open document cannot be closed" title="The open document cannot be closed; use New Project" onClick={() => logAction("The open document cannot be closed; use New Project", "WARN")} disabled>×</button></div></div><span className="document-tab-note">Single document foundation · {documentSnapshot.isDirty ? "Dirty" : "Clean"}</span><div className="tab-actions"><button type="button" className="icon-button" title="Reset layout" onClick={resetLayout}>↺</button></div></div>
 
       <main className="workspace-stack" style={{ gridTemplateRows: workspaceRows }}>
         <div className="editor-workspace" style={{ gridTemplateColumns: editorColumns }}>
@@ -1870,7 +1934,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       } else {
         setContextMenu(null);
       }
-    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span>{activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={() => addWidget(activeProfile.supportedWidgetTypes[0])}>Add Widget</button> : null}</div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>{activeRotation ? `R${activeRotation.angle}` : "—"}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && !resolvedSelection?.scene && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? "Add a widget to the active Scene" : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
@@ -1884,7 +1948,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
       <footer className="statusbar"><span><span className={`status-led ${validation.valid ? "" : "is-error"}`} aria-hidden="true" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span aria-live="polite">{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 
-      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{["equals", "not-equals", "greater-than", "less-than", "contains"].map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId} onClick={addBinding}>Add Binding</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{["equals", "not-equals", "greater-than", "less-than", "contains"].map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId} onClick={addBinding}>Add Binding</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation"><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={cancelSettings}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={cancelSettings}>Cancel</button><button type="button" className="settings-button-primary" onClick={saveSettings}>Save / Apply &amp; Close</button></div></footer></section></div>}
 
       {confirmState && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CONFIRMATION</span><h2 id="confirm-title">{confirmState.title}</h2></div></header><div className="confirm-body"><p>{confirmState.message}</p></div><footer className="settings-footer"><div><button type="button" className="settings-button-secondary" onClick={() => setConfirmState(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { const action = confirmState.onConfirm; setConfirmState(null); action(); }}>{confirmState.confirmLabel}</button></div></footer></section></div>}
