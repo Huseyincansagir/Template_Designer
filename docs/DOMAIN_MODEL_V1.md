@@ -7,16 +7,21 @@ Bu belge, mevcut ürün kararlarını platformdan bağımsız domain modeline ç
 ```text
 Project
 ├── DeviceProfile
-├── Theme[]
+├── ThemeProjectGroup[]
 ├── Asset[]
 └── ProjectSettings
 
-Theme
-├── Canvas
+ThemeProjectGroup
+└── ThemeProject[]
+
+ThemeProject
+├── Rotation[4]
+├── ThemeDefaults
+└── Resources
+
+Rotation
 ├── Scene[]
-├── Widget[]
-├── BoundingGroup[]
-└── ThemeDefaults
+└── Widget[]
 
 DeviceProfile
 ├── display
@@ -27,7 +32,8 @@ DeviceProfile
 ├── runtimeSettings[]
 ├── languages[]
 ├── fonts[]
-├── styles[]
+├── digitStyles[]
+├── directionStyles[]
 └── audioCapabilities
 ```
 
@@ -41,7 +47,7 @@ Project
 ├── schemaVersion
 ├── name
 ├── deviceProfileId
-├── themes
+├── themeProjectGroups
 ├── assets
 └── metadata
 ```
@@ -50,7 +56,7 @@ Project
 
 Cihaz/firmware capability sözleşmesidir. Designer kullanıcıya rastgele runtime state veya setting oluşturmaz.
 
-Profile; desteklenen widget/media/formatları, runtime state registry'yi, runtime setting registry'yi, dilleri, fontları, stilleri ve display/audio capability'lerini tanımlar.
+Profile; desteklenen widget/media/formatları, runtime state registry'yi, runtime setting registry'yi, dilleri, fontları, digit/direction stillerini ve display/audio capability'lerini tanımlar.
 
 Gerçek ARKEL raw protocol mapping bu modelin parçası değildir.
 
@@ -69,15 +75,15 @@ RuntimeStateDefinition
 └── simulator
 ```
 
-Mevcut elevator kapsamındaki üç uyarı:
+Mevcut elevator kapsamındaki bilinen warningler:
 
 ```text
 service_out
- overload
+overload
 fire
 ```
 
-Bunların dışında yeni warning varsayılmaz. Diğer runtime state'ler warning değildir; örneğin floor, up/down ve kapı durumları ayrı runtime state'lerdir.
+Bunlar global sabit liste olarak Designer'a gömülmez. Diğer runtime state'ler warning değildir; örneğin floor, direction ve kapı durumları ayrı runtime state'lerdir. Kesin registry aktif DeviceProfile tarafından belirlenir.
 
 ## Runtime Setting
 
@@ -96,9 +102,21 @@ RuntimeSettingDefinition
 
 Örnekler: language, active_theme, arrow_style, digit_style, voice_pack, announcement_volume, background_music_volume, video_audio_volume. Kesin liste firmware profile tarafından belirlenir.
 
-## Theme / Scene / Widget
+## Theme Project / Rotation / Scene / Widget
 
-Theme ekran tasarımının editable modelidir. Scene editor/simulator organizasyonu için kullanılabilir; gerçek runtime state çözümlemesinin yerine geçmez.
+Theme Project gerçek editable temadır ve tam olarak dört rotation/form içerir:
+
+```text
+ThemeProject
+├── R0
+├── R90
+├── R180
+└── R270
+```
+
+Her Rotation kendi Scene ve Widget düzenini taşır. Rotation/Form V1'de aynı fiziksel yön/geometri kavramıdır.
+
+Scene, runtime state değildir. Scene; aktif runtime state'ler ve scene activation conditions sonucunda runtime'da seçilen tek active presentation'dır. Bir Rotation birden fazla Scene içerebilir.
 
 Widget canonical görsel nesnedir:
 
@@ -113,7 +131,7 @@ Widget
 └── style
 ```
 
-Widget type ile media type ayrı kavramlardır.
+Widget type ile media type ayrı kavramlardır. Digit ve Direction semantic widget'tır; generic Media inheritance kullanmazlar.
 
 ## Media Slide
 
@@ -123,10 +141,8 @@ Popup diye ayrı bir widget veya domain nesnesi yoktur. Kata özel üst içerik 
 MediaSlide
 ├── media: image | video
 ├── duration
-├── videoLoop
-├── videoLoopCount
+├── loop/repeat policy
 ├── audio?
-├── audioRepeatCount?
 ├── conditions[]
 └── zIndex
 ```
@@ -135,12 +151,12 @@ MediaSlide
 
 ## Condition / Priority
 
-Condition firmware-owned state/setting registry'den seçim yapar. Presentation priority 0–10 arasındadır.
+Condition firmware-owned state/setting registry'den seçim yapar. Presentation priority 0–10 arasındadır. Daha yüksek priority kazanır; aynı priority'de runtime'da daha sonra aktif olan Scene kazanır.
 
 Runtime priority ile visual z-order ve Bounding Group birbirinden bağımsızdır.
 
 ```text
-Runtime Priority → hangi presentation davranışı kazanır
+Runtime Priority → hangi Scene/presentation davranışı kazanır
 Z-order          → hangi içerik üstte çizilir
 Bounding Group   → geometrik hizalama
 ```
@@ -151,7 +167,7 @@ Sahnedeki içerikler üst üste compositing edilir. Background en arkadadır. Bi
 
 ## Bounding Group
 
-Opsiyonel layout container/composition nesnesidir; her widget kullanmak zorunda değildir.
+Opsiyonel layout/composition ilişkisidir; Widget değildir ve Scene/State hierarchy'sini değiştirmez.
 
 ```text
 BoundingGroup
@@ -164,9 +180,7 @@ BoundingGroup
 └── children[]
 ```
 
-`fixed_slots` ve `dynamic_active_items` davranışları desteklenebilir.
-
-Özellikle floor + direction veya birden fazla uyarının ortak referansa göre hizalanmasını sağlar. 1 child varsa child merkezi; 2 child varsa ikisinin arasındaki merkez; 3 child varsa ortadaki child; 4 child varsa 2 ve 3 arasındaki merkez; 5 child varsa 3. child group referans merkezine gelir.
+1 child varsa child merkezi; 2 child varsa ikisinin arasındaki merkez; 3 child varsa ortadaki child; 4 child varsa 2 ve 3 arasındaki merkez; 5 child varsa 3. child group referans merkezine gelir. Bu V1 geometry/layout davranışıdır; klasik widget-to-widget anchor graph değildir.
 
 ## Floor Number
 
@@ -176,7 +190,7 @@ Designer floor değerini yeniden yorumlamaz. Digit placement/alignment matemati�
 
 ## Direction
 
-Runtime state tarafından belirlenir: up, down veya hidden/none. Default/custom arrow styles profile tarafından sağlanabilir. Up/down varyantları bağımsız değiştirilebilir.
+Runtime state tarafından belirlenir: profile-defined up/down/none benzeri değerler olabilir. Default/custom arrow styles profile tarafından sağlanabilir. Up/down varyantları bağımsız değiştirilebilir. Direction generic Media değildir; custom style capability'si image/video referansı kullanabilir.
 
 ## Style
 
@@ -184,11 +198,11 @@ Style görsel şekil/appearance ailesidir. Arrow ve digit style ayrı ailelerdir
 
 ## Localization
 
-Dil firmware runtime setting olabilir. Aynı template birden fazla dil için text, audio ve gerektiğinde media/digit varyantları taşıyabilir.
+Program UI dili ve firmware/template runtime dili ayrı kavramlardır. Runtime language; text, announcement audio, media variants ve gerektiğinde floor/digit content resolution üzerinde etkili olabilir.
 
 ## Audio
 
-Media Slide audio'sunun kendi repeat count'u vardır. Firmware runtime settings announcement/background-music/video-audio volume değerlerini değiştirebilir. Designer template defaultlarını hazırlayabilir; runtime audio arbitration Designer'ın işi değildir.
+Media Slide audio'sunun kendi loop/repeat policy'si vardır. Firmware runtime settings announcement/background-music/video-audio volume değerlerini değiştirebilir. Designer template defaultlarını ve 0–100 audio priority/ducking/override policy metadata'sını hazırlayabilir; gerçek runtime audio arbitration Designer'ın işi değildir.
 
 ## Asset
 
@@ -210,11 +224,13 @@ Simulator ve ileride firmware kavramsal olarak şu zinciri takip eder:
 ```text
 Runtime States + Runtime Settings
               ↓
-         Conditions
+      Scene Conditions
               ↓
       Presentation Priority
               ↓
-      Active Content Set
+        ONE Active Scene
+              ↓
+        Widget Bindings
               ↓
       Bounding/Layout
               ↓
