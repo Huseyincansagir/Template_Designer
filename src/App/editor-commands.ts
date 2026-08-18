@@ -20,19 +20,19 @@ export type EditorCommandDescriptor = {
 };
 
 /**
- * UI command palette/context-menu descriptors. Execution is intentionally
- * injected later through the canonical application command/use-case layer.
+ * UI command palette/context-menu descriptors. Execution is routed through
+ * the canonical application command/use-case layer by the application shell.
  */
 export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "project.add-theme-project", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
   { id: "theme.add-rotation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
   { id: "rotation.add-scene", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
-  { id: "scene.reorder", label: "Reorder Scene", supportedSelectionKinds: ["scene"], disabledReason: "Ordering command is not connected" },
-  { id: "scene.move", label: "Move Scene", supportedSelectionKinds: ["scene"], disabledReason: "Move command is not connected" },
-  { id: "widget.reorder", label: "Reorder Widget", supportedSelectionKinds: ["widget"], disabledReason: "Ordering command is not connected" },
-  { id: "widget.move", label: "Move Widget", supportedSelectionKinds: ["widget"], disabledReason: "Geometry command is not connected" },
+  { id: "scene.reorder", label: "Reorder Scene", supportedSelectionKinds: ["scene"] },
+  { id: "scene.move", label: "Move Scene", supportedSelectionKinds: ["scene"] },
+  { id: "widget.reorder", label: "Reorder Widget", supportedSelectionKinds: ["widget"] },
+  { id: "widget.move", label: "Move Widget", supportedSelectionKinds: ["widget"] },
   { id: "widget.edit-properties", label: "Edit Properties", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group", "project", "asset"] },
-  { id: "canvas.delete-selection", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget"], disabledReason: "Delete command is not connected" },
+  { id: "canvas.delete-selection", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget"] },
 ];
 
 export function commandsForSelection(selectionKind: SelectionKind | undefined): readonly EditorCommandDescriptor[] {
