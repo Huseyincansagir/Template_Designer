@@ -75,7 +75,7 @@ Dock Manager modern IDE/CAD davranışını izler. Panel `dock`, `undock`, `resi
 | Resize/split | Splitter ile oran değişir; canvas geometry'si değişmez. |
 | Auto-hide/collapse | Panel kenar rail'ine veya minimum başlığa küçülür; tekrar açıldığında önceki konum korunur. |
 | Close/reopen | Panel kapanır; Window/View komutlarıyla geri açılır. |
-| Multi-monitor | Floating panel başka monitöre taşınabilir; workspace state saklanır. |
+| Multi-monitor | **PROPOSED / FUTURE:** Floating panel başka monitöre taşınabilirse workspace state saklanır; destek yoksa tek pencere fallback'i kullanılır. |
 | Reset Layout | Kullanıcı onayıyla bilinen workspace düzenine dönülür; işlem undoable command olabilir. |
 
 Panel sürüklenirken canvas'ın içeriği gerilmez veya kaybolmaz. Drag iptalinde panel önceki konumuna güvenli biçimde döner. Workspace; dock konumlarını, açık tabları, floating pencereleri, görünürlükleri, pencere boyutlarını ve aktif layout profilini saklar. Program default layout ile project-specific workspace state birbirinden ayrıdır. [2] [3]
@@ -89,22 +89,22 @@ Workspace
 └── Project
     └── Theme Project Group
         └── Theme Project
-            ├── Rotation 0 / r0
-            ├── Rotation 90 / r90
-            ├── Rotation 180 / r180
-            └── Rotation 270 / r270
+            ├── Rotation R0         # 0°, profile resolution
+            ├── Rotation R90        # 90°, profile resolution
+            ├── Rotation R180       # 180°, profile resolution
+            └── Rotation R270       # 270°, profile resolution
                 └── Scene
                     └── Widget
 ```
 
-**Theme Project gerçek temadır ve dört rotation/form içerir. Rotation ve Form V1'de aynı fiziksel yön/geometri kavramıdır.** Required rotation'lar sessizce silinemez veya eksik bırakılarak publish edilemez. Scene/rotation işlemleri yalnız active DeviceProfile ve canonical domain kuralları izin veriyorsa gösterilir; eksik required rotation veya scene validation'da açıkça raporlanır. [1]
+**Theme Project gerçek temadır ve dört rotation/form içerir: `R0`, `R90`, `R180`, `R270`. Rotation ve Form V1'de aynı fiziksel yön/geometri kavramıdır.** Eksik required rotation publish/export validation'ında hata oluşturabilir; UI rotation delete işlemini mutlak olarak yasaklamaz ve uygun rotation'ın geri eklenmesini sağlar. Scene/rotation işlemleri yalnız active DeviceProfile ve canonical domain kuralları izin veriyorsa gösterilir; eksik required rotation veya scene validation'da açıkça raporlanır. [1]
 
 | Node | Gösterilen bilgi | Uygun komut örnekleri |
 |---|---|---|
 | Workspace | Açık projeler ve workspace layout | Open/Close Workspace, layout seçimi |
 | Project | SD-card-level project, profile, dirty ve validation durumu | Open, Rename, Close, Project Settings |
-| Theme Project Group | Tema grubu | Add/Remove/Invert yalnız domain izin veriyorsa |
-| Theme Project | Tema adı, dört form hazır durumu ve validation özeti | Open, Duplicate, Rename, Publish |
+| Theme Project Group | Tema grubu | Add/Remove yalnız domain izin veriyorsa |
+| Theme Project | Tema adı, dört form hazır durumu ve validation özeti | Open, Duplicate, Rename, Delete, `Create Theme Project as Inverted`, Publish |
 | Rotation/Form | Orientation, resolution ve document durumu | Open, Rename, Required olmayan öğede Remove |
 | Scene | Ad, priority, condition, active/validation durumu | Add, Duplicate, Rename, Test, Edit |
 | Widget | Kullanıcı adı, type, visibility/lock ve validation | Add, Rename, Duplicate, Delete, Z-order |
@@ -113,7 +113,7 @@ Workspace
 
 Project Explorer state listelerini global hard-code etmez. Scene condition, warning ve runtime state seçenekleri DeviceProfile registry'den gelir. Kullanıcıya `Custom State`, generic `Popup Widget`, klasik widget-to-widget anchor graph veya profile'da olmayan widget komutu sunulmaz. `Asset Depot/Asset Browser` ayrı bir library/depot tool window'dur. [1] [8]
 
-Drag/drop işlemleri domain command'ına dönüşür. Uyumlu nesne normal şekilde taşınır; `Ctrl` ile kopyalama yapılabilir. Project, Theme Project, Rotation veya Scene arasında taşıma yapılırken source/target DeviceProfile ve capability uyumu kontrol edilir. Uyuşmazlıkta sessiz taşıma yapılmaz; conflict dialog, kaynak-hedef farkı ve uygulanabilir seçenekler gösterilir. Windows Explorer'dan gelen dosyalar yalnız uygun Resources hedeflerine bırakılır; canvas'a dosya bırakmak widget oluşturmaz. [3] [9]
+Drag/drop işlemleri domain command'ına dönüşür. Uyumlu nesne normal şekilde taşınır; `Ctrl` ile kopyalama yapılabilir. Project, Theme Project, Rotation veya Scene arasında taşıma yapılırken source/target DeviceProfile ve capability uyumu kontrol edilir. Uyuşmazlıkta sessiz taşıma yapılmaz; conflict dialog, kaynak-hedef farkı ve uygulanabilir seçenekler gösterilir. Windows Explorer'dan gelen dosya Project Explorer'da bırakılan hedefe göre domain kurallarıyla işlenir. Hedef destekliyorsa Scene, Resources veya diğer uygun project location'a gider; desteklenmiyorsa `Unsupported Files` alanına alınır. Canvas'a dosya bırakmak widget oluşturmaz. [3] [9]
 
 ## 5. Application Bar
 
@@ -204,6 +204,8 @@ Validation / preview
 Widget Type semantic nesnenin anlamıdır; Media Type ise kullanılan image/video/audio içeriğinin biçimidir. Direction veya Digit gibi semantic widget'lar profile izin veriyorsa image/video content kullanabilir. UI bu ayrımı kullanıcıya yeterince açık gösterir fakat firmware iç implementation ayrıntısını gereksiz yere açmaz. [8]
 
 Widget ortak alanları stable ID, display name, type, enabled/visible, geometry, Z-order, style/content reference ve runtime binding'dir. Teknik ID kullanıcıya değiştirilebilir görünen isim gibi sunulmaz. Widget başka Scene'e kopyalandığında varsayılan olarak Scene-specific instance oluşur; diğer Scene'lere yayma explicit command ile yapılır.
+
+Bounding Group widget değildir; Arrow + Digit gibi nesnelerin ortak center/reference ve alignment ilişkisini tanımlayan opsiyonel layout/composition grouping mekanizmasıdır. Geometric center davranışı item sayısına göre gösterilebilir: 1 item kendi center'ı; 2 item ortak merkez; 3 item ortadaki reference; 4 item ikinci ve üçüncü arasındaki merkez; 5 item üçüncü item center'ı. Group move, align, center, duplicate ve Properties ile yönetilir fakat widgetlerin gerçek parent/Scene hierarchy'sini değiştirmez. `Fixed Slots` ve `Dynamic Active Items` V1 domain'inin zorunlu modları değildir; klasik widget-to-widget anchor graph oluşturulmaz.
 
 ### Digit/Floor editing
 
@@ -352,14 +354,14 @@ Asset Browser, Asset Depot/library görünümünü sağlayan dockable tool windo
 | Audio | Play/Pause, seek/progress, duration ve uygun volume |
 | Digit Styles | Profile/default/custom digit style kaynakları |
 | Direction Styles | Profile/default/custom direction style kaynakları |
-| Warning Signs / semantic categories | Profile tarafından ilan edilen kategoriler |
+| Warning Signs | Gerektiğinde profile/domain tarafından ilan edilen Warning Sign classification/folder |
 | Unsupported Files | Normal preview/widget/export akışına kapalı teknik alan |
 
 **Fonts Asset Browser'da bağımsız asset kategorisi değildir.** Normal Text, firmware font reference kullanır; Digit/Floor widget font/glyph sistemi kullanmaz ve Asset Browser font/glyph kategorisi sunmaz. [1] [8]
 
 Asset preview playback'i template widget playback policy'den bağımsızdır. Asset metadata'da display name, stable ID, file, type, format, size, duration, resolution ve color format gösterilebilir. Used/default/profile asset'ler badge veya `Used By` bilgisiyle işaretlenebilir.
 
-Windows Explorer'dan gelen dosyalar yalnız Project Explorer/Theme Resources hedeflerine bırakılır. Supported dosya uygun resource kategorisine, unsupported dosya `Unsupported Files` alanına gider. Unsupported Files widget olarak kullanılamaz ve normal export'a dahil edilmez. V1 export kapsamı açıkça **Resources + Used assets + Default assets** kümesidir; Asset Depot'un kullanılmayan içeriği export edilmez. [1] [9]
+Windows Explorer'dan gelen dosyalar Project Explorer'da bırakılan hedefin domain kurallarına göre işlenir. Supported dosya hedef destekliyorsa Scene, Theme Resources veya diğer uygun project location'a gider; unsupported dosya `Unsupported Files` alanına alınır. Unsupported Files widget olarak kullanılamaz ve normal export'a dahil edilmez. V1 export kapsamı açıkça **Resources + Used assets + Default assets** kümesidir; Asset Depot'un kullanılmayan içeriği export edilmez. [1] [9]
 
 Stable ID, display name ve physical filename'dan ayrıdır. UI display name'i kullanıcı dostu biçimde gösterir; stable ID salt okunur teknik metadata olarak sunulur. Rename veya safe replacement stable ID'yi değiştirmez. Stable ID gerektiğinde Theme/Project/Rotation gibi hiyerarşik context'leri deterministik biçimde encode edebilir; exact string formatı ayrı implementation detail'dir. Aynı asset farklı Theme'lerde duplicate/reference edilebilir ve bu tek başına hata değildir; yalnızca deployment scope içinde collision oluşmamalıdır. Dependency'li asset silinmek istenirse Used By ve replacement/removal seçenekleri gösterilir.
 
@@ -437,7 +439,7 @@ Context menu'lar Canvas, Widget, Scene, Rotation/Form, Theme Project, Project, A
 | Widget | Duplicate, Delete, Lock, Hide, Bring Forward, Send Backward, Properties, Binding |
 | Scene | Add, Duplicate, Rename, Test, Priority, Binding, Validation |
 | Rotation/Form | Open, Rename, Restore if allowed, Validate, Publish readiness |
-| Theme Project | Rename, Duplicate, Resources, Theme Defaults, Publish |
+| Theme Project | Rename, Duplicate, `Create Theme Project as Inverted`, Resources, Theme Defaults, Publish |
 | Project | Open, Project Settings, Validate, Build Package, Deployment |
 | Asset/Resource | Preview, Replace, Rename, Used By, Reveal, Remove |
 
@@ -460,7 +462,7 @@ Shortcut registry tek kaynaktır ve conflict tespiti yapar. Canonical veya promp
 | Arrow | Normal snap-grid hareketi | CONFIRMED |
 | `Ctrl+Arrow` | Snap grid / 10 fine movement | CONFIRMED |
 | `Shift+Ctrl+Arrow` | Snap grid × 5 movement | CONFIRMED |
-| `Ctrl+D` | Duplicate mode veya duplicate command | CONFIRMED |
+| `Ctrl+D` | Duplicate için shortcut registry'ye aday; mevcut ürün kararı değildir | PROPOSED |
 | Mouse click | Select/focus; boş canvas'ta selection clear | CONFIRMED |
 | `Ctrl/Shift + click` | Multi-select toggle | CONFIRMED |
 | Marquee drag | Uygun editor context'inde multi-select | PROPOSED |
@@ -474,7 +476,7 @@ Document Tabs, açık çalışma belgelerini gösterir; domain nesnesinin kendis
 
 Örnek tab başlıkları `Theme 01 · R0`, `Theme 01 · R90`, `Theme 01 · R180` ve `Theme 01 · R270` biçiminde olabilir. Scene adı gerekiyorsa `Theme 01 · R0 · Scene Fire` yalnız context yardımcısı olarak eklenir. Tab kapatmak Rotation/Form veya Scene'i silmez.
 
-Tab'lar active/inactive, reorder, close, close others, close all, pin/unpin, detach/floating ve başka monitöre taşıma davranışlarını destekleyebilir. Dirty document başlığında belirgin işaret taşır; close sırasında kaydetme kararı kullanıcıya bırakılır. Project Explorer'dan Rotation/Form seçildiğinde ilgili document tab aktive edilir veya açılır.
+Tab'lar active/inactive, reorder, close, close others, close all, pin/unpin ve desteklenirse detach/floating davranışlarını destekleyebilir. Başka monitöre taşıma **PROPOSED / FUTURE** bir yetenektir. Dirty document başlığında belirgin işaret taşır; close sırasında kaydetme kararı kullanıcıya bırakılır. Project Explorer'dan Rotation/Form seçildiğinde ilgili document tab aktive edilir veya açılır.
 
 ## 21. Responsive Layout
 
@@ -648,6 +650,36 @@ Bu ikinci geçişte korunan doğru kararlar; professional shell, dockable/floati
 Düzeltilen veya netleştirilen noktalar; canonical hierarchy'nin dört Rotation/Form ile sabitlenmesi, same-priority winner'ın runtime'da son aktif Scene olarak açıkça yazılması, Project Explorer order'ın tie-break olmaktan çıkarılması, `service_out` warning ID'sinin canonicallaştırılması, Asset Browser'dan Fonts kategorisinin kaldırılması, V1 Media Sequence/timeline yüzeyinin zorunlu olmaktan çıkarılması, `1280×720` limitinin hard-code edilmemesi, full format conversion'ın V1 Designer'dan ayrılması, Fixed Slots/Dynamic Active Items'ın V1'de zorunlu domain mode gibi sunulmaması ve audio arbitration'ın firmware sorumluluğunun görünür kılınmasıdır.
 
 Aşağıdaki domain kararları değiştirilmemiştir: DeviceProfile ownership, Custom State'in yokluğu, canonical state/scene evaluation sırası, Floor Mapping zinciri, Digit/Direction ayrımı, Media Slide modeli, Asset stable ID sınırı, deployment semantic hierarchy ve V1 non-goals. Domain/UI arasında yeni bir contradiction bulunursa bu dosyada sessizce çözülmemeli; `DOMAIN CONTRADICTION FOUND` olarak raporlanmalıdır. [1]
+
+## Final Review Report
+
+### A. What was already correct
+
+Professional IDE/CAD shell, dockable/floating panels, merkezi canvas, Project Explorer, contextual Properties, multi-select `*`, modal Settings, profile-driven state listesi, State/Scene ayrımı, Binding'in Scene selection'ını değiştirmemesi, Digit'te font kullanılmaması, Direction default/custom ayrımı, Media Slide modeli, Asset Depot/Resources/Unsupported Files ayrımı, Simulator'ın ortak evaluation modeli ve validation/deployment feedback'i doğruydu.
+
+### B. What was wrong
+
+Önceki sürümde multi-monitor confirmed gibi okunabiliyor, Theme Project Group üzerinde genel Invert komutu bulunuyor, required rotation silme mutlak biçimde engelleniyor, external file import yalnız Resources'a yönlendiriliyor, Media/Audio ilişkisi fazla genelleniyor, `Ctrl+D` confirmed gösteriliyor ve Warning asset kategorileri generic semantic categories olarak ifade ediliyordu.
+
+### C. What was changed
+
+Canonical section yapısı 1–29 olarak korunarak `R0/R90/R180/R270`, runtime-later Scene tie-break, Project Explorer hedef kurallı import, `Create Theme Project as Inverted`, kesin `0–100` Audio priority, profile-driven Warning Signs, Media Slide'ın visual Image OR Video + optional attached Audio modeli, Fonts kategorisinin yokluğu, duplicate mode, keyboard ratios, Bounding Group geometric center davranışı ve multi-monitor Proposed/Future sınırları netleştirildi.
+
+### D. What remained ambiguous
+
+Exact DeviceProfile schema, state registry metadata, locale fallback, symbolic floor encoding, visual layer defaults, audio mixer/arbitration, export config alanları, dynamic layout matematiği, generic Media Sequence/timeline, external CSV parameters, validation severity matrix ve multi-monitor'ın V1 kapsamı açık karar olarak bırakıldı.
+
+### E. Domain/UI conflicts discovered
+
+Bu pass sırasında domain contract ile doğrudan çelişki tespit edilmedi. UI metninde domain contract ile çelişebilecek ifadeler düzeltildi; canonical domain dosyası değiştirilmedi.
+
+### F. UI decisions newly clarified
+
+Duplicate shortcut'ın Proposed olması; context menu/toolbar/duplicate mode akışı; `Ctrl+Arrow = snap/10`; `Shift+Ctrl+Arrow = snap×5`; Theme Project right-click Inverted Theme akışı; required rotation validation; hedefe göre external import; Warning Signs classification; Media Slide Audio sınırı; kesin `0–100` Audio priority ve multi-monitor Proposed/Future kararı netleştirildi.
+
+### G. Recommended next implementation step
+
+Kodlamaya Application Shell, Dock Manager ve Document Manager iskeletiyle başlanmalı; ardından Project/Theme persistence ve DocumentStore lifecycle doğrulanmalı, sonra gerçek Rotation document, Project Explorer, Canvas selection/geometry ve contextual Properties aynı canonical state üzerinden eklenmelidir. Simulator, Binding Editor, Asset Browser ve Validation bağımsız UI state'i olarak değil ortak domain evaluation modelinin yüzeyleri olarak uygulanmalıdır.
 
 ## References
 
