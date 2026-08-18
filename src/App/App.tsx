@@ -230,7 +230,9 @@ function uniqueDefaultName(base: string, existing: readonly string[]): string {
   return `${base} ${counter}`;
 }
 
-type GeometryFieldProps = {  label: string;
+type GeometryFieldProps = {
+  /** Identity of the object being edited; a change discards any pending draft. */
+  scope: string;  label: string;
   field: keyof Geometry;
   value: string | number;
   multi: boolean;
@@ -245,7 +247,7 @@ type GeometryFieldProps = {  label: string;
  * treats an empty field as "pending" (never 0), rejects non-numeric input
  * with visible feedback, and clamps to [min, max] with feedback.
  */
-function GeometryField({ label, field, value, multi, disabled, min, max, onCommit }: GeometryFieldProps) {
+function GeometryField({ label, field, value, multi, disabled, min, max, scope, onCommit }: GeometryFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -253,6 +255,19 @@ function GeometryField({ label, field, value, multi, disabled, min, max, onCommi
   // same render, where `draft` still holds the typed text, so the abandon
   // decision must travel through a ref, not through state (S3-01).
   const discardRef = useRef(false);
+  // Identity guard (defensive, no reproduced defect). A pending draft belongs to
+  // ONE object, but React reuses this component instance across selection
+  // changes. Today every selection change goes through a pointer interaction
+  // that blurs and commits first, and the keyboard paths are excluded while an
+  // input has focus, so the stale-draft state is not currently reachable -
+  // A/B testing showed no behavioural difference. It is kept because React
+  // scheduling is not a stable contract and a future selection path that does
+  // not blur would otherwise show one object`s pending text against another.
+  useEffect(() => {
+    discardRef.current = false;
+    setDraft(null);
+    setFeedback(null);
+  }, [scope]);
   useEffect(() => {
     if (!feedback) return;
     const timer = window.setTimeout(() => setFeedback(null), 2600);
@@ -354,6 +369,8 @@ function renderRuntimeInput(
 }
 
 type DraftNumberFieldProps = {
+  /** Identity of the object being edited; a change discards any pending draft. */
+  scope: string;
   value: string | number;
   disabled: boolean;
   min: number;
@@ -368,11 +385,24 @@ type DraftNumberFieldProps = {
 };
 
 /** Draft-per-field numeric input shared by non-geometry properties (zIndex, priority, durations). */
-function DraftNumberField({ value, disabled, min, max, ariaLabel, integer = false, decimals, onCommit }: DraftNumberFieldProps) {
+function DraftNumberField({ value, disabled, min, max, ariaLabel, integer = false, decimals, scope, onCommit }: DraftNumberFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const discardRef = useRef(false);
+  // Identity guard (defensive, no reproduced defect). A pending draft belongs to
+  // ONE object, but React reuses this component instance across selection
+  // changes. Today every selection change goes through a pointer interaction
+  // that blurs and commits first, and the keyboard paths are excluded while an
+  // input has focus, so the stale-draft state is not currently reachable -
+  // A/B testing showed no behavioural difference. It is kept because React
+  // scheduling is not a stable contract and a future selection path that does
+  // not blur would otherwise show one object`s pending text against another.
+  useEffect(() => {
+    discardRef.current = false;
+    setDraft(null);
+    setFeedback(null);
+  }, [scope]);
   useEffect(() => {
     if (!feedback) return;
     const timer = window.setTimeout(() => setFeedback(null), 2600);
@@ -430,6 +460,8 @@ function DraftNumberField({ value, disabled, min, max, ariaLabel, integer = fals
 }
 
 type DraftTextFieldProps = {
+  /** Identity of the object being edited; a change discards any pending draft. */
+  scope: string;
   value: string;
   disabled: boolean;
   placeholder?: string;
@@ -440,8 +472,12 @@ type DraftTextFieldProps = {
 };
 
 /** Draft-per-field text input for rename surfaces: commit once on blur/Enter, Escape reverts. */
-function DraftTextField({ value, disabled, placeholder, ariaLabel, focusToken, onCommit }: DraftTextFieldProps) {
-  const [draft, setDraft] = useState<string | null>(null);
+function DraftTextField({ value, disabled, placeholder, ariaLabel, focusToken, scope, onCommit }: DraftTextFieldProps) {
+  // The draft carries the identity it was typed for, so the check happens at
+  // commit time rather than depending on effect ordering. Defensive: no
+  // cross-object commit was reproducible - every selection change currently
+  // blurs first, which commits the pending text to the object it was typed for.
+  const [draft, setDraft] = useState<{ text: string; scope: string } | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const discardRef = useRef(false);
@@ -464,7 +500,8 @@ function DraftTextField({ value, disabled, placeholder, ariaLabel, focusToken, o
     }
     if (draft === null) return;
     setDraft(null);
-    const trimmed = draft.trim();
+    if (draft.scope !== scope) return;
+    const trimmed = draft.text.trim();
     if (trimmed.length === 0) {
       setFeedback("name cannot be empty — reverted");
       return;
@@ -481,11 +518,11 @@ function DraftTextField({ value, disabled, placeholder, ariaLabel, focusToken, o
       <input
         ref={inputRef}
         type="text"
-        value={draft ?? value}
+        value={draft && draft.scope === scope ? draft.text : value}
         disabled={disabled}
         placeholder={placeholder}
         aria-label={ariaLabel}
-        onChange={(event) => { setDraft(event.target.value); setFeedback(null); }}
+        onChange={(event) => { setDraft({ text: event.target.value, scope }); setFeedback(null); }}
         onBlur={commit}
         onKeyDown={(event) => {
           if (event.key === "Enter") { event.preventDefault(); commit(); }
@@ -1003,11 +1040,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   // ---- Widget configuration (type-specific half of a Widget) ---------------
 
-  const configureWidget = (patch: Parameters<typeof editorApplication.setWidgetConfiguration>[2], label: string): boolean => {
+  const configureWidget = (patch: Parameters<typeof editorApplication.setWidgetConfiguration>[2], label: string, target?: { sceneId: string; widgetId: string }): boolean => {
     if (blockedInPreview("Widget configuration")) return false;
-    const sceneId = activeScene?.id;
-    const widget = resolvedSelection?.widget;
-    if (!sceneId || !widget || resolvedSelection?.scene?.id !== sceneId) {
+    const sceneId = target?.sceneId ?? activeScene?.id;
+    const widget = target ? resolveCanonicalNode(project, target.widgetId)?.widget : resolvedSelection?.widget;
+    if (!sceneId || !widget || (!target && resolvedSelection?.scene?.id !== sceneId)) {
       logAction("Widget configuration requires a single selected widget in the active Scene", "WARN");
       return false;
     }
@@ -1017,8 +1054,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return result.changed;
   };
 
-  const setWidgetContentValue = (key: string, value: unknown): boolean => {
-    const widget = resolvedSelection?.widget;
+  const setWidgetContentValue = (key: string, value: unknown, target?: { sceneId: string; widgetId: string }): boolean => {
+    const widget = target ? resolveCanonicalNode(project, target.widgetId)?.widget : resolvedSelection?.widget;
     if (!widget) return false;
     const nextContent = { ...(widget.content ?? {}) } as Record<string, unknown>;
     if (value === undefined || value === "" || value === null) delete nextContent[key];
@@ -1026,8 +1063,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return configureWidget({ content: Object.keys(nextContent).length ? nextContent : undefined }, `Set ${key}`);
   };
 
-  const setWidgetStyleValue = (key: string, value: unknown): boolean => {
-    const widget = resolvedSelection?.widget;
+  const setWidgetStyleValue = (key: string, value: unknown, target?: { sceneId: string; widgetId: string }): boolean => {
+    const widget = target ? resolveCanonicalNode(project, target.widgetId)?.widget : resolvedSelection?.widget;
     if (!widget) return false;
     const nextStyle = { ...(widget.style ?? {}) } as Record<string, unknown>;
     if (value === undefined || value === "" || value === null) delete nextStyle[key];
@@ -1427,6 +1464,21 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const result = editorApplication.setWidgetsVisibilityInScene(sceneId, canvasWidgets.map((widget) => widget.id), visible);
     if (result.changed) logAction(visible ? "Show All executed" : "Hide All executed", "EVENT");
+    return result.changed;
+  };
+
+  /**
+   * Renames an EXPLICIT node. The previous version resolved its target from the
+   * ambient `selection` at commit time; naming the target instead removes that
+   * dependency, so a commit is correct regardless of when it is dispatched.
+   * No mis-target was reproducible - this closes the hazard, not a live defect.
+   */
+  const renameNodeById = (nodeId: string, name: string): boolean => {
+    const result = editorApplication.renameNode(nodeId, name);
+    if (result.changed) {
+      setSelection((current) => current && current.id === nodeId ? { ...current, label: name.trim() } : current);
+      logAction(`Renamed to ${name.trim()}`, "EVENT");
+    }
     return result.changed;
   };
 
@@ -2865,6 +2917,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   /** Type-specific content/style editor. Every field maps to a canonical `content`/`style` key. */
   const renderWidgetContentSection = (widget: Widget) => {
+    // Captured at render time so a commit arriving after the selection moved
+    // still writes to the widget the designer was editing.
+    const contentTarget = activeScene?.id ? { sceneId: activeScene.id, widgetId: widget.id } : undefined;
     const languages = activeProfile?.languages ?? [];
     const stateOptions = activeProfile?.runtimeStates ?? [];
     const textValue = typeof widget.content?.text === "string" ? widget.content.text : "";
@@ -2873,11 +2928,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return (
         <section className="property-section">
           <div className="property-section-title">{widget.widgetType === "text" ? "Text" : "Warning"}</div>
-          <div className="property-row property-row-edit"><span>{widget.widgetType === "text" ? "Text" : "Message"}</span><DraftTextField value={textValue} disabled={false} placeholder="Not set" ariaLabel={`${widget.widgetType} content text`} onCommit={(value) => setWidgetContentValue("text", value)} /></div>
+          <div className="property-row property-row-edit"><span>{widget.widgetType === "text" ? "Text" : "Message"}</span><DraftTextField scope={`${widget.id}:text`} value={textValue} disabled={false} placeholder="Not set" ariaLabel={`${widget.widgetType} content text`} onCommit={(value) => setWidgetContentValue("text", value, contentTarget)} /></div>
           {languages.length > 1 && languages.map((language) => (
             <div className="property-row property-row-edit" key={language}>
               <span>Text · {language}</span>
               <DraftTextField
+                scope={`${widget.id}:lang:${language}`}
                 value={typeof byLanguage[language] === "string" ? String(byLanguage[language]) : ""}
                 disabled={false}
                 placeholder="Falls back to Text"
@@ -2886,7 +2942,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
                   const next = { ...byLanguage } as Record<string, unknown>;
                   if (value.trim() === "") delete next[language];
                   else next[language] = value;
-                  setWidgetContentValue("textByLanguage", Object.keys(next).length ? next : undefined);
+                  setWidgetContentValue("textByLanguage", Object.keys(next).length ? next : undefined, contentTarget);
                 }}
               />
             </div>
@@ -2979,9 +3035,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             })}
             {slide && (
               <>
-                <div className="property-row property-row-edit"><span>Duration (s)</span><DraftNumberField value={String(slide.duration)} disabled={false} min={0} max={3600} step={0.1} decimals={1} ariaLabel="Media slide duration in seconds" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, duration: Math.round(value * 10) / 10 } }, "Set slide duration")} /></div>
+                <div className="property-row property-row-edit"><span>Duration (s)</span><DraftNumberField scope={`${widget.id}:duration`} value={String(slide.duration)} disabled={false} min={0} max={3600} step={0.1} decimals={1} ariaLabel="Media slide duration in seconds" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, duration: Math.round(value * 10) / 10 } }, "Set slide duration")} /></div>
                 <div className="property-row property-row-edit"><span>Loop</span><input type="checkbox" aria-label="Media slide loop" checked={slide.loop === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, loop: event.target.checked } }, "Set slide loop")} /></div>
-                <div className="property-row property-row-edit"><span>Repeat Count</span><DraftNumberField value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media slide repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set slide repeat count")} /></div>
+                <div className="property-row property-row-edit"><span>Repeat Count</span><DraftNumberField scope={`${widget.id}:repeat`} value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media slide repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set slide repeat count")} /></div>
                 {renderAssetSelect("Slide Audio", slide.audioAssetId, "audio", (assetId) => configureWidget({ mediaSlide: { ...slide, audioAssetId: assetId } }, "Set slide audio"))}
               </>
             )}
@@ -3091,6 +3147,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   );
 
   const renderProperties = () => {
+    const draftScope = selectedIds.length ? selectedIds.join("|") : selection?.id ?? "document";
     const multi = selectedIds.length > 1;
     const node = resolvedSelection;
     const widget = node?.widget;
@@ -3126,21 +3183,21 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         {renderDockTabs("right")}
         <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{multi ? `${selectedIds.length} objects in the active Scene` : selection ? (selection.detail ?? `${selection.nodeType ?? selection.kind} · canonical object`) : "Nothing selected · Document properties"}</small></div></div>
         {selection && node ? <div className="properties-scroll">
-          <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField value={String(node.node.name)} disabled={false} ariaLabel="Display name" focusToken={renameRequestId === selection.id ? renameRequestId : null} onCommit={renameSelectedNode} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
+          <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField scope={draftScope} value={String(node.node.name)} disabled={false} ariaLabel="Display name" focusToken={renameRequestId === selection.id ? renameRequestId : null} onCommit={(value) => renameNodeById(node.node.id, value)} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
           <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div>{multi ? <PropertyRow label="Widget Type" value={valueFor((current) => current.widget?.widgetType)} /> : <div className="property-row property-row-edit"><span>Widget Type</span><select aria-label="Widget type" value={widget.widgetType} onChange={(event) => changeWidgetType(event.target.value)}>{(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => <option key={widgetType} value={widgetType}>{defaultWidgetName(widgetType)}</option>)}{!(activeProfile?.supportedWidgetTypes ?? []).includes(widget.widgetType) && <option value={widget.widgetType}>{widget.widgetType} (unsupported)</option>}</select></div>}<div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
-            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
+            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField scope={`${draftScope}:x`} label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:y`} label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:w`} label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:h`} label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField scope={`${draftScope}:z`} value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
             <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? `${widget.mediaSlide.mediaType} · ${widget.mediaSlide.duration}s` : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {!multi && renderWidgetContentSection(widget)}
             {!multi && renderWidgetMediaSection(widget)}
           </>}
-          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField value={String(node.scene.priority)} disabled={false} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
+          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={false} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && renderThemeResourcesSection(node.theme)}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType} onChange={(event) => { const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: event.target.value as MediaType }); if (result.changed) logAction(`Asset media type set to ${event.target.value}`, "EVENT"); }}><option value="image">image</option><option value="video">video</option><option value="audio">audio</option></select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType} onChange={(event) => { const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: event.target.value as MediaType }); if (result.changed) logAction(`Asset media type set to ${event.target.value}`, "EVENT"); }}><option value="image">image</option><option value="video">video</option><option value="audio">audio</option></select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
-        </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField value={project.name} disabled={false} ariaLabel="Project name" onCommit={(value) => { const result = editorApplication.renameNode(project.id, value); if (result.changed) logAction(`Project renamed to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
+        </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={false} ariaLabel="Project name" onCommit={(value) => { const result = editorApplication.renameNode(project.id, value); if (result.changed) logAction(`Project renamed to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
       </>
     );
