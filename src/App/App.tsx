@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { createEmptyProject, foundationDeviceProfile } from "../Domain/factories";
 import { InMemoryDocumentStore } from "../Core/document-store";
-import { evaluateActiveSceneBindings, selectActiveScene } from "../Core/runtime";
+import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import type { Asset, Project, Rotation, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 
@@ -13,6 +13,7 @@ type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widge
 type SelectionKind = "project" | "theme-group" | "theme" | "rotation" | "scene" | "widget" | "asset" | "canvas";
 type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
 type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Simulator" | "Validation" | "Export" | "Shortcuts";
+type BindingModalState = { widgetId: string } | null;
 
 type Selection = {
   id: string;
@@ -158,8 +159,11 @@ export function App() {
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("General");
   const [settingsDraft, setSettingsDraft] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
   const [savedSettings, setSavedSettings] = useState({ compactDensity: true, showGrid: true, confirmDestructive: true });
+  const [bindingModal, setBindingModal] = useState<BindingModalState>(null);
 
-  const validation = useMemo(() => validateProject(project), [project]);
+  const profileRegistry = [foundationDeviceProfile];
+  const activeProfile = profileRegistry.find((profile) => profile.id === project.deviceProfileId);
+  const validation = useMemo(() => validateProject(project, activeProfile), [project, activeProfile]);
   const groups = project.themeProjectGroups;
   const group = groups[0];
   const themeNodes = groups.flatMap((currentGroup) => getThemeNodes(currentGroup));
@@ -167,8 +171,12 @@ export function App() {
   const activeSelectionLabel = selectedIds.length > 1 ? `${selectedIds.length} items selected` : selection?.label ?? "Nothing selected";
   const resolvedSelection = useMemo(() => selection ? resolveCanonicalNode(project, selection.id) : undefined, [project, selection]);
   const runtimeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
-  const runtime = useMemo(() => selectActiveScene(runtimeRotation?.scenes ?? [], { values: {}, settings: {}, sceneActivationOrder: {} }, foundationDeviceProfile), [runtimeRotation]);
-  const activeBindings = useMemo(() => evaluateActiveSceneBindings(runtime.activeScene, { values: {}, settings: {}, sceneActivationOrder: {} }, foundationDeviceProfile), [runtime.activeScene]);
+  const runtime = useMemo(() => selectActiveScene(runtimeRotation?.scenes ?? [], { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile), [runtimeRotation, activeProfile]);
+  const activeBindings = useMemo(() => evaluateActiveSceneBindings(runtime.activeScene, { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile), [runtime.activeScene, activeProfile]);
+  const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
+  const profileStates = activeProfile?.runtimeStates ?? [];
+  const profileSettings = activeProfile?.runtimeSettings ?? [];
+  const bindingEvaluations = useMemo(() => bindingWidget ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, { values: {}, settings: {}, sceneActivationOrder: {} }, activeProfile ?? foundationDeviceProfile)) : [], [bindingWidget, activeProfile]);
   const activeLeftPanel = panelModes.explorer === "docked" ? "explorer" : panelModes.assets === "docked" ? "assets" : null;
   const activeRightPanel = panelModes.properties === "docked" ? "properties" : panelModes.simulator === "docked" ? "simulator" : null;
   const leftVisible = activeLeftPanel !== null;
@@ -312,7 +320,7 @@ export function App() {
         detail: `${currentGroup.themeProjects.length} theme project${currentGroup.themeProjects.length === 1 ? "" : "s"}`,
         children: getThemeNodes(currentGroup),
       })),
-      { id: "resources", label: "Resources", kind: "Resources", detail: `${group?.themeProjects.reduce((count, theme) => count + theme.resources.length, 0) ?? 0} theme resources` },
+      { id: "resources", label: "Resources", kind: "Resources", detail: `${groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)).length} theme resources` },
       { id: "unsupported", label: "Unsupported Files", kind: "Unsupported Files", detail: "Not imported" },
     ],
   };
@@ -320,8 +328,9 @@ export function App() {
   const activeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
   const activeScene = resolvedSelection?.scene ?? runtime.activeScene ?? activeRotation?.scenes[0];
   const canvasWidgets = activeScene?.widgets ?? [];
-  const canvasWidth = activeRotation?.width ?? foundationDeviceProfile.display.width;
-  const canvasHeight = activeRotation?.height ?? foundationDeviceProfile.display.height;
+  const displayProfile = activeProfile ?? foundationDeviceProfile;
+  const canvasWidth = activeRotation?.width ?? displayProfile.display.width;
+  const canvasHeight = activeRotation?.height ?? displayProfile.display.height;
 
   const menuItems: Record<MenuKey, MenuItem[]> = {
     File: [
@@ -356,7 +365,7 @@ export function App() {
     ],
     Widget: [
       { label: "Add Widget", disabled: true },
-      { label: "Binding Editor", disabled: true },
+      { label: "Binding Editor", disabled: !resolvedSelection?.widget, onClick: () => setBindingModal({ widgetId: resolvedSelection?.widget?.id ?? "" }) },
     ],
     Tools: [
       { label: "Command Palette", disabled: true },
@@ -391,15 +400,18 @@ export function App() {
     </>
   );
 
-  const filteredAssets = project.assets.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || asset.mediaType.toLowerCase().includes(assetSearch.toLowerCase()));
+  const resourceAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)));
+  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => widget.assetIds ?? []))))));
+  const assetsForCategory = assetCategory === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)) : assetCategory === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)) : [];
+  const filteredAssets = assetsForCategory.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || asset.mediaType.toLowerCase().includes(assetSearch.toLowerCase()));
   const renderAssets = () => (
     <>
       {renderPanelHeader("assets", "LIBRARY", "Asset Browser")}
       {renderDockTabs("assets")}
       <div className="asset-search"><input aria-label="Search assets" placeholder="Search depot" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /><button type="button" className="small-action" disabled title="Asset import command is a later phase">Import</button></div>
-      <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{category.id === "depot" ? project.assets.length : category.id === "resources" ? project.assets.length : 0}</small></button>)}</div>
+      <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{category.id === "depot" ? 0 : category.id === "resources" ? project.assets.filter((asset) => resourceAssetIds.has(asset.id)).length : category.id === "scene" ? project.assets.filter((asset) => sceneAssetIds.has(asset.id)).length : 0}</small></button>)}</div>
       <div className="asset-list">
-        {filteredAssets.length > 0 ? filteredAssets.map((asset) => <button type="button" className="asset-row" key={asset.id} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: asset.mediaType })}><span className="asset-type">{asset.mediaType === "audio" ? "♫" : asset.mediaType === "video" ? "▶" : "▧"}</span><span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.id}</small></span></button>) : <div className="asset-empty"><span className="empty-panel-icon">▱</span><strong>Asset Depot is empty</strong><span>Unused depot assets are not exported. Import and preview surfaces will consume profile-supported assets.</span></div>}
+        {filteredAssets.length > 0 ? filteredAssets.map((asset) => <button type="button" className="asset-row" key={asset.id} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: asset.mediaType })}><span className="asset-type">{asset.mediaType === "audio" ? "♫" : asset.mediaType === "video" ? "▶" : "▧"}</span><span><strong>{asset.name}</strong><small>{asset.mediaType} · {asset.id}</small></span></button>) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Unsupported Files is empty" : "No assets in this scope"}</strong><span>{assetCategory === "depot" ? "Depot library content is not Project Resources and unused depot assets are not exported." : assetCategory === "unsupported" ? "Unsupported files cannot become widgets or enter normal export." : "Project Resources and Scene Content are derived from canonical references."}</span></div>}
       </div>
       <div className="panel-footnote"><span className="footnote-mark">i</span><span>Asset Depot, Resources, Scene Content and Unsupported Files remain separate surfaces.</span></div>
     </>
@@ -428,7 +440,7 @@ export function App() {
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Enabled" value={multi ? valueFor((current) => current.widget?.enabled) : String(widget.enabled)} /><PropertyRow label="Geometry Lock" value={multi ? valueFor((current) => current.widget?.locked ? "Locked" : "Editable") : widget.locked ? "Locked" : "Editable"} /></section>
             <section className="property-section"><div className="property-section-title">Geometry / Layer</div><PropertyRow label="Position" value={`${widget.geometry.x}, ${widget.geometry.y}`} muted={widget.locked} /><PropertyRow label="Size" value={`${widget.geometry.width} × ${widget.geometry.height}`} muted={widget.locked} /><PropertyRow label="Z-order" value={String(widget.zIndex)} /></section>
-            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /></section>
+            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {widget.widgetType === "digit" && <section className="property-section"><div className="property-section-title">Digit</div><PropertyRow label="Style" value={String(widget.style?.digitStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Floor Mapping" value={String(widget.content?.floorMappingId ?? "Not selected")} /></section>}
             {widget.widgetType === "direction" && <section className="property-section"><div className="property-section-title">Direction</div><PropertyRow label="Style" value={String(widget.style?.directionStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Variant" value={String(widget.content?.variant ?? "Profile-defined")} /></section>}
             {widget.widgetType === "media" && <section className="property-section"><div className="property-section-title">Media</div><PropertyRow label="Visual" value={widget.mediaType ?? "Not selected"} /><PropertyRow label="Attached Audio" value={widget.audioAssetId ?? "None"} muted /></section>}
@@ -449,7 +461,7 @@ export function App() {
       {renderPanelHeader("simulator", "TEST STUDIO", "Simulator")}
       {renderDockTabs("simulator")}
       <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => logAction("Simulator run requested", "EVENT")}>▶ Run</button><button type="button" className="sim-button" disabled>Ⅱ Pause</button><button type="button" className="sim-button" onClick={() => logAction("Simulator reset requested", "EVENT")}>↺ Reset</button></div>
-      <div className="simulator-scroll"><section className="sim-section"><div className="property-section-title">Runtime Inputs</div>{foundationDeviceProfile.runtimeStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : foundationDeviceProfile.runtimeStates.map((state) => <div className="sim-row" key={state.id}><span>{state.displayName}</span><strong>Unset</strong></div>)}</section><section className="sim-section"><div className="property-section-title">Active Scene</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div><div className="sim-row"><span>Candidate scenes</span><strong>{runtime.candidates.length}</strong></div><div className="sim-row"><span>Active bindings</span><strong>{activeBindings.length}</strong></div></section><section className="sim-section"><div className="property-section-title">Runtime Inspector</div><div className="sim-row"><span>Binding Engine</span><strong>Canonical</strong></div><div className="sim-row"><span>Second rule system</span><strong>No</strong></div><div className="sim-row"><span>Firmware mixer</span><strong>Not simulated</strong></div></section></div>
+      <div className="simulator-scroll"><section className="sim-section"><div className="property-section-title">Runtime Inputs</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => <div className="sim-row" key={state.id}><span>{state.displayName}</span><strong>Unset</strong></div>)}</section><section className="sim-section"><div className="property-section-title">Active Scene</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div><div className="sim-row"><span>Candidate scenes</span><strong>{runtime.candidates.length}</strong></div><div className="sim-row"><span>Active bindings</span><strong>{activeBindings.length}</strong></div></section><section className="sim-section"><div className="property-section-title">Runtime Inspector</div><div className="sim-row"><span>Binding Engine</span><strong>Canonical</strong></div><div className="sim-row"><span>Second rule system</span><strong>No</strong></div><div className="sim-row"><span>Firmware mixer</span><strong>Not simulated</strong></div></section></div>
       <div className="panel-footnote"><span className="footnote-mark">i</span><span>Simulator consumes the canonical runtime evaluator; it does not invent Custom State.</span></div>
     </>
   );
@@ -503,6 +515,7 @@ export function App() {
 
       <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>Browser core · Tauri shell reserved</span></footer>
 
+      {bindingModal && <div className="settings-backdrop" role="presentation" onClick={() => setBindingModal(null)}><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Binding is evaluated inside the active Scene</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Binding records remain in the canonical Widget model; this surface does not invent scene selection rules.</span></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { setSavedSettings(settingsDraft); setSettingsOpen(false); logAction("Program Settings saved"); }}>Save / Apply &amp; Close</button></div></footer></section></div>}
     </div>
   );

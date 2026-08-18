@@ -286,3 +286,42 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
   .settings-dialog { width: calc(100vw - 45px); height: calc(100vh - 45px); }
   .floating-simulator { right: 20px; width: 300px; }
 }
+
+/* QA correction surfaces: canonical widget canvas and binding editor */
+.canvas-widget-layer { position: relative; width: 100%; height: 100%; }
+.canvas-widget { position: absolute; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 2px; overflow: hidden; min-width: 20px; min-height: 16px; border: 1px solid rgba(38, 166, 170, .8); background: rgba(25, 137, 143, .18); color: #d7fbfb; padding: 3px; text-align: center; }
+.canvas-widget:hover, .canvas-widget.is-selected { z-index: 4; border: 2px solid #62dfe0; background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
+.canvas-widget.is-locked { border-style: dashed; }
+.canvas-widget.is-invisible { border-style: dotted; background: rgba(70, 96, 101, .12); color: #89a4a7; opacity: .65; }
+.canvas-widget span { overflow: hidden; max-width: 100%; font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-widget small { color: #9bd4d4; font-size: 7px; }
+.property-inline-action { width: 100%; margin-top: 8px; border: 1px solid #9dcfd1; background: #eef9f9; color: var(--accent-dark); padding: 6px 8px; font-size: 10px; text-align: left; }
+.property-inline-action:hover { border-color: var(--accent); background: #dff3f3; }
+.binding-dialog { display: grid; grid-template-rows: 66px minmax(360px, 1fr) 61px; width: min(720px, calc(100vw - 80px)); height: min(620px, calc(100vh - 80px)); border: 1px solid #aebfc3; background: var(--surface); box-shadow: 0 20px 52px rgba(13, 29, 36, .3); }
+.binding-layout { min-height: 0; overflow: auto; padding: 16px 20px; }
+.binding-context-card { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; padding: 10px; border: 1px solid #b9dbdd; background: var(--accent-soft); }
+.binding-context-card > div { display: grid; gap: 3px; }
+.binding-context-card strong { color: var(--accent-dark); font-size: 12px; }
+.binding-context-card small { color: var(--text-secondary); font-size: 9px; }
+.binding-section { margin-bottom: 15px; }
+.binding-card { display: grid; gap: 7px; margin-top: 7px; padding: 10px; border: 1px solid var(--border); background: #f7fafb; }
+.binding-card-head { display: flex; justify-content: space-between; color: var(--text); font-size: 11px; text-transform: uppercase; }
+.binding-true { color: #158164; font-weight: 800; }
+.binding-false { color: var(--text-muted); font-weight: 800; }
+.binding-card > small { color: var(--text-muted); font-size: 9px; }
+.binding-condition-list { display: grid; gap: 4px; }
+.binding-condition { display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid #e5ecee; padding-top: 5px; color: var(--text-secondary); font-size: 10px; }
+.binding-condition code { color: var(--accent-dark); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; }
+.binding-empty { display: grid; justify-items: center; gap: 7px; padding: 20px; border: 1px dashed var(--border-strong); color: var(--text-muted); text-align: center; }
+.binding-empty strong { color: var(--text-secondary); font-size: 11px; }
+.binding-empty span:last-child { max-width: 360px; font-size: 10px; line-height: 1.45; }
+.binding-registry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.binding-registry-grid > div { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--border); background: #f7fafb; }
+.binding-registry-grid strong { color: var(--text-secondary); font-size: 10px; }
+.binding-registry-grid span { display: flex; justify-content: space-between; border-top: 1px solid #e5ecee; padding-top: 4px; color: var(--text); font-size: 10px; }
+.binding-registry-grid span small { color: var(--text-muted); font-size: 9px; }
+.binding-registry-grid em { color: var(--text-muted); font-size: 10px; }
+@media (max-width: 780px) {
+  .binding-dialog { width: calc(100vw - 30px); height: calc(100vh - 30px); }
+  .binding-registry-grid { grid-template-columns: 1fr; }
+}
