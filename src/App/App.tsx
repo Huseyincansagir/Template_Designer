@@ -1,18 +1,20 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { createEmptyProject, foundationDeviceProfile } from "../Domain/factories";
+import { useMemo, useRef, useState, type ReactNode } from "react";
+import { createEmptyProject } from "../Domain/factories";
 import { InMemoryDocumentStore } from "../Core/document-store";
 import { CommandHistory, type Command } from "../Core/commands";
 import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
-import type { Asset, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { Asset, Geometry, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import { intersects, normalizeRect, snapGeometry, updateWidgetGeometries, type CanvasPoint, type CanvasRect } from "./canvas-interaction";
+import { commandsForSelection } from "./editor-commands";
+import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
+import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
+import type { DeviceProfileRegistry } from "./profile-registry";
 
-type PanelId = "explorer" | "assets" | "properties" | "simulator" | "console";
-type PanelMode = "docked" | "floating" | "collapsed";
 type ViewMode = "design" | "preview";
 type CanvasTool = "select" | "pan";
 type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Tools";
-type SelectionKind = "project" | "theme-group" | "theme" | "rotation" | "scene" | "widget" | "asset" | "canvas";
 type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
 type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Simulator" | "Validation" | "Export" | "Shortcuts";
 type BindingModalState = { widgetId: string } | null;
@@ -124,20 +126,14 @@ function resolveCanonicalNode(project: Project, id: string): ResolvedNode | unde
   return asset ? { kind: "asset", node: asset, project, asset } : undefined;
 }
 
-export function App() {
+export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistry }) {
   const documentStore = useMemo(() => {
     const store = new InMemoryDocumentStore();
     store.open(createEmptyProject());
     return store;
   }, []);
   const [project, setProject] = useState<Project>(() => documentStore.getCurrent() ?? createEmptyProject());
-  const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>({
-    explorer: "docked",
-    assets: "collapsed",
-    properties: "docked",
-    simulator: "collapsed",
-    console: "docked",
-  });
+  const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
   const [leftWidth, setLeftWidth] = useState(286);
   const [rightWidth, setRightWidth] = useState(298);
   const [menuOpen, setMenuOpen] = useState<MenuKey | null>(null);
@@ -168,30 +164,36 @@ export function App() {
   const [runtimeSettings, setRuntimeSettings] = useState<Record<string, PrimitiveValue | null>>({});
   const [simulationStatus, setSimulationStatus] = useState<"idle" | "running" | "paused">("idle");
   const [deploymentStatus, setDeploymentStatus] = useState("Not built");
+  const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});
+  const [canvasPointer, setCanvasPointer] = useState<{ mode: "idle" } | { mode: "marquee"; start: CanvasPoint; rect: CanvasRect; additive: boolean } | { mode: "drag" | "resize"; widgetIds: string[]; start: CanvasPoint; initial: Record<string, Geometry>; handle?: string }>({ mode: "idle" });
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; kind: SelectionKind } | null>(null);
+  const canvasScreenRef = useRef<HTMLDivElement>(null);
+  const suppressCanvasClickRef = useRef(false);
 
-  const profileRegistry = [foundationDeviceProfile];
-  const activeProfile = profileRegistry.find((profile) => profile.id === project.deviceProfileId);
+  const availableProfiles = profileRegistry.list();
+  const activeProfile = profileRegistry.get(project.deviceProfileId);
   const validation = useMemo(() => validateProject(project, activeProfile), [project, activeProfile]);
   const groups = project.themeProjectGroups;
   const group = groups[0];
   const themeNodes = groups.flatMap((currentGroup) => getThemeNodes(currentGroup));
   const hasThemeProject = themeNodes.length > 0;
   const activeSelectionLabel = selectedIds.length > 1 ? `${selectedIds.length} items selected` : selection?.label ?? "Nothing selected";
+  const profileStatus = activeProfile ? `${activeProfile.name} · ${availableProfiles.length} profile${availableProfiles.length === 1 ? "" : "s"} registered` : `DeviceProfile unavailable · ${availableProfiles.length} registered`;
   const resolvedSelection = useMemo(() => selection ? resolveCanonicalNode(project, selection.id) : undefined, [project, selection]);
   const runtimeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
   const runtimeContext: RuntimeContext = { values: runtimeValues, settings: runtimeSettings, sceneActivationOrder: {} };
-  const runtime = useMemo(() => selectActiveScene(runtimeRotation?.scenes ?? [], runtimeContext, activeProfile ?? foundationDeviceProfile), [runtimeRotation, activeProfile, runtimeValues, runtimeSettings]);
-  const activeBindings = useMemo(() => evaluateActiveSceneBindings(runtime.activeScene, runtimeContext, activeProfile ?? foundationDeviceProfile), [runtime.activeScene, activeProfile, runtimeValues, runtimeSettings]);
+  const runtime = useMemo(() => activeProfile ? selectActiveScene(runtimeRotation?.scenes ?? [], runtimeContext, activeProfile) : { activeSceneId: undefined, activeScene: undefined, candidates: [] }, [runtimeRotation, activeProfile, runtimeValues, runtimeSettings]);
+  const activeBindings = useMemo(() => activeProfile && runtime.activeScene ? evaluateActiveSceneBindings(runtime.activeScene, runtimeContext, activeProfile) : [], [runtime.activeScene, activeProfile, runtimeValues, runtimeSettings]);
   const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
   const profileStates = activeProfile?.runtimeStates ?? [];
   const profileSettings = activeProfile?.runtimeSettings ?? [];
-  const bindingEvaluations = useMemo(() => bindingWidget ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile ?? foundationDeviceProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
+  const bindingEvaluations = useMemo(() => bindingWidget && activeProfile ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
   const activeLeftPanel = panelModes.explorer === "docked" ? "explorer" : panelModes.assets === "docked" ? "assets" : null;
   const activeRightPanel = panelModes.properties === "docked" ? "properties" : panelModes.simulator === "docked" ? "simulator" : null;
   const leftVisible = activeLeftPanel !== null;
   const rightVisible = activeRightPanel !== null;
   const consoleVisible = panelModes.console === "docked";
-  const floatingPanels = (Object.keys(panelModes) as PanelId[]).filter((panel) => panelModes[panel] === "floating");
+  const floatingPanels = getFloatingPanels(panelModes);
   const workspaceRows = consoleVisible ? "minmax(0, 1fr) 156px" : "minmax(0, 1fr) 0px";
   const editorColumns = `${leftVisible ? `${leftWidth}px` : "0px"} ${leftVisible ? "5px" : "0px"} minmax(0, 1fr) ${rightVisible ? "5px" : "0px"} ${rightVisible ? `${rightWidth}px` : "0px"}`;
 
@@ -261,26 +263,19 @@ export function App() {
   };
 
   const setPanelMode = (panel: PanelId, mode: PanelMode) => {
-    setPanelModes((current) => ({ ...current, [panel]: mode }));
+    setPanelModes((current) => setPanelLayoutMode(current, panel, mode));
     logAction(`${panel[0].toUpperCase()}${panel.slice(1)} panel: ${mode}`);
   };
 
   const activatePanel = (panel: PanelId) => {
-    setPanelModes((current) => {
-      const next = { ...current, [panel]: "docked" as PanelMode };
-      if (panel === "explorer") next.assets = "collapsed";
-      if (panel === "assets") next.explorer = "collapsed";
-      if (panel === "properties") next.simulator = "collapsed";
-      if (panel === "simulator") next.properties = "collapsed";
-      return next;
-    });
+    setPanelModes((current) => activateDockedPanel(current, panel));
     logAction(`${panel[0].toUpperCase()}${panel.slice(1)} panel docked`);
   };
 
   const collapsePanel = (panel: PanelId) => setPanelMode(panel, "collapsed");
 
   const resetLayout = () => {
-    setPanelModes({ explorer: "docked", assets: "collapsed", properties: "docked", simulator: "collapsed", console: "docked" });
+    setPanelModes({ ...defaultPanelLayout });
     setLeftWidth(286);
     setRightWidth(298);
     logAction("Workspace layout reset");
@@ -347,7 +342,7 @@ export function App() {
     const icon = node.kind === "Scene" ? "◈" : node.kind === "Widget" ? "◇" : node.kind === "Rotation / Form" ? "▧" : node.kind === "Project" ? "▣" : node.kind === "Resources" ? "▤" : "▱";
     return (
       <li key={node.id} className={`tree-node ${node.disabled ? "is-disabled" : ""}`}>
-        <div className={`tree-row ${isSelected ? "is-selected" : ""}`} style={{ paddingLeft: `${10 + depth * 15}px` }}>
+        <div className={`tree-row ${isSelected ? "is-selected" : ""}`} style={{ paddingLeft: `${10 + depth * 15}px` }} onContextMenu={(event) => { event.preventDefault(); selectNode(node); setContextMenu({ x: event.clientX, y: event.clientY, kind: resolveCanonicalNode(project, node.id)?.kind ?? "canvas" }); }}>
           {node.children && node.children.length > 0 ? (
             <button type="button" className="tree-expander" aria-label={`${expanded ? "Collapse" : "Expand"} ${node.label}`} aria-expanded={expanded} onClick={() => toggleExpanded(node.id)}>{expanded ? "▾" : "▸"}</button>
           ) : <span className="tree-expander-placeholder" />}
@@ -382,9 +377,114 @@ export function App() {
   const activeRotation = resolvedSelection?.rotation ?? group?.themeProjects[0]?.rotations[0];
   const activeScene = resolvedSelection?.scene ?? runtime.activeScene ?? activeRotation?.scenes[0];
   const canvasWidgets = activeScene?.widgets ?? [];
-  const displayProfile = activeProfile ?? foundationDeviceProfile;
-  const canvasWidth = activeRotation?.width ?? displayProfile.display.width;
-  const canvasHeight = activeRotation?.height ?? displayProfile.display.height;
+  const canvasWidth = activeRotation?.width ?? activeProfile?.display.width ?? 1;
+  const canvasHeight = activeRotation?.height ?? activeProfile?.display.height ?? 1;
+  const canvasAvailable = Boolean(activeProfile && activeRotation);
+  const effectiveGeometry = (widget: Widget): Geometry => geometryOverrides[widget.id] ?? widget.geometry;
+  const selectedWidgetIds = selectedIds.filter((id) => Boolean(resolveCanonicalNode(project, id)?.widget));
+
+  const toCanvasPoint = (event: React.PointerEvent<HTMLDivElement>): CanvasPoint => {
+    const bounds = canvasScreenRef.current?.getBoundingClientRect();
+    if (!bounds) return { x: 0, y: 0 };
+    return { x: ((event.clientX - bounds.left) / bounds.width) * canvasWidth, y: ((event.clientY - bounds.top) / bounds.height) * canvasHeight };
+  };
+
+  const commitGeometryCommand = (updates: Readonly<Record<string, Geometry>>, label: string) => {
+    const previous = project;
+    const next = updateWidgetGeometries(project, updates);
+    runCommand({ label, execute: () => replaceProject(next), undo: () => replaceProject(previous) });
+    setGeometryOverrides({});
+  };
+
+  const beginCanvasMarquee = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canvasAvailable || (event.target as HTMLElement).closest(".canvas-widget, .resize-handle")) return;
+    event.preventDefault();
+    const start = toCanvasPoint(event);
+    setCanvasPointer({ mode: "marquee", start, rect: { x: start.x, y: start.y, width: 0, height: 0 }, additive: event.shiftKey || event.ctrlKey });
+    if (!event.shiftKey && !event.ctrlKey) {
+      setSelection(null);
+      setSelectedIds([]);
+    }
+  };
+
+  const beginWidgetMove = (widget: Widget, event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const selected = selectedWidgetIds.includes(widget.id) ? selectedWidgetIds : [widget.id];
+    const editable = selected.map((id) => resolveCanonicalNode(project, id)?.widget).filter((candidate): candidate is Widget => Boolean(candidate && !candidate.locked));
+    if (!editable.length) {
+      selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Locked" });
+      logAction(`${widget.name} is locked; geometry command blocked`, "WARN");
+      return;
+    }
+    if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.visible ? "Visible" : "Hidden" });
+    setCanvasPointer({ mode: "drag", widgetIds: editable.map((candidate) => candidate.id), start: toCanvasPoint(event), initial: Object.fromEntries(editable.map((candidate) => [candidate.id, effectiveGeometry(candidate)])) });
+  };
+
+  const beginWidgetResize = (widget: Widget, handle: string, event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (widget.locked) {
+      logAction(`${widget.name} is locked; resize blocked`, "WARN");
+      return;
+    }
+    if (!selectedWidgetIds.includes(widget.id)) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: "Selected" });
+    setCanvasPointer({ mode: "resize", widgetIds: [widget.id], start: toCanvasPoint(event as unknown as React.PointerEvent<HTMLDivElement>), initial: { [widget.id]: effectiveGeometry(widget) }, handle });
+  };
+
+  const handleCanvasPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (canvasPointer.mode === "idle") return;
+    const current = toCanvasPoint(event);
+    if (canvasPointer.mode === "marquee") {
+      setCanvasPointer((state) => state.mode === "marquee" ? { ...state, rect: normalizeRect(state.start, current) } : state);
+      return;
+    }
+    const delta = { x: current.x - canvasPointer.start.x, y: current.y - canvasPointer.start.y };
+    const updates: Record<string, Geometry> = {};
+    for (const widgetId of canvasPointer.widgetIds) {
+      const initial = canvasPointer.initial[widgetId];
+      if (!initial) continue;
+      let next = { ...initial };
+      if (canvasPointer.mode === "drag") next = { ...next, x: initial.x + delta.x, y: initial.y + delta.y };
+      else {
+        const handle = canvasPointer.handle ?? "se";
+        if (handle.includes("e")) next.width = Math.max(10, initial.width + delta.x);
+        if (handle.includes("s")) next.height = Math.max(10, initial.height + delta.y);
+        if (handle.includes("w")) { next.x = initial.x + delta.x; next.width = Math.max(10, initial.width - delta.x); }
+        if (handle.includes("n")) { next.y = initial.y + delta.y; next.height = Math.max(10, initial.height - delta.y); }
+      }
+      updates[widgetId] = snapGeometry(next, snapEnabled, 10);
+    }
+    setGeometryOverrides(updates);
+    suppressCanvasClickRef.current = true;
+  };
+
+  const handleCanvasPointerUp = () => {
+    if (canvasPointer.mode === "marquee") {
+      const hits = canvasWidgets.filter((widget) => intersects(canvasPointer.rect, effectiveGeometry(widget))).map((widget) => widget.id);
+      const nextIds = canvasPointer.additive ? [...new Set([...selectedIds, ...hits])] : hits;
+      setSelectedIds(nextIds);
+      const first = hits[0] ? resolveCanonicalNode(project, hits[0])?.widget : undefined;
+      setSelection(first ? { id: first.id, label: first.name, kind: "widget", nodeType: first.widgetType, detail: first.locked ? "Locked" : first.visible ? "Visible" : "Hidden" } : null);
+      setCanvasPointer({ mode: "idle" });
+      suppressCanvasClickRef.current = true;
+      return;
+    }
+    if (canvasPointer.mode === "drag" || canvasPointer.mode === "resize") {
+      const updates = geometryOverrides;
+      if (Object.keys(updates).length) commitGeometryCommand(updates, canvasPointer.mode === "drag" ? "Move widget" : "Resize widget");
+      setCanvasPointer({ mode: "idle" });
+      window.setTimeout(() => { suppressCanvasClickRef.current = false; }, 0);
+    }
+  };
+
+  const renderCanvasWidget = (widget: Widget) => {
+    const geometry = effectiveGeometry(widget);
+    const selected = selectedIds.includes(widget.id);
+    const style = { left: `${(geometry.x / canvasWidth) * 100}%`, top: `${(geometry.y / canvasHeight) * 100}%`, width: `${(geometry.width / canvasWidth) * 100}%`, height: `${(geometry.height / canvasHeight) * 100}%` };
+    const handles = ["nw", "ne", "sw", "se"];
+    return <div key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""} ${widget.visible ? "" : "is-invisible"}`} style={style} role="button" tabIndex={0} aria-label={`${widget.name} ${widget.widgetType}`} onPointerDown={(event) => beginWidgetMove(widget, event)} onClick={(event) => { event.stopPropagation(); if (!suppressCanvasClickRef.current) selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden" }, event.shiftKey || event.ctrlKey); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden" }); }}><span>{widget.name}</span><small>{widget.widgetType}{widget.locked ? " · locked" : ""}{!widget.visible ? " · hidden" : ""}</small>{selected && !widget.locked && handles.map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize ${widget.name} ${handle}`} onPointerDown={(event) => beginWidgetResize(widget, handle, event)} />)}</div>;
+  };
 
   const menuItems: Record<MenuKey, MenuItem[]> = {
     File: [
@@ -472,6 +572,22 @@ export function App() {
     </>
   );
 
+  const commitSelectionGeometryField = (field: keyof Geometry, value: number) => {
+    const previous = project;
+    const updates: Record<string, Geometry> = {};
+    selectedIds.forEach((id) => {
+      const widget = resolveCanonicalNode(project, id)?.widget;
+      if (!widget || widget.locked) return;
+      updates[id] = { ...effectiveGeometry(widget), [field]: Math.max(field === "width" || field === "height" ? 10 : 0, value) };
+    });
+    if (!Object.keys(updates).length) {
+      logAction("Geometry edit blocked: selection is locked or not a Widget", "WARN");
+      return;
+    }
+    const next = updateWidgetGeometries(project, updates);
+    runCommand({ label: `Set widget ${field}`, execute: () => replaceProject(next), undo: () => replaceProject(previous) });
+  };
+
   const renderProperties = () => {
     const multi = selectedIds.length > 1;
     const node = resolvedSelection;
@@ -494,7 +610,7 @@ export function App() {
           <section className="property-section"><div className="property-section-title">Canonical Context</div><PropertyRow label="Source" value="Canonical Project Model" /><PropertyRow label="Device Profile" value={project.deviceProfileId} muted /><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div><PropertyRow label="Widget Type" value={multi ? valueFor((current) => current.widget?.widgetType) : widget.widgetType} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Enabled" value={multi ? valueFor((current) => current.widget?.enabled) : String(widget.enabled)} /><PropertyRow label="Geometry Lock" value={multi ? valueFor((current) => current.widget?.locked ? "Locked" : "Editable") : widget.locked ? "Locked" : "Editable"} /></section>
-            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><PropertyRow label="Position" value={`${widget.geometry.x}, ${widget.geometry.y}`} muted={widget.locked} /><PropertyRow label="Size" value={`${widget.geometry.width} × ${widget.geometry.height}`} muted={widget.locked} /><PropertyRow label="Z-order" value={String(widget.zIndex)} /></section>
+            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><label>X<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).x : undefined) : effectiveGeometry(widget).x} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("x", Number(event.target.value))} /></label><label>Y<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).y : undefined) : effectiveGeometry(widget).y} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("y", Number(event.target.value))} /></label><label>W<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).width : undefined) : effectiveGeometry(widget).width} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("width", Number(event.target.value))} /></label><label>H<input type={multi ? "text" : "number"} value={multi ? valueFor((current) => current.widget ? effectiveGeometry(current.widget).height : undefined) : effectiveGeometry(widget).height} disabled={multi || widget.locked} onChange={(event) => commitSelectionGeometryField("height", Number(event.target.value))} /></label></div><PropertyRow label="Locked" value={multi ? valueFor((current) => current.widget?.locked) : String(widget.locked)} /><PropertyRow label="Visible" value={multi ? valueFor((current) => current.widget?.visible) : String(widget.visible)} /><PropertyRow label="Z-order" value={String(widget.zIndex)} /></section>
             <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? "Configured" : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {widget.widgetType === "digit" && <section className="property-section"><div className="property-section-title">Digit</div><PropertyRow label="Style" value={String(widget.style?.digitStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Floor Mapping" value={String(widget.content?.floorMappingId ?? "Not selected")} /></section>}
             {widget.widgetType === "direction" && <section className="property-section"><div className="property-section-title">Direction</div><PropertyRow label="Style" value={String(widget.style?.directionStyleId ?? "Profile default / unresolved")} /><PropertyRow label="Variant" value={String(widget.content?.variant ?? "Profile-defined")} /></section>}
@@ -558,7 +674,7 @@ export function App() {
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.max(50, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.min(200, current + 10))}>+</button></div></div>
-            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={clearSelection}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" style={{ transform: `scale(${zoom / 100})` }} onClick={(event) => event.stopPropagation()}><div className="device-frame"><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen"><div className="canvas-widget-layer">{canvasWidgets.map((widget) => { const selected = selectedIds.includes(widget.id); const style = { left: `${(widget.geometry.x / canvasWidth) * 100}%`, top: `${(widget.geometry.y / canvasHeight) * 100}%`, width: `${(widget.geometry.width / canvasWidth) * 100}%`, height: `${(widget.geometry.height / canvasHeight) * 100}%` }; return <button type="button" key={widget.id} className={`canvas-widget ${selected ? "is-selected" : ""} ${widget.locked ? "is-locked" : ""} ${widget.visible ? "" : "is-invisible"}`} style={style} aria-label={`${widget.name} ${widget.widgetType}`} onClick={(event) => { event.stopPropagation(); selectNode({ id: widget.id, label: widget.name, kind: widget.widgetType, nodeType: widget.widgetType, detail: widget.locked ? "Locked" : widget.visible ? "Visible" : "Hidden" }, event.shiftKey || event.ctrlKey); }}><span>{widget.name}</span><small>{widget.widgetType}</small></button>; })}{canvasWidgets.length === 0 && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{activeScene ? "Scene contains no widgets." : "Create or select a Theme Project to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
+            <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, kind: selection?.kind ?? "canvas" }); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" style={{ transform: `scale(${zoom / 100})` }} onClick={(event) => event.stopPropagation()}><div className="device-frame"><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen" ref={canvasScreenRef} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp}><div className="canvas-widget-layer">{canvasAvailable && canvasWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || canvasWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}</div><div className="context-actions"><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled title="Requires a selected widget">Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled title="Requires a selected widget">Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" onPointerDown={(event) => beginResize("right", event)} />}
@@ -568,7 +684,9 @@ export function App() {
         {floatingPanels.map((panel) => renderPanelContainer(panel, panel === "explorer" ? renderExplorer() : panel === "assets" ? renderAssets() : panel === "properties" ? renderProperties() : panel === "simulator" ? renderSimulator() : renderConsole()))}
       </main>
 
-      <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Browser core · Tauri shell reserved</span></footer>
+      {contextMenu && <div className="editor-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>{commandsForSelection(contextMenu.kind).map((command) => <button type="button" key={command.id} disabled={Boolean(command.disabledReason)} title={command.disabledReason} onClick={() => { if (command.id === "widget.edit-properties") activatePanel("properties"); logAction(`${command.label} selected`); setContextMenu(null); }}><span>{command.label}</span>{command.shortcut && <kbd>{command.shortcut}</kbd>}</button>)}{commandsForSelection(contextMenu.kind).length === 0 && <span className="context-menu-empty">No commands for this selection</span>}</div>}
+
+      <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Browser core · Tauri shell reserved</span></footer>
 
       {bindingModal && <div className="settings-backdrop" role="presentation" onClick={() => setBindingModal(null)}><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Binding is evaluated inside the active Scene</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code></div>; })}</div><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ?? "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Binding records remain in the canonical Widget model; this surface does not invent scene selection rules.</span></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" className="settings-button-secondary" disabled title="Command-backed binding creation is the next UI command phase">Add Binding</button><button type="button" className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation" onClick={() => setSettingsOpen(false)}><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onClick={(event) => event.stopPropagation()}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" className="settings-button-secondary" onClick={() => { setSettingsDraft(savedSettings); setSettingsOpen(false); }}>Cancel</button><button type="button" className="settings-button-primary" onClick={() => { setSavedSettings(settingsDraft); setSettingsOpen(false); logAction("Program Settings saved"); }}>Save / Apply &amp; Close</button></div></footer></section></div>}

@@ -325,3 +325,26 @@ button:focus-visible { outline: 2px solid #4abec2; outline-offset: 1px; }
   .binding-dialog { width: calc(100vw - 30px); height: calc(100vh - 30px); }
   .binding-registry-grid { grid-template-columns: 1fr; }
 }
+
+/* Phase 2 canvas interaction foundation */
+.device-screen { position: relative; touch-action: none; }
+.canvas-widget { cursor: move; user-select: none; }
+.canvas-widget.is-locked { cursor: not-allowed; }
+.canvas-widget.is-invisible { outline: 1px dotted rgba(98, 223, 224, .8); }
+.resize-handle { position: absolute; z-index: 6; width: 7px; height: 7px; border: 1px solid #0d5e67; background: #eafefe; padding: 0; }
+.handle-nw { top: -5px; left: -5px; cursor: nwse-resize; }
+.handle-ne { top: -5px; right: -5px; cursor: nesw-resize; }
+.handle-sw { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.handle-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.selection-marquee { position: absolute; z-index: 8; border: 1px dashed #19898f; background: rgba(25, 137, 143, .14); pointer-events: none; }
+.geometry-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.geometry-editor label { display: grid; gap: 3px; color: var(--text-muted); font-size: 9px; text-transform: uppercase; }
+.geometry-editor input { min-width: 0; border: 1px solid var(--border); background: #fff; color: var(--text); padding: 5px 6px; font: inherit; font-size: 10px; }
+.geometry-editor input:focus { border-color: var(--accent); outline: 2px solid rgba(25, 137, 143, .14); }
+.geometry-editor input:disabled { background: #edf2f3; color: var(--text-muted); cursor: not-allowed; }
+.editor-context-menu { position: fixed; z-index: 120; display: grid; min-width: 190px; border: 1px solid #aebfc3; background: #fff; box-shadow: 0 10px 28px rgba(13, 29, 36, .18); padding: 4px; }
+.editor-context-menu button { display: flex; align-items: center; justify-content: space-between; gap: 14px; border: 0; background: transparent; color: var(--text); padding: 7px 9px; font-size: 10px; text-align: left; }
+.editor-context-menu button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent-dark); }
+.editor-context-menu button:disabled { color: var(--text-muted); cursor: not-allowed; }
+.editor-context-menu kbd { color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; }
+.context-menu-empty { padding: 8px 9px; color: var(--text-muted); font-size: 10px; }
