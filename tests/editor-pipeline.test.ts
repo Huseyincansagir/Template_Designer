@@ -283,4 +283,58 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(store.redo()).toBe(true);
     expect(store.getSnapshot().isDirty).toBe(true);
   });
+
+  it("emits one document notification per mutation, undo and redo", () => {
+    const { store, editor } = setup();
+    let notifications = 0;
+    const unsubscribe = store.subscribe(() => { notifications += 1; });
+    const groupId = current(store).themeProjectGroups[0].id;
+    expect(editor.addThemeProject(groupId, "A").changed).toBe(true);
+    expect(notifications).toBe(1);
+    expect(store.undo()).toBe(true);
+    expect(notifications).toBe(2);
+    expect(store.redo()).toBe(true);
+    expect(notifications).toBe(3);
+    unsubscribe();
+  });
+
+  it("blocks locked geometry at the application boundary while allowing other properties", () => {
+    const { project, sceneId } = hierarchyProject();
+    const lockedProject: Project = {
+      ...project,
+      themeProjectGroups: project.themeProjectGroups.map((group) => ({
+        ...group,
+        themeProjects: group.themeProjects.map((theme) => ({
+          ...theme,
+          rotations: theme.rotations.map((rotation) => ({
+            ...rotation,
+            scenes: rotation.scenes.map((scene) => ({
+              ...scene,
+              widgets: scene.widgets.map((item) => item.id === "w1" ? { ...item, locked: true } : item),
+            })),
+          })),
+        })),
+      })),
+    };
+    const { store, editor } = setup(lockedProject);
+    const before = structuredClone(current(store));
+    expect(editor.setWidgetGeometries({ w1: { x: 99, y: 99, width: 99, height: 99 } }).changed).toBe(false);
+    expect(current(store)).toEqual(before);
+    expect(editor.editWidgetProperties(sceneId, "w1", { name: "Locked Rename", geometry: { x: 88, y: 88, width: 88, height: 88 } }).changed).toBe(true);
+    const widgetAfter = current(store).themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0];
+    expect(widgetAfter.name).toBe("Locked Rename");
+    expect(widgetAfter.geometry).toEqual(before.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry);
+  });
+
+  it("deletes Theme Project Groups when the supported group command is selected", () => {
+    const { project, groupId } = hierarchyProject();
+    const { store, editor } = setup(project);
+    const before = structuredClone(current(store));
+    expect(editor.deleteSelection([groupId]).changed).toBe(true);
+    expect(current(store).themeProjectGroups).toHaveLength(0);
+    expect(store.undo()).toBe(true);
+    expect(current(store)).toEqual(before);
+    expect(store.redo()).toBe(true);
+    expect(current(store).themeProjectGroups).toHaveLength(0);
+  });
 });

@@ -132,35 +132,47 @@ export class EditorApplication {
   }
 
   setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
-    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapWidgets(scene, (widget) => updates[widget.id] ? { ...widget, geometry: clone(updates[widget.id]) } : widget))))));
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapWidgets(scene, (widget) => {
+      const geometry = updates[widget.id];
+      return geometry && !widget.locked ? { ...widget, geometry: clone(geometry) } : widget;
+    }))))));
   }
 
   editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): MutationResult {
     return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? {
       ...scene,
-      widgets: scene.widgets.map((widget) => widget.id === widgetId ? { ...widget, ...clone(patch) } : widget),
+      widgets: scene.widgets.map((widget) => {
+        if (widget.id !== widgetId) return widget;
+        const { geometry, ...editablePatch } = clone(patch);
+        return { ...widget, ...editablePatch, ...(widget.locked || geometry === undefined ? {} : { geometry }) };
+      }),
     } : scene)))));
   }
 
   deleteSelection(ids: readonly string[]): MutationResult {
     if (!ids.length) return { changed: false };
     const selected = new Set(ids);
-    return this.execute("Delete Selection", (project) => mapProjectGroups(project, (group) => ({
-      ...group,
-      themeProjects: group.themeProjects
-        .filter((theme) => !selected.has(theme.id))
-        .map((theme) => ({
-          ...theme,
-          rotations: theme.rotations
-            .filter((rotation) => !selected.has(rotation.id))
-            .map((rotation) => ({
-              ...rotation,
-              scenes: rotation.scenes
-                .filter((scene) => !selected.has(scene.id))
-                .map((scene) => ({ ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) })),
+    return this.execute("Delete Selection", (project) => ({
+      ...project,
+      themeProjectGroups: project.themeProjectGroups
+        .filter((group) => !selected.has(group.id))
+        .map((group) => ({
+          ...group,
+          themeProjects: group.themeProjects
+            .filter((theme) => !selected.has(theme.id))
+            .map((theme) => ({
+              ...theme,
+              rotations: theme.rotations
+                .filter((rotation) => !selected.has(rotation.id))
+                .map((rotation) => ({
+                  ...rotation,
+                  scenes: rotation.scenes
+                    .filter((scene) => !selected.has(scene.id))
+                    .map((scene) => ({ ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) })),
+                })),
             })),
         })),
-    })));
+    }));
   }
 
   duplicateSelection(ids: readonly string[]): MutationResult {

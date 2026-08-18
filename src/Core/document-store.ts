@@ -31,6 +31,7 @@ export class InMemoryDocumentStore implements DocumentStore {
   private currentProject: Project | undefined;
   private savedProject: Project | undefined;
   private snapshot: DocumentSnapshot;
+  private suppressSnapshotRefresh = false;
   private readonly listeners = new Set<() => void>();
   readonly history: CommandHistory;
 
@@ -42,7 +43,9 @@ export class InMemoryDocumentStore implements DocumentStore {
       isDirty: false,
       history: history.snapshot,
     };
-    this.history.subscribe(() => this.refreshSnapshot());
+    this.history.subscribe(() => {
+      if (!this.suppressSnapshotRefresh) this.refreshSnapshot();
+    });
   }
 
   getCurrent(): Project | undefined { return this.currentProject; }
@@ -56,7 +59,7 @@ export class InMemoryDocumentStore implements DocumentStore {
   open(project: Project): void {
     this.currentProject = project;
     this.savedProject = project;
-    this.history.clear();
+    this.runWithoutSnapshotRefresh(() => this.history.clear());
     this.refreshSnapshot();
   }
 
@@ -65,7 +68,7 @@ export class InMemoryDocumentStore implements DocumentStore {
   close(): void {
     this.currentProject = undefined;
     this.savedProject = undefined;
-    this.history.clear();
+    this.runWithoutSnapshotRefresh(() => this.history.clear());
     this.refreshSnapshot();
   }
 
@@ -77,16 +80,43 @@ export class InMemoryDocumentStore implements DocumentStore {
   replaceCurrent(project: Project): void {
     if (!this.currentProject) throw new Error("No document is open");
     this.currentProject = project;
-    this.refreshSnapshot();
+    if (!this.suppressSnapshotRefresh) this.refreshSnapshot();
   }
 
   execute(command: Command): void {
     if (!this.currentProject) throw new Error("No document is open");
-    this.history.execute(command);
+    try {
+      this.runWithoutSnapshotRefresh(() => this.history.execute(command));
+    } finally {
+      this.refreshSnapshot();
+    }
   }
 
-  undo(): boolean { return this.history.undo(); }
-  redo(): boolean { return this.history.redo(); }
+  undo(): boolean {
+    try {
+      return this.runWithoutSnapshotRefresh(() => this.history.undo());
+    } finally {
+      this.refreshSnapshot();
+    }
+  }
+
+  redo(): boolean {
+    try {
+      return this.runWithoutSnapshotRefresh(() => this.history.redo());
+    } finally {
+      this.refreshSnapshot();
+    }
+  }
+
+  private runWithoutSnapshotRefresh<T>(operation: () => T): T {
+    const previous = this.suppressSnapshotRefresh;
+    this.suppressSnapshotRefresh = true;
+    try {
+      return operation();
+    } finally {
+      this.suppressSnapshotRefresh = previous;
+    }
+  }
 
   private refreshSnapshot(): void {
     this.snapshot = {
