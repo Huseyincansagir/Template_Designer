@@ -1,6 +1,6 @@
 # Template Designer — Domain / Runtime Contract V1 (Canonical)
 
-**Status:** Canonicalized after product-decision review  
+**Status:** Canonical after product-decision review  
 **Branch:** `manus2`
 
 Bu belge Phase 1 domain implementasyonu için canonical referanstır. Firmware/DeviceProfile runtime truth'tur; Designer bu truth'u görsel, metinsel ve işitsel sunuma dönüştürür. Bu belge implementation kodu değildir.
@@ -21,6 +21,7 @@ Workspace
 - Theme Project gerçek temadır ve dört rotation içerir.
 - Rotation/Form V1'de aynı fiziksel yön/geometri kavramıdır.
 - Her rotation kendi Scene/Widget düzenini taşıyabilir.
+- Domain hierarchy ile fiziksel SD-card klasör yapısı aynı şey değildir; export yapısı bu domain ilişkilerini temsil eder.
 
 ## 2. State, Scene and priority
 
@@ -63,7 +64,7 @@ Mevcut profile'daki bilinen warningler:
 
 ```text
 service_out
- overload
+overload
 fire
 ```
 
@@ -71,7 +72,7 @@ Bunlar global sabit liste olarak Designer'a gömülmez. Gelecekte başka profile
 
 Direction ve door state isimleri de profile tarafından belirlenir. Designer kendi başına `idle`, `door_opening`, `door_open`, `door_closing`, `door_closed` gibi enum'ları zorunlu kılmaz.
 
-Direction semantiği profile registry'deki değere göre:
+Direction presentation mapping'i de profile registry'deki canonical state ID'lerine göre yapılır. `UP`, `DOWN` ve `none/no direction` aşağıdaki örneklerdir; bunlar Designer tarafından universal runtime enum olarak dayatılmaz:
 
 ```text
 UP   → Up variant
@@ -85,7 +86,7 @@ DeviceProfile aşağıdakilerin kaynağıdır:
 
 - display resolution
 - supported rotations
-- supported scenes
+- supported scene/state capabilities
 - runtime states
 - runtime settings
 - runtime parameters
@@ -160,7 +161,7 @@ Custom Direction Style:
 
 Bounding Group widget değildir; opsiyonel layout/composition grubudur. Özellikle Arrow + Digit gibi nesnelerin ortak merkez/reference üzerinden hizalanması için kullanılır.
 
-Örnek:
+Örnek merkez davranışı:
 
 ```text
 1 child → child center
@@ -217,7 +218,7 @@ Widget types:
 - Text
 - DeviceProfile'ın diğer desteklediği semantic widgetler
 
-Bir semantic widget uygun image/video/audio asset/reference kullanabilir.
+Bir widget yalnızca kendi capability'siyle uyumlu media/reference türlerini kullanabilir. Audio, generic olarak her semantic widget'a bağlanmaz; audio kullanımı Media/Media Slide ve audio policy kapsamındadır.
 
 Duration her yerde **0.1 s** hassasiyetindedir.
 
@@ -228,9 +229,9 @@ Loop = sonsuz tekrar.
 Repeat = sınırlı tekrar.  
 Repeat Count = tekrar sayısı.
 
-Bu kavramlar image/video/audio ve gerektiğinde komple Media Widget için kullanılabilir.
+Bu kavramlar desteklenen image/video/audio media ve gerektiğinde komple Media Widget playback'i için kullanılabilir.
 
-Image şeffaflık için cihazın desteklediği alpha-capable hedef formatı kullanır; mevcut target örneğinde ARGB888/ARGB8888 profile capability'dir.
+Image şeffaflığı için hedef cihazın desteklediği alpha-capable format kullanılır. Mevcut proje kararındaki hedef format **ARGB888**'dir; başka formatlar yalnızca ilgili DeviceProfile capability'si tanımlıyorsa desteklenir.
 
 Video dimensions, duration, loop/repeat, repeat count, volume, optional audio ve profile-defined decode capability taşır.
 
@@ -262,7 +263,7 @@ Ayrı `Media Sequence` domain/widget nesnesi V1 için zorunlu değildir. Bir Sce
 
 Media Slide playback'in bitmesi Scene değiştirmez. Scene değişimi runtime state/priority sonucudur.
 
-Scene değişiminde playback continuity kullanıcıya opsiyon olarak sunulabilir: yeni media size/playback açısından uyumluysa önceki playback yeni Scene'deki karşılık gelen widgetta devam edebilir; uyumsuzsa yeni media doğrudan başlar.
+Scene değişiminde playback continuity kullanıcıya bir seçenek olarak sunulabilir. Yeni Scene'deki karşılık gelen media widget aynı gerekli size/playback continuity parametrelerine sahipse önceki playback'in yeni Scene'de devam etmesine izin verilebilir; farklıysa önceki playback kesilir ve yeni media doğrudan başlar. Bu bir runtime capability/option'dır; her media geçişinde otomatik devam garantisi değildir.
 
 Daha önce konuşulan `1280×720` eşzamanlı video decode sınırı global Designer sabiti değildir; ilgili DeviceProfile capability'sidir ve validation bunu profile'a göre kontrol eder.
 
@@ -284,9 +285,11 @@ Designer default policy ayarları hazırlayabilir:
 - mute
 - background enable
 
-Audio priority **0–100** olarak kullanılabilir. Designer policy metadata'sını tanımlar; gerçek firmware mixer/arbitration algoritmasını icat etmez.
+Audio priority **0–100** aralığındadır. Designer policy metadata'sını tanımlar; gerçek firmware mixer/arbitration algoritmasını icat etmez.
 
 Background + Announcement, Background + Media ve Background + Announcement + Media kombinasyonları policy ile tanımlanabilir. Firmware saha ayarları runtime'da template defaultlarını override edebilir.
+
+Video/media audio volume ayrıca ayarlanabilir. Background music'in hangi durumda kısılacağı, tamamen kapanacağı veya hangi katmanın override edeceği policy alanlarıyla tanımlanabilir.
 
 Language 1 / Language 2 announcement sırası Designer'da ayarlanabilir; iki dil seçildiğinde anonslar peş peşe oynatılabilir.
 
@@ -323,7 +326,7 @@ Ayrı alandır. Widget oluşturmaz, supported asset gibi davranmaz, Canvas'a ren
 
 Kullanıcı dosyayı Project Explorer'da nereye bırakırsa o hedefin import kuralları uygulanır. Canvas'a özel "dosya sürükle ve otomatik import et" davranışı yoktur.
 
-Export'a yalnızca gerekli used assets, project/theme resources ve gerçekten referanslanan default/profile assets gider. Asset Depot'un tamamı export edilmez. Unsupported Files normal export'a girmez.
+V1 export kapsamı nettir: **Resources, Used assets ve Default assets** export edilir. Asset Depot'un kullanılmayan içeriği export edilmez. Unsupported Files normal export kapsamına girmez.
 
 ## 15. Stable ID
 
@@ -336,9 +339,11 @@ Display Name: Serdar Ortaç
 
 UI display name gösterebilir; firmware/package reference stable ID kullanır.
 
-Rename stable ID'yi değiştirmez. Stable ID immutable, unique ve reference-safe olmalıdır.
+Rename stable ID'yi değiştirmez. Stable ID immutable, deterministic ve reference-safe olmalıdır.
 
-Aynı asset farklı Theme'lerde kullanılabilir. Scope/namespace içinde collision olmamalıdır. Stable ID içine Theme/Rotation numarasını zorunlu gömmek V1 şartı değildir; namespace/manifest ileride kullanılabilir.
+Stable ID'nin collision-free scope'u Theme/Project/Rotation gibi hiyerarşik bağlamları gerektiğinde kodlayabilir. Proje kararındaki yaklaşım, stable ID içinde theme/rotation gibi bağlamların basit ve deterministik biçimde temsil edilebilmesidir; exact string encoding ayrı implementation detail olarak standardize edilir.
+
+Aynı asset farklı Theme'lerde duplicate/reference edilebilir. Farklı Theme'lerde fiziksel duplicate bulunması tek başına debug/runtime hatası değildir; ilgili deployment scope içinde stable ID collision oluşmamalıdır.
 
 ## 16. Package / SD Card
 
@@ -358,9 +363,9 @@ SD Card
 
 Root `config.cfg` project genel bilgileri ve tema/index metadata'sını taşır. Her Theme Project kendi `config.cfg` dosyasına sahiptir.
 
-Kesin fiziksel klasör isimleri exporter implementasyonunda standardize edilebilir; semantic hierarchy değişmez.
+Kesin fiziksel klasör isimleri exporter implementasyonunda standardize edilebilir; semantic hierarchy değişmez. Ayrıntılı fiziksel asset klasörleme/export mapping ayrı Asset/Media Package specification'ında standardize edilir.
 
-İleride Theme Project config içinde dosya dizini/manifest-index bulunabilir; V1 firmware'i gereksiz yere karmaşıklaştırmamak için bu sonraki iştir.
+İleride Theme Project config içinde dosya dizini/manifest-index bulunabilir; bu V1 firmware'ini gereksiz yere karmaşıklaştırmamak için sonraki iştir.
 
 ## 17. Export flow
 
@@ -394,7 +399,7 @@ Ayrı Format Tool daha sonra:
 - MP4 → AVI
 - image conversion
 - audio conversion
-- ARGB888/ARGB8888 preparation
+- ARGB888 preparation
 
 yapabilir.
 
@@ -423,7 +428,8 @@ Kontroller:
 - invalid required rotation
 - unresolved required floor mapping
 - impossible device capability combination
-- video/decode capability violation
+- simultaneous video/decode capability violation
+- missing required content
 - missing optional language/style/media content
 
 Severity matrix profile-aware olabilir. Ürün kararında kesinleşmemiş severity'ler implementation sırasında sessizce uydurulmaz.
@@ -448,11 +454,15 @@ render / media / audio
 
 DeviceProfile'a yeni state eklenirse simulator profile registry üzerinden otomatik genişleyebilmelidir.
 
+Simulator örnek runtime senaryolarını üretmek için DeviceProfile'ın gerçek state/value registry'sini kullanabilir; yeni state icat etmez.
+
 ## 21. AI theme generation
 
 AI tema oluşturma sistemi DeviceProfile, Scene, Widget, Media, Binding, Floor Mapping ve Style registry'yi bilmelidir.
 
 AI kendi runtime state'ini icat etmez. AI çıktısı Simulator'da gerçek domain evaluation ile test edilebilir.
+
+AI model/API key runtime programına gömülmez; AI generation geliştirme/authoring tarafında dış araç/API kullanımıdır.
 
 ## 22. V1 non-goals
 
@@ -473,7 +483,7 @@ AI kendi runtime state'ini icat etmez. AI çıktısı Simulator'da gerçek domai
 
 - kesin DeviceProfile JSON/schema
 - state registry metadata alanları
-- Project/Theme/Rotation/Scene/Widget stable-ID namespace formatı
+- Project/Theme/Rotation/Scene/Widget stable-ID namespace formatının exact string encoding'i
 - root/theme `config.cfg` kesin alanları
 - exact physical export folder names
 - profile-aware validation severity matrix
@@ -516,8 +526,10 @@ Bunlar temel domain davranışını değiştirmeden ayrıca standardize edilebil
 | Direction defaults | 10 shapes + palette |
 | Direction custom | File as-is, no color picker |
 | Asset Depot | Library, not auto-export |
+| Exported assets | Resources + Used + Default |
 | Unsupported Files | Ayrı alan |
 | Stable ID | Display name'den bağımsız immutable reference |
+| Stable ID scope | Deterministic, collision-safe, hierarchical context may be encoded |
 | Root config | Project/SD general metadata |
 | Theme config | Theme content metadata |
 | Format conversion | V1'de ayrı Format Tool |
@@ -541,3 +553,7 @@ Bunlar temel domain davranışını değiştirmeden ayrıca standardize edilebil
 13. Format conversion'ı V1 Designer'a gömme.
 14. DeviceProfile'da olmayan capability/state'i varsayma.
 15. Simulator ve AI preview aynı domain evaluation motorunu kullanmalı.
+16. Export kapsamını Resources + Used + Default ile sınırla.
+17. Audio priority range'ini 0–100 kabul et; mixer/arbitration implementation'ını firmware'e bırak.
+18. Generic semantic widget'lara audio capability varsayma.
+19. Stable ID'lerin deployment scope içinde deterministic ve collision-safe olmasını sağla.
