@@ -1,20 +1,24 @@
-import type { DeviceProfile, Project, Theme } from "./models";
+import type { DeviceProfile, Project, ThemeProjectGroup } from "./models";
 
 export const foundationDeviceProfile: DeviceProfile = {
   id: "foundation-profile",
   name: "Foundation Device Profile",
   display: { width: 720, height: 1280 },
-  supportedWidgetTypes: ["background", "text", "image", "video", "direction", "floor", "media-slide"],
-  supportedMediaTypes: ["image", "video", "audio", "font"],
+  supportedWidgetTypes: ["media", "digit", "direction", "warning", "text"],
+  supportedMediaTypes: ["image", "video", "audio"],
+  supportedFormats: [],
   runtimeStates: [],
   runtimeSettings: [],
+  languages: [],
+  digitStyles: [],
+  directionStyles: [],
 };
 
-export function createEmptyTheme(): Theme {
+export function createEmptyThemeProjectGroup(): ThemeProjectGroup {
   return {
-    id: "theme-foundation",
-    name: "Untitled Theme",
-    rotations: [],
+    id: "theme-group-foundation",
+    name: "Untitled Theme Group",
+    themeProjects: [],
   };
 }
 
@@ -24,7 +28,7 @@ export function createEmptyProject(name = "Untitled Project"): Project {
     schemaVersion: 1,
     name,
     deviceProfileId: foundationDeviceProfile.id,
-    themes: [createEmptyTheme()],
+    themeProjectGroups: [createEmptyThemeProjectGroup()],
     assets: [],
     metadata: {},
   };
