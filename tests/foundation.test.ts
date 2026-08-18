@@ -24,7 +24,7 @@ class SetValueCommand implements Command {
 }
 
 describe("Phase 0 foundation", () => {
-  it("creates a versioned project with a device profile and theme project group boundary", () => {
+  it("creates a versioned project with a canonical Theme Project scaffold", () => {
     const project = createEmptyProject("Demo");
 
     expect(project).toMatchObject({
@@ -33,8 +33,21 @@ describe("Phase 0 foundation", () => {
       deviceProfileId: "foundation-profile",
     });
     expect(project.themeProjectGroups).toHaveLength(1);
-    expect(project.themeProjectGroups[0]?.themeProjects).toEqual([]);
+    const theme = project.themeProjectGroups[0]?.themeProjects[0];
+    expect(theme?.name).toBe("New Theme Project");
+    expect(theme?.rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
+    expect(theme?.rotations[0]).toMatchObject({ angle: 0, width: 720, height: 1280 });
+    expect(theme?.rotations[1]).toMatchObject({ angle: 90, width: 1280, height: 720 });
+    expect(theme?.rotations.every((rotation) => rotation.scenes.length === 0)).toBe(true);
     expect(project.assets).toEqual([]);
+  });
+
+  it("assigns fresh stable ids per project creation", () => {
+    const first = createEmptyProject("A");
+    const second = createEmptyProject("B");
+    expect(first.id).not.toBe(second.id);
+    expect(first.themeProjectGroups[0].id).not.toBe(second.themeProjectGroups[0].id);
+    expect(first.themeProjectGroups[0].themeProjects[0].id).not.toBe(second.themeProjectGroups[0].themeProjects[0].id);
   });
 
   it("returns structured validation results", () => {

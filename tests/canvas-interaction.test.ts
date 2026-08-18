@@ -259,7 +259,8 @@ describe("Canvas canonical remediation regressions", () => {
   });
 
   it("rejects malformed geometry at the application mutation boundary", () => {
-    const { store, editor } = setupEditor(projectWithTwoScenes());
+    const project = projectWithTwoScenes();
+    const { store, editor } = setupEditor(project);
     const valid = { x: 10, y: 10, width: 40, height: 20 };
     const malformed = [
       { ...valid, x: Number.NaN },
@@ -273,7 +274,7 @@ describe("Canvas canonical remediation regressions", () => {
       expect(editor.setWidgetGeometries({ w1: geometry }).changed).toBe(false);
       expect(editor.setWidgetGeometriesInScene("scene-a", { w1: geometry }).changed).toBe(false);
     }
-    expect(store.getCurrent()).toEqual(projectWithTwoScenes());
+    expect(store.getCurrent()).toEqual(project);
     expect(store.undo()).toBe(false);
   });
 

@@ -1,4 +1,5 @@
 import type { Project } from "../Domain/models";
+import type { ProjectStorage } from "../Infrastructure/project-storage";
 import { CommandHistory, type Command, type CommandHistorySnapshot } from "./commands";
 
 export interface DocumentSnapshot {
@@ -35,7 +36,7 @@ export class InMemoryDocumentStore implements DocumentStore {
   private readonly listeners = new Set<() => void>();
   readonly history: CommandHistory;
 
-  constructor(history = new CommandHistory()) {
+  constructor(history = new CommandHistory(), private readonly storage?: ProjectStorage) {
     this.history = history;
     this.snapshot = {
       project: undefined,
@@ -73,6 +74,10 @@ export class InMemoryDocumentStore implements DocumentStore {
   }
 
   save(): void {
+    if (!this.currentProject) return;
+    // Persistence failure must not be reported as "Saved": the baseline is
+    // only updated after the adapter accepts the write.
+    this.storage?.save(this.currentProject);
     this.savedProject = this.currentProject;
     this.refreshSnapshot();
   }

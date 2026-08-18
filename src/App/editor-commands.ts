@@ -4,6 +4,7 @@ export type EditorCommandId =
   | "project.add-theme-project"
   | "theme.add-rotation"
   | "rotation.add-scene"
+  | `scene.add-widget:${string}`
   | "widget.bring-forward"
   | "widget.send-backward"
   | "widget.bring-to-front"
@@ -19,6 +20,11 @@ export type EditorCommandDescriptor = {
   label: string;
   shortcut?: string;
   supportedSelectionKinds: readonly SelectionKind[];
+};
+
+export type EditorCommandOptions = {
+  /** DeviceProfile-driven widget types; used to generate Add Widget entries. */
+  readonly widgetTypes?: readonly string[];
 };
 
 /**
@@ -38,7 +44,19 @@ export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "widget.open-properties", kind: "navigation", label: "Open Properties", supportedSelectionKinds: ["widget"] },
 ];
 
-export function commandsForSelection(selectionKind: SelectionKind | undefined): readonly EditorCommandDescriptor[] {
-  if (!selectionKind) return editorCommandDescriptors;
-  return editorCommandDescriptors.filter((command) => command.supportedSelectionKinds.includes(selectionKind));
+export function commandsForSelection(
+  selectionKind: SelectionKind | undefined,
+  options: EditorCommandOptions = {},
+): readonly EditorCommandDescriptor[] {
+  const base = selectionKind
+    ? editorCommandDescriptors.filter((command) => command.supportedSelectionKinds.includes(selectionKind))
+    : editorCommandDescriptors;
+  if (selectionKind !== "scene" || !options.widgetTypes?.length) return base;
+  const addWidgetDescriptors: EditorCommandDescriptor[] = options.widgetTypes.map((widgetType) => ({
+    id: `scene.add-widget:${widgetType}`,
+    kind: "mutation",
+    label: `Add ${widgetType.charAt(0).toUpperCase()}${widgetType.slice(1)} Widget`,
+    supportedSelectionKinds: ["scene"],
+  }));
+  return [...addWidgetDescriptors, ...base];
 }

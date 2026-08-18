@@ -2,7 +2,7 @@ import type { DeviceProfile, Geometry, Project, Rotation, RotationAngle, Scene, 
 import { InMemoryDocumentStore } from "./document-store";
 
 export type ProjectMutation = (project: Project) => Project;
-export type MutationResult = { readonly changed: boolean };
+export type MutationResult = { readonly changed: boolean; readonly createdIds?: readonly string[] };
 
 function clone<T>(value: T): T { return structuredClone(value); }
 function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
@@ -21,6 +21,11 @@ function rotationDimensions(display: DeviceProfile["display"], angle: RotationAn
   return angle === 90 || angle === 270
     ? { width: display.height, height: display.width }
     : { width: display.width, height: display.height };
+}
+
+export function defaultWidgetName(widgetType: string): string {
+  const label = widgetType.replace(/[-_]/g, " ").trim();
+  return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Widget";
 }
 
 function findUniqueScene(project: Project, sceneId: string): Scene | undefined {
@@ -80,13 +85,34 @@ function mapWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
   return { ...scene, widgets: scene.widgets.map(map) };
 }
 
-function duplicateWidget(widget: Widget): Widget {
+function duplicateWidget(widget: Widget, id: string = newId("widget")): Widget {
   return {
     ...clone(widget),
-    id: newId("widget"),
+    id,
     name: `${widget.name} Copy`,
     geometry: { ...widget.geometry, x: widget.geometry.x + 10, y: widget.geometry.y + 10 },
+    // Bindings are re-parented to the copy (new binding ids, widgetId → copy).
+    // Cloning them verbatim would leave the copy referencing the original and
+    // immediately fail BINDING_WIDGET_MISMATCH validation.
+    bindings: widget.bindings.map((binding) => ({ ...clone(binding), id: newId("binding"), widgetId: id })),
   };
+}
+
+/** Stable copy-ID map in Scene document order, built before mutation so undo/redo stay deterministic. */
+function buildDuplicateIdMap(project: Project, selected: ReadonlySet<string>): ReadonlyMap<string, string> {
+  const map = new Map<string, string>();
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      for (const rotation of theme.rotations) {
+        for (const scene of rotation.scenes) {
+          for (const widget of scene.widgets) {
+            if (selected.has(widget.id) && !map.has(widget.id)) map.set(widget.id, newId("widget"));
+          }
+        }
+      }
+    }
+  }
+  return map;
 }
 
 function duplicateScene(scene: Scene): Scene {
@@ -94,7 +120,7 @@ function duplicateScene(scene: Scene): Scene {
     ...clone(scene),
     id: newId("scene"),
     name: `${scene.name} Copy`,
-    widgets: scene.widgets.map(duplicateWidget),
+    widgets: scene.widgets.map((widget) => duplicateWidget(widget)),
   };
 }
 
@@ -161,6 +187,38 @@ export class EditorApplication {
     } : rotation))));
   }
 
+  /**
+   * Undoable, scene-scoped widget creation. Geometry is validated with the
+   * same rules as every other geometry mutation; the widget is appended at
+   * the top of the Scene's z-order (max zIndex + 1). Profile capability
+   * filtering happens at the UI layer where the DeviceProfile lives.
+   */
+  addWidget(sceneId: string, widgetType: string, geometry?: Geometry): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || widgetType.trim().length === 0 || !findUniqueScene(current, sceneId)) return { changed: false };
+    const base = geometry ?? { x: 0, y: 0, width: 120, height: 80 };
+    if (!isValidGeometry(base)) return { changed: false };
+    const id = newId("widget");
+    const result = this.execute(`Add Widget: ${widgetType}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+      if (scene.id !== sceneId) return scene;
+      const maxZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
+      const widget: Widget = {
+        id,
+        name: defaultWidgetName(widgetType),
+        widgetType,
+        enabled: true,
+        visible: true,
+        locked: false,
+        geometry: clone(base),
+        zIndex: maxZ + 1,
+        bindings: [],
+        assetIds: [],
+      };
+      return { ...scene, widgets: [...scene.widgets, widget] };
+    })))));
+    return result.changed ? { changed: true, createdIds: [id] } : result;
+  }
+
   moveScene(rotationId: string, sceneId: string, toIndex: number): MutationResult {
     return this.execute("Move Scene", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => {
       if (rotation.id !== rotationId || toIndex < 0 || toIndex >= rotation.scenes.length) return rotation;
@@ -219,6 +277,15 @@ export class EditorApplication {
 
   deleteSelection(ids: readonly string[]): MutationResult {
     if (!ids.length) return { changed: false };
+    const current = this.documents.getCurrent();
+    if (current) {
+      const selected = new Set(ids);
+      const remainingGroups = current.themeProjectGroups.filter((group) => !selected.has(group.id));
+      // Deleting the last Theme Project Group leaves the editor with no
+      // reachable hierarchy (Add Theme Project requires a group). The Core
+      // refuses the mutation; the UI surfaces the reason.
+      if (current.themeProjectGroups.length > 0 && remainingGroups.length === 0) return { changed: false };
+    }
     const selected = new Set(ids);
     return this.execute("Delete Selection", (project) => ({
       ...project,
@@ -261,13 +328,26 @@ export class EditorApplication {
     const current = this.documents.getCurrent();
     if (!current || !validScopedWidgetIds(current, sceneId, ids)) return { changed: false };
     const selected = new Set(ids);
-    return this.execute("Duplicate Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.flatMap((widget) => selected.has(widget.id) ? [widget, duplicateWidget(widget)] : [widget]) } : scene)))));
+    const copyIds = buildDuplicateIdMap(current, selected);
+    const createdIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
+    const result = this.execute("Duplicate Widget Selection", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+      if (scene.id !== sceneId) return scene;
+      return { ...scene, widgets: scene.widgets.flatMap((widget) => {
+        const copyId = copyIds.get(widget.id);
+        return copyId ? [widget, duplicateWidget(widget, copyId)] : [widget];
+      }) };
+    })))));
+    return result.changed ? { changed: true, createdIds } : result;
   }
 
   duplicateSelection(ids: readonly string[]): MutationResult {
     if (!ids.length) return { changed: false };
+    const current = this.documents.getCurrent();
     const selected = new Set(ids);
-    return this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {
+    if (!current) return { changed: false };
+    const copyIds = buildDuplicateIdMap(current, selected);
+    const createdIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
+    const result = this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {
       const themeProjects: ThemeProject[] = [];
       for (const theme of group.themeProjects) {
         if (selected.has(theme.id)) {
@@ -292,7 +372,8 @@ export class EditorApplication {
             const widgets: Widget[] = [];
             for (const widget of scene.widgets) {
               widgets.push(widget);
-              if (selected.has(widget.id)) widgets.push(duplicateWidget(widget));
+              const copyId = copyIds.get(widget.id);
+              if (copyId) widgets.push(duplicateWidget(widget, copyId));
             }
             scenes.push({ ...scene, widgets });
           }
@@ -302,6 +383,7 @@ export class EditorApplication {
       }
       return { ...group, themeProjects };
     }));
+    return result.changed ? { changed: true, createdIds } : result;
   }
 }
 

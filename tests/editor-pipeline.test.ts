@@ -74,9 +74,10 @@ describe("canonical editor mutation pipeline remediation", () => {
     const result = editor.addThemeProject(before.themeProjectGroups[0].id, "Theme A");
     expect(result.changed).toBe(true);
     const after = structuredClone(current(store));
-    expect(after.themeProjectGroups[0].themeProjects).toHaveLength(1);
-    expect(after.themeProjectGroups[0].themeProjects[0]).toMatchObject({ name: "Theme A", rotations: [], resources: [] });
-    expect(after.themeProjectGroups[0].themeProjects[0].id).not.toBe(before.themeProjectGroups[0].id);
+    expect(after.themeProjectGroups[0].themeProjects).toHaveLength(2);
+    expect(after.themeProjectGroups[0].themeProjects[0]).toMatchObject({ name: "New Theme Project" });
+    expect(after.themeProjectGroups[0].themeProjects[1]).toMatchObject({ name: "Theme A", rotations: [], resources: [] });
+    expect(after.themeProjectGroups[0].themeProjects[1].id).not.toBe(after.themeProjectGroups[0].themeProjects[0].id);
     expect(store.undo()).toBe(true);
     expect(current(store)).toEqual(before);
     expect(store.redo()).toBe(true);
@@ -326,15 +327,20 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(widgetAfter.geometry).toEqual(before.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry);
   });
 
-  it("deletes Theme Project Groups when the supported group command is selected", () => {
+  it("refuses to delete the last Theme Project Group and allows deleting additional groups", () => {
     const { project, groupId } = hierarchyProject();
     const { store, editor } = setup(project);
     const before = structuredClone(current(store));
-    expect(editor.deleteSelection([groupId]).changed).toBe(true);
-    expect(current(store).themeProjectGroups).toHaveLength(0);
-    expect(store.undo()).toBe(true);
+    expect(editor.deleteSelection([groupId]).changed).toBe(false);
     expect(current(store)).toEqual(before);
-    expect(store.redo()).toBe(true);
-    expect(current(store).themeProjectGroups).toHaveLength(0);
+    expect(store.getSnapshot().history.undoCount).toBe(0);
+
+    const secondGroup = { ...before.themeProjectGroups[0], id: "extra-group", name: "Extra Group" };
+    const twoGroups: Project = { ...before, themeProjectGroups: [...before.themeProjectGroups, secondGroup] };
+    const second = setup(twoGroups);
+    expect(second.editor.deleteSelection(["extra-group"]).changed).toBe(true);
+    expect(current(second.store).themeProjectGroups).toHaveLength(1);
+    expect(second.store.undo()).toBe(true);
+    expect(current(second.store)).toEqual(twoGroups);
   });
 });
