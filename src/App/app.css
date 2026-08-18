@@ -607,3 +607,6 @@ body.relaxed-density .sim-input-row { min-height: 36px; }
 
 .validation-goto { padding: 0 var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--accent-hover); font-family: inherit; font-size: var(--micro-label); font-weight: 650; }
 .validation-goto:hover { border-color: var(--accent); background: var(--accent-muted); }
+
+.sim-group { display: grid; gap: 2px; margin-bottom: var(--space-2); }
+.sim-group-title { color: var(--text-muted); font-size: var(--micro-label); text-transform: uppercase; letter-spacing: var(--kicker-tracking); }

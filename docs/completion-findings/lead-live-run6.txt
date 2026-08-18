@@ -1,0 +1,11 @@
+PASS F9a build reports verified :: Built · checksum verified · Document: dirty · Browser core · Tauri shell reserved
+PASS F9b the verified claim is withdrawn once the document changes :: Not built · project changed since the last package · Document: dirty · Browser core · Tauri shell reserved
+PASS F9c the withdrawal is explained :: Package status withdrawn: the project changed after it was built and verified
+PASS F13a widget marked disabled in the canvas
+PASS F13b a disabled widget can still be clicked and selected :: Digit -> Digit
+PASS F23 Duplicate Scene selects the copy it created :: inspector shows "New Scene Copy"
+PASS F20 a duplicated copy is clamped inside the display :: right edges (% of scene width): 60, 100, 100
+PASS F14 a boolean state offers only operators that can match :: ok -> ["equals","not-equals"]
+PASS F14b an integer state offers its declared comparison operators :: ["equals","not-equals","greater-than","less-than"]
+PASS F22 simulator inputs are grouped by their declared category :: ["POSITION","SAFETY","SERVICE"]
+PASS F22b only simulator-marked states are offered :: 5 input row(s)

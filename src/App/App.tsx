@@ -3,15 +3,17 @@ import { createEmptyProject } from "../Domain/factories";
 import { CommandHistory } from "../Core/commands";
 import { InMemoryDocumentStore } from "../Core/document-store";
 import { createEditorApplication, defaultWidgetName, type MutationResult } from "../Core/editor-application";
-import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export";
+import { createDeploymentService } from "../Core/deployment-service";
+import { SDCardTarget } from "../Infrastructure/sd-card-target";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
+import { stableSerialize } from "../Core/serialize";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource } from "../Infrastructure/asset-import";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
-import type { Asset, Binding, Condition, ConditionMode, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
+import type { Asset, Binding, Condition, ConditionMode, ConditionOperator, DeploymentPackage, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateAlignUpdates, calculateDistributeUpdates, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type AlignOperation, type DistributeOperation, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, describeSelectionRefusal, type EditorCommandId, type SelectionOperation } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
@@ -336,6 +338,20 @@ function coerceRuntimeInput(raw: string, type: RuntimeValueType): PrimitiveValue
   return raw;
 }
 
+/**
+ * Operators that can actually match a value of this type. A DeviceProfile may
+ * narrow this further via `operators`; when it declares none, offering all five
+ * let a designer pick `contains` for a boolean - valid per the schema, but a
+ * condition that can never be true (F14).
+ */
+export function operatorsForType(type: RuntimeValueType, declared?: readonly ConditionOperator[]): readonly ConditionOperator[] {
+  if (declared?.length) return declared;
+  if (type === "boolean") return ["equals", "not-equals"];
+  if (type === "enum") return ["equals", "not-equals"];
+  if (type === "string") return ["equals", "not-equals", "contains"];
+  return ["equals", "not-equals", "greater-than", "less-than"];
+}
+
 function coerceBindingDraftValue(raw: string, type: RuntimeValueType): PrimitiveValue | null {
   if (type === "boolean") return raw === "true";
   return coerceRuntimeInput(raw, type);
@@ -595,6 +611,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [runtimeSettings, setRuntimeSettings] = useState<Record<string, PrimitiveValue | null>>({});
   const [simulationStatus, setSimulationStatus] = useState<"idle" | "running" | "paused">("idle");
   const [deploymentStatus, setDeploymentStatus] = useState("Not built");
+  // Identity of the document the last package was built from. A build result
+  // only describes THAT document (F9).
+  const [builtFrom, setBuiltFrom] = useState<string | null>(null);
+  const [lastPackage, setLastPackage] = useState<DeploymentPackage | null>(null);
+  const deploymentService = useMemo(() => createDeploymentService([new SDCardTarget()]), []);
   const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});
   const [canvasPointer, setCanvasPointer] = useState<CanvasInteractionState>({ mode: "idle" });
   const canvasPointerRef = useRef<CanvasInteractionState>({ mode: "idle" });
@@ -651,6 +672,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const bindingWidget = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId)?.widget : undefined;
   const profileStates = activeProfile?.runtimeStates ?? [];
   const profileSettings = activeProfile?.runtimeSettings ?? [];
+  // The registry decides what the Simulator exposes and how it is grouped:
+  // `simulator: false` means the device supplies that state, not the designer.
+  const simulatorStates = profileStates.filter((state) => state.simulator);
+  const hiddenStateCount = profileStates.length - simulatorStates.length;
+  const simulatorStateGroups = useMemo(() => {
+    const groups = new Map<string, RuntimeStateDefinition[]>();
+    for (const state of simulatorStates) {
+      const key = state.category?.trim() || "general";
+      groups.set(key, [...(groups.get(key) ?? []), state]);
+    }
+    return [...groups.entries()].sort(([left], [right]) => left.localeCompare(right));
+  }, [activeProfile?.id, profileStates.length]);
   const bindingDraftDefinition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === bindingDraft.stateId);
   const bindingEvaluations = useMemo(() => bindingWidget && activeProfile ? bindingWidget.bindings.map((binding) => evaluateBinding(binding, runtimeContext, activeProfile)) : [], [bindingWidget, activeProfile, runtimeValues, runtimeSettings]);
   const activeLeftPanel = leftDockTab === "explorer" && panelModes.explorer === "docked" ? "explorer"
@@ -1679,32 +1712,68 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       setContextMenu(null);
       return;
     }
-    if (changed) logAction(`${commandId} executed`, "EVENT");
+    // Commands that open a confirmation have not executed yet; their own
+    // handler logs the outcome once the user decides (F24).
+    if (changed && !confirmState) logAction(`${commandId} executed`, "EVENT");
     setContextMenu(null);
   };
 
+  /**
+   * Packaging goes through the application service, which owns the adapter
+   * plane. The editor never learns which transport is configured, per the
+   * AGENTS.md UI -> Service -> Adapter chain (F16).
+   */
   const buildAndVerifyPackage = async () => {
     if (!activeProfile) {
       setDeploymentStatus("Blocked · DeviceProfile unavailable");
-      logAction("Package build blocked: active DeviceProfile is unavailable", "ERROR");
+      logAction("Package build blocked: the active DeviceProfile is not registered", "ERROR");
       return;
     }
     if (!validation.valid) {
       setDeploymentStatus("Blocked · validation failed");
-      validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN"));
+      activatePanel("console");
+      setConsoleTab("validation");
+      validation.issues.filter((issue) => issue.severity === "error").forEach((issue) => logAction(`${issue.code}: ${issue.message}`, "ERROR"));
       return;
     }
-    try {
-      setDeploymentStatus("Building…");
-      const built = await buildDeploymentPackage(project, activeProfile);
-      setDeploymentStatus("Built · verifying…");
-      const verified = await verifyDeploymentPackage(built);
-      setDeploymentStatus(verified.verified ? "Built · checksum verified" : "Blocked · integrity failed");
-      logAction(verified.verified ? `Package verified · ${verified.manifest.assetIds.length} asset record(s)` : "Package verification failed", verified.verified ? "INFO" : "ERROR");
-    } catch (error) {
+    setDeploymentStatus("Building…");
+    const outcome = await deploymentService.buildVerified(project, activeProfile);
+    if (outcome.status === "blocked") {
+      setBuiltFrom(null);
       setDeploymentStatus("Blocked · export error");
-      logAction(error instanceof Error ? error.message : "Package build failed", "ERROR");
+      logAction(`Package build blocked (${outcome.code}): ${outcome.reason}`, "ERROR");
+      return;
     }
+    setBuiltFrom(stableSerialize(project));
+    setDeploymentStatus("Built · checksum verified");
+    logAction(`Package verified · ${outcome.package.manifest.assetIds.length} asset record(s) · ${outcome.package.files.length} file(s)`, "INFO");
+    setLastPackage(outcome.package);
+    const transports = deploymentService.targets();
+    logAction(transports.length ? `Transports available: ${transports.map((target) => target.displayName).join(", ")}` : "No deployment transport is configured in this build", transports.length ? "INFO" : "WARN");
+  };
+
+  /** Writes the last verified package through the configured transport. */
+  const writePackage = async () => {
+    if (!lastPackage) {
+      logAction("Write requires a verified package — run Build & Verify first", "WARN");
+      return;
+    }
+    const target = deploymentService.targets()[0];
+    if (!target) {
+      logAction("No deployment transport is configured in this build", "WARN");
+      return;
+    }
+    setDeploymentStatus(`Writing to ${target.displayName}…`);
+    const outcome = await deploymentService.write(lastPackage, target.id);
+    if (outcome.status === "written") {
+      setDeploymentStatus(`Written · ${outcome.target.displayName} · verified`);
+      logAction(`Package written and verified on ${outcome.target.displayName}`, "INFO");
+      return;
+    }
+    // The transport's own refusal, surfaced verbatim: V1 has no native SD-card
+    // write, and the product says so instead of implying success.
+    setDeploymentStatus(`Blocked · ${target.displayName} unavailable`);
+    logAction(`Write to ${target.displayName} unavailable (${outcome.code}): ${outcome.reason}`, "ERROR");
   };
 
   const setPanelMode = (panel: PanelId, mode: PanelMode) => {
@@ -2497,6 +2566,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     });
   }, [activeScene?.id, project]);
 
+  // A package describes the document it was built from. Once that document
+  // changes, the verified claim is no longer true, so it is withdrawn rather
+  // than left standing (F9).
+  useEffect(() => {
+    if (!builtFrom) return;
+    if (stableSerialize(project) === builtFrom) return;
+    setBuiltFrom(null);
+    setLastPackage(null);
+    setDeploymentStatus("Not built · project changed since the last package");
+    logAction("Package status withdrawn: the project changed after it was built and verified", "WARN");
+  }, [project, builtFrom]);
+
   // Navigation reconciliation: a deleted or undone Theme/Scene must not leave
   // the canvas pointing at a node that no longer exists.
   useEffect(() => {
@@ -2719,6 +2800,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Add Theme Project Group", onClick: addThemeProjectGroupCommand },
       ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name} (${profile.display.width}×${profile.display.height})`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : "Switch profile and re-dimension every Rotation / Form", onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
+      { label: "Write Package to Target…", disabled: !lastPackage, title: lastPackage ? `Hand the verified package to ${deploymentService.targets()[0]?.displayName ?? "the configured transport"}` : "Run Build & Verify Package first", onClick: () => { void writePackage(); } },
     ],
     Theme: [
       { label: "Add Theme Project", disabled: groups.length === 0, title: groups.length === 0 ? "Add a Theme Project Group first" : undefined, onClick: addThemeProject },
@@ -3121,7 +3203,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const renderSceneActivationSection = (scene: Scene) => {
     const definitions = [...profileStates, ...profileSettings];
     const draftDefinition = definitions.find((candidate) => candidate.id === sceneConditionDraft.stateId);
-    const operators = draftDefinition?.operators ?? ["equals", "not-equals", "greater-than", "less-than", "contains"];
+    const operators = draftDefinition ? operatorsForType(draftDefinition.type, draftDefinition.operators) : ["equals", "not-equals"];
     return (
       <section className="property-section">
         <div className="property-section-title">Scene Activation</div>
@@ -3276,7 +3358,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       {renderDockTabs("right")}
       <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); traceRuntime(); }} title="Re-evaluate Scene activation and bindings against the current inputs and write the trace to the Console">Evaluate</button><button type="button" className="sim-button" onClick={resetSimulator} title="Clear every runtime state and reseed DeviceProfile setting defaults">Reset</button><span className="sim-status">{runtime.activeScene ? "ACTIVE" : "NO MATCH"}</span><span className="sim-note">V1 evaluates rules; timed media playback is device-runtime behaviour and is not simulated.</span></div>
       <div className="simulator-scroll">
-        <section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{profileStates.length === 0 ? <div className="sim-empty">No state registry entries in active DeviceProfile.</div> : profileStates.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id}><span>{state.displayName}<small>{state.type}</small></span>{renderRuntimeInput(state, current, (value) => setRuntimeValues((values) => value === null ? (() => { const next = { ...values }; delete next[state.id]; return next; })() : { ...values, [state.id]: value }))}</label>; })}</section>
+        <section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{simulatorStates.length === 0 ? <div className="sim-empty">{profileStates.length === 0 ? "No state registry entries in active DeviceProfile." : `The active DeviceProfile marks none of its ${profileStates.length} runtime state(s) as simulator inputs.`}</div> : simulatorStateGroups.map(([category, states]) => <div className="sim-group" key={category}><div className="sim-group-title">{category}</div>{states.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id} title={state.description ?? `${state.displayName} (${state.type})`}><span>{state.displayName}<small>{state.type}</small></span>{renderRuntimeInput(state, current, (value) => setRuntimeValues((values) => value === null ? (() => { const next = { ...values }; delete next[state.id]; return next; })() : { ...values, [state.id]: value }))}</label>; })}</div>)}{hiddenStateCount > 0 && <p className="property-note">{hiddenStateCount} runtime state(s) are declared but not marked as simulator inputs, so the device supplies them and this panel does not.</p>}</section>
         <section className="sim-section"><div className="property-section-title">Runtime Settings · DeviceProfile</div>{profileSettings.length === 0 ? <div className="sim-empty">No runtime settings in active DeviceProfile.</div> : profileSettings.map((setting) => { const current = runtimeSettings[setting.id]; return <label className="sim-input-row" key={setting.id}><span>{setting.displayName}<small>{setting.type}</small></span>{renderRuntimeInput(setting, current, (value) => setRuntimeSettings((values) => value === null ? (() => { const next = { ...values }; delete next[setting.id]; return next; })() : { ...values, [setting.id]: value }))}</label>; })}</section>
         <section className="sim-section"><div className="property-section-title">Active Scene</div><div className="sim-empty">{`Evaluation context: R${runtimeRotation?.angle ?? "—"} · ${runtimeRotation?.scenes.length ?? 0} scene(s)`}</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.length === 0 ? <div className="sim-empty">This Rotation / Form has no Scene to evaluate.</div> : runtime.candidates.map((candidate) => { const scene = runtimeRotation?.scenes.find((current) => current.id === candidate.sceneId); const reason = !scene ? "" : scene.enabled === false ? "disabled" : scene.activationConditions.length === 0 ? "always eligible" : candidate.matched ? `${scene.activationConditions.length} condition(s) met` : `${scene.activationConditionMode ?? "all"} of ${scene.activationConditions.length} condition(s) not met`; return <div className={`sim-row ${candidate.sceneId === runtime.activeSceneId ? "is-active-row" : ""}`} key={candidate.sceneId}><span>{scene?.name ?? candidate.sceneId}<small>priority {candidate.priority} · order {candidate.activationOrder} · {reason}</small></span><strong>{candidate.sceneId === runtime.activeSceneId ? "ACTIVE" : candidate.matched ? "MATCH" : "skip"}</strong></div>; })}</section>
         <section className="sim-section"><div className="property-section-title">Active Bindings</div>{activeBindings.length === 0 ? <div className="sim-empty">No bindings in the active Scene.</div> : activeBindings.map((evaluation) => <div className="sim-row" key={evaluation.bindingId}><span>{evaluation.widgetId}</span><strong>{evaluation.action} · {evaluation.matched ? "TRUE" : "FALSE"}</strong></div>)}</section>
@@ -3351,7 +3433,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
       <footer className="statusbar"><span><span className={`status-led ${validation.valid ? "" : "is-error"}`} aria-hidden="true" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span aria-live="polite">{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 
-      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code>{binding.conditions.length > 1 && <button type="button" className="reference-remove" aria-label={`Remove condition ${conditionIndex + 1}`} onClick={() => removeBindingCondition(binding.id, conditionIndex)}>x</button>}</div>; })}</div><label className="binding-mode-row"><span>Match</span><select aria-label={`Condition mode for ${binding.action} binding`} value={binding.conditionMode ?? "all"} onChange={(event) => setBindingConditionMode(binding.id, event.target.value as ConditionMode)}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ? (project.assets.find((asset) => asset.id === binding.contentId)?.name ?? `${binding.contentId} (unresolved)`) : "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{(bindingDraftDefinition?.operators ?? ["equals", "not-equals", "greater-than", "less-than", "contains"]).map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label className="binding-field"><span>Match</span><select aria-label="Binding condition mode" value={bindingDraft.conditionMode} disabled={Boolean(bindingDraft.targetBindingId)} onChange={(event) => setBindingDraft((current) => ({ ...current, conditionMode: event.target.value as ConditionMode }))}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label>{(bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && <label className="binding-field"><span>Content Asset</span><select aria-label="Binding content asset" value={bindingDraft.contentId} disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet - use Asset Browser Import" : undefined} onChange={(event) => setBindingDraft((current) => ({ ...current, contentId: event.target.value }))}><option value="">{project.assets.length === 0 ? "No asset imported" : "Select asset..."}</option>{project.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}</select></label>}<label className="binding-field"><span>Add to</span><select aria-label="Add condition to existing binding" value={bindingDraft.targetBindingId} onChange={(event) => setBindingDraft((current) => ({ ...current, targetBindingId: event.target.value }))}><option value="">New binding</option>{(bindingWidget?.bindings ?? []).map((binding) => <option key={binding.id} value={binding.id}>{binding.action} ({binding.conditions.length} condition{binding.conditions.length === 1 ? "" : "s"})</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId || ((bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && !bindingDraft.contentId && !bindingDraft.targetBindingId)} onClick={addBinding}>{bindingDraft.targetBindingId ? "Add Condition" : "Add Binding"}</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code>{binding.conditions.length > 1 && <button type="button" className="reference-remove" aria-label={`Remove condition ${conditionIndex + 1}`} onClick={() => removeBindingCondition(binding.id, conditionIndex)}>x</button>}</div>; })}</div><label className="binding-mode-row"><span>Match</span><select aria-label={`Condition mode for ${binding.action} binding`} value={binding.conditionMode ?? "all"} onChange={(event) => setBindingConditionMode(binding.id, event.target.value as ConditionMode)}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ? (project.assets.find((asset) => asset.id === binding.contentId)?.name ?? `${binding.contentId} (unresolved)`) : "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{(bindingDraftDefinition ? operatorsForType(bindingDraftDefinition.type, bindingDraftDefinition.operators) : ["equals", "not-equals"]).map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label className="binding-field"><span>Match</span><select aria-label="Binding condition mode" value={bindingDraft.conditionMode} disabled={Boolean(bindingDraft.targetBindingId)} onChange={(event) => setBindingDraft((current) => ({ ...current, conditionMode: event.target.value as ConditionMode }))}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label>{(bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && <label className="binding-field"><span>Content Asset</span><select aria-label="Binding content asset" value={bindingDraft.contentId} disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet - use Asset Browser Import" : undefined} onChange={(event) => setBindingDraft((current) => ({ ...current, contentId: event.target.value }))}><option value="">{project.assets.length === 0 ? "No asset imported" : "Select asset..."}</option>{project.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}</select></label>}<label className="binding-field"><span>Add to</span><select aria-label="Add condition to existing binding" value={bindingDraft.targetBindingId} onChange={(event) => setBindingDraft((current) => ({ ...current, targetBindingId: event.target.value }))}><option value="">New binding</option>{(bindingWidget?.bindings ?? []).map((binding) => <option key={binding.id} value={binding.id}>{binding.action} ({binding.conditions.length} condition{binding.conditions.length === 1 ? "" : "s"})</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId || ((bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && !bindingDraft.contentId && !bindingDraft.targetBindingId)} onClick={addBinding}>{bindingDraft.targetBindingId ? "Add Condition" : "Add Binding"}</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation"><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={cancelSettings}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" autoFocus className="settings-button-secondary" onClick={cancelSettings}>Cancel</button><button type="button" className="settings-button-primary" onClick={saveSettings}>Save / Apply &amp; Close</button></div></footer></section></div>}
 
       {newProjectDraft && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">PROJECT</span><h2 id="new-project-title">New Project</h2></div></header><div className="confirm-body"><label className="dialog-field"><span>Project name</span><input autoFocus aria-label="New project name" value={newProjectDraft.name} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, name: event.target.value } : current)} /></label><label className="dialog-field"><span>Device Profile</span><select aria-label="New project device profile" value={newProjectDraft.profileId} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, profileId: event.target.value } : current)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}</select></label><p className="dialog-note">The project is created with one Theme Project Group, one Theme Project and the canonical four Rotation / Form variants sized from the chosen display.</p></div><footer className="settings-footer"><div><button type="button" className="settings-button-secondary" onClick={() => setNewProjectDraft(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={confirmNewProject}>Create Project</button></div></footer></section></div>}

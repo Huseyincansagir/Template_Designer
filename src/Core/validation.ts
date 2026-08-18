@@ -313,9 +313,7 @@ function validateFloorMapping(
     if (entry.digitStyleId && !profile.digitStyles?.includes(entry.digitStyleId)) {
       issue(issues, "UNKNOWN_DIGIT_STYLE", `Digit style '${entry.digitStyleId}' is not provided by the active DeviceProfile.`, `${path}.entries[${index}].digitStyleId`, "Select a profile-defined Digit Style or ask to use the default style.");
     }
-    if (entry.digitStyleId && !assetIds.has(entry.digitStyleId) && profile.digitStyles?.includes(entry.digitStyleId) === false) {
-      issue(issues, "BROKEN_FLOOR_STYLE_REFERENCE", `Floor mapping style '${entry.digitStyleId}' cannot be resolved.`, `${path}.entries[${index}].digitStyleId`, "Select an available Digit Style.");
-    }
+
   });
 }
 

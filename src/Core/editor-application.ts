@@ -191,10 +191,17 @@ function buildDuplicateIdMap(project: Project, selected: ReadonlySet<string>): R
   return map;
 }
 
-function duplicateScene(scene: Scene): Scene {
+/** Rotation-aware copy placement: a copy may never land outside the display. */
+function clampWidgetsToRotation(widgets: readonly Widget[], bounds: { readonly width: number; readonly height: number }): Widget[] {
+  return widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, bounds) }));
+}
+
+function duplicateScene(scene: Scene, collect?: string[]): Scene {
+  const id = newId("scene");
+  collect?.push(id);
   return {
     ...clone(scene),
-    id: newId("scene"),
+    id,
     name: `${scene.name} Copy`,
     widgets: scene.widgets.map((widget) => duplicateWidget(widget)),
   };
@@ -204,14 +211,16 @@ function duplicateRotation(rotation: Rotation): Rotation {
   return {
     ...clone(rotation),
     id: newId("rotation"),
-    scenes: rotation.scenes.map(duplicateScene),
+    scenes: rotation.scenes.map((scene) => duplicateScene(scene)),
   };
 }
 
-function duplicateThemeProject(theme: ThemeProject): ThemeProject {
+function duplicateThemeProject(theme: ThemeProject, collect?: string[]): ThemeProject {
+  const id = newId("theme");
+  collect?.push(id);
   return {
     ...clone(theme),
-    id: newId("theme"),
+    id,
     name: `${theme.name} Copy`,
     rotations: theme.rotations.map(duplicateRotation),
   };
@@ -550,7 +559,7 @@ export class EditorApplication {
         const copy = duplicateWidget(widget, copyId);
         // Duplicate-mode placement centers the copy exactly on the click
         // point; the fixed +10/+10 copy offset is not applied here.
-        return [widget, { ...copy, geometry: { ...widget.geometry, x: widget.geometry.x + offset.x, y: widget.geometry.y + offset.y } }];
+        return [widget, ...clampWidgetsToRotation([{ ...copy, geometry: { ...widget.geometry, x: widget.geometry.x + offset.x, y: widget.geometry.y + offset.y } }], rotation)];
       }) };
     })))));
     return result.changed ? { changed: true, createdIds } : result;
@@ -700,7 +709,8 @@ export class EditorApplication {
       if (scene.id !== sceneId) return scene;
       return { ...scene, widgets: scene.widgets.flatMap((widget) => {
         const copyId = copyIds.get(widget.id);
-        return copyId ? [widget, duplicateWidget(widget, copyId)] : [widget];
+        // The +10/+10 copy offset must never push a copy off the display.
+        return copyId ? [widget, ...clampWidgetsToRotation([duplicateWidget(widget, copyId)], rotation)] : [widget];
       }) };
     })))));
     return result.changed ? { changed: true, createdIds } : result;
@@ -720,10 +730,10 @@ export class EditorApplication {
     const result = this.execute("Paste Widgets", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
       if (scene.id !== sceneId) return scene;
       const baseZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
-      const copies = templates.map((template, index) => ({
+      const copies = clampWidgetsToRotation(templates.map((template, index) => ({
         ...duplicateWidget(template, copyIds[index]),
         zIndex: baseZ + 1 + index,
-      }));
+      })), rotation);
       return { ...scene, widgets: [...scene.widgets, ...copies] };
     })))));
     return result.changed ? { changed: true, createdIds: copyIds } : result;
@@ -737,12 +747,16 @@ export class EditorApplication {
     // canonical exactly-four rule (validation REQUIRED_ROTATIONS_MISSING).
     if (containsRotationId(current, ids)) return { changed: false };
     const copyIds = buildDuplicateIdMap(current, selected);
-    const createdIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
+    const widgetCopyIds = ids.filter((id) => copyIds.has(id)).map((id) => copyIds.get(id) as string);
+    // Container copies allocate their ids inside the mutation, so they are
+    // collected here: without them the caller could not select the copy it
+    // just created and reported.
+    const containerIds: string[] = [];
     const result = this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {
       const themeProjects: ThemeProject[] = [];
       for (const theme of group.themeProjects) {
         if (selected.has(theme.id)) {
-          themeProjects.push(theme, duplicateThemeProject(theme));
+          themeProjects.push(theme, duplicateThemeProject(theme, containerIds));
           continue;
         }
 
@@ -756,7 +770,7 @@ export class EditorApplication {
           const scenes: Scene[] = [];
           for (const scene of rotation.scenes) {
             if (selected.has(scene.id)) {
-              scenes.push(scene, duplicateScene(scene));
+              scenes.push(scene, duplicateScene(scene, containerIds));
               continue;
             }
 
@@ -774,7 +788,7 @@ export class EditorApplication {
       }
       return { ...group, themeProjects };
     }));
-    return result.changed ? { changed: true, createdIds } : result;
+    return result.changed ? { changed: true, createdIds: [...containerIds, ...widgetCopyIds] } : result;
   }
 }
 

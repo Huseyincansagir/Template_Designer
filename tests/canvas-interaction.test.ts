@@ -99,15 +99,27 @@ describe("Canvas interaction foundation", () => {
     expect(orderSelectionIds(widgets, ["b", "a", "b"])).toEqual(["a", "b"]);
   });
 
-  it("selects inclusive marquee intersections and excludes hidden/disabled widgets", () => {
+  it("selects inclusive marquee intersections, excludes hidden and KEEPS disabled widgets", () => {
+    // All three sit INSIDE the marquee, so the outcome is decided by the flags
+    // and not by geometry. The previous version placed hidden/disabled outside
+    // the marquee, so it passed without ever exercising the filter.
     const widgets = [
-      widget("touching", { x: 20, y: 20, width: 10, height: 10 }),
-      widget("hidden", { x: 30, y: 30, width: 10, height: 10 }, { visible: false }),
-      widget("disabled", { x: 30, y: 30, width: 10, height: 10 }, { enabled: false }),
+      widget("touching", { x: 5, y: 5, width: 10, height: 10 }),
+      widget("hidden", { x: 5, y: 5, width: 10, height: 10 }, { visible: false }),
+      widget("disabled", { x: 5, y: 5, width: 10, height: 10 }, { enabled: false }),
     ];
-    const marquee = normalizeRect({ x: 0, y: 0 }, { x: 20, y: 30 });
-    expect(intersects(marquee, widgets[0].geometry)).toBe(true);
-    expect(marqueeSelection(widgets, marquee, { mode: "intersect" })).toEqual(["touching"]);
+    const marquee = normalizeRect({ x: 0, y: 0 }, { x: 40, y: 40 });
+    for (const candidate of widgets) expect(intersects(marquee, candidate.geometry)).toBe(true);
+    // `visible: false` is not rendered, so it cannot be picked on the canvas.
+    // `enabled: false` IS rendered - a runtime flag, not a design-time guard -
+    // so the designer must be able to select and repair it (F13).
+    expect(marqueeSelection(widgets, marquee, { mode: "intersect" }).sort()).toEqual(["disabled", "touching"]);
+  });
+
+  it("hit-tests a disabled widget but never an invisible one", () => {
+    const point = { x: 10, y: 10 };
+    expect(hitTest(point, [widget("disabled", { x: 5, y: 5, width: 10, height: 10 }, { enabled: false })])).toBe("disabled");
+    expect(hitTest(point, [widget("hidden", { x: 5, y: 5, width: 10, height: 10 }, { visible: false })])).toBeNull();
   });
 
   it("implements intersect marquee only and rejects contains and unknown modes explicitly", () => {

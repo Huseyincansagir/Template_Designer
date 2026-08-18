@@ -316,7 +316,9 @@ export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect
   // §4.8: V1 implements "intersect" only. Requesting "contains" must be
   // rejected explicitly — never silently treated as intersection.
   if (mode !== "intersect") throw new RangeError(`Unsupported marquee selection mode: ${String(mode)}`);
-  const hits = widgets.filter((widget) => widget.visible && widget.enabled && intersects(marquee, widget.geometry)).map((widget) => widget.id);
+  // `enabled` is a runtime flag, not a design-time guard: a disabled widget is
+  // still an object the designer must be able to select and fix (F13).
+  const hits = widgets.filter((widget) => widget.visible && intersects(marquee, widget.geometry)).map((widget) => widget.id);
   return orderSelectionIds(widgets, options.additive ? [...(options.baseSelection ?? []), ...hits] : hits);
 }
 
@@ -324,7 +326,7 @@ export function marqueeSelection(widgets: readonly Widget[], marquee: CanvasRect
 export function hitTest(point: CanvasPoint, widgets: readonly Widget[]): string | null {
   return [...widgets]
     .map((widget, index) => ({ widget, index }))
-    .filter(({ widget }) => widget.visible && widget.enabled && containsPoint(widget.geometry, point))
+    .filter(({ widget }) => widget.visible && containsPoint(widget.geometry, point))
     .sort((left, right) => right.widget.zIndex - left.widget.zIndex || right.index - left.index || right.widget.id.localeCompare(left.widget.id))
     .at(0)?.widget.id ?? null;
 }

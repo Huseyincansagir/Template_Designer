@@ -10,6 +10,8 @@ import { LocalStorageProjectStorage, PROJECT_STORAGE_KEY } from "../src/Infrastr
 import { displayNameOf, extensionOf, inferMediaType, toAssetDraft } from "../src/Infrastructure/asset-import";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../src/Infrastructure/project-file";
 import { describeSelectionRefusal } from "../src/App/editor-commands";
+import { createDeploymentService } from "../src/Core/deployment-service";
+import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import type { Project, Widget } from "../src/Domain/models";
 
 function widget(id: string, widgetType = "media", overrides: Partial<Widget> = {}): Widget {
@@ -567,5 +569,64 @@ describe("Refusal policy is explained before it is enforced (D2-05/D2-06/D2-09)"
     // ...and a permitted operation really is permitted.
     expect(describeSelectionRefusal(["theme"], "duplicate", 1)).toBeUndefined();
     expect(editor.duplicateSelection([themeId]).changed).toBe(true);
+  });
+});
+describe("Deployment goes through the application service (F16)", () => {
+  it("builds a verified package and reports its transports", async () => {
+    const { project, sceneId, themeId } = fixture([widget("w1", "media")]);
+    const { store, editor } = setup(project);
+    const assetId = editor.addAssets([{ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }]).createdIds?.[0] as string;
+    editor.setThemeResources(themeId, [assetId]);
+    editor.setWidgetConfiguration(sceneId, "w1", { mediaType: "image", assetIds: [assetId] });
+
+    const service = createDeploymentService([new SDCardTarget()]);
+    expect(service.targets().map((target) => target.id)).toEqual(["sd-card"]);
+    const outcome = await service.buildVerified(current(store), foundationDeviceProfile);
+    expect(outcome.status).toBe("built");
+    if (outcome.status !== "built") return;
+    // Verification is a separate step, and only it may set the flag.
+    expect(outcome.package.verified).toBe(true);
+    expect(outcome.package.manifest.assetIds).toEqual([assetId]);
+  });
+
+  it("reports the transport's own refusal instead of implying success", async () => {
+    const { project } = fixture();
+    const { store } = setup(project);
+    const service = createDeploymentService([new SDCardTarget()]);
+    const built = await service.buildVerified(current(store), foundationDeviceProfile);
+    expect(built.status).toBe("built");
+    if (built.status !== "built") return;
+    const written = await service.write(built.package, "sd-card");
+    // V1 has no native SD-card write. The adapter refuses with its own reason
+    // and the service passes it through unchanged - it must never read as done.
+    expect(written.status).toBe("unavailable");
+    if (written.status !== "unavailable") return;
+    expect(written.code).toBe("SD_CARD_DEPLOYMENT_NOT_IMPLEMENTED");
+    expect(written.reason).toMatch(/reserved for a later phase/i);
+  });
+
+  it("refuses an unverified package and an unknown transport", async () => {
+    const { project } = fixture();
+    const { store } = setup(project);
+    const service = createDeploymentService([new SDCardTarget()]);
+    const built = await service.buildVerified(current(store), foundationDeviceProfile);
+    if (built.status !== "built") throw new Error("expected a built package");
+    const unverified = { ...built.package, verified: false };
+    const refusedUnverified = await service.write(unverified, "sd-card");
+    expect(refusedUnverified).toMatchObject({ status: "unavailable", code: "DEPLOYMENT_PACKAGE_NOT_VERIFIED" });
+    const refusedTarget = await service.write(built.package, "wifi");
+    expect(refusedTarget).toMatchObject({ status: "unavailable", code: "DEPLOYMENT_TARGET_MISMATCH" });
+  });
+
+  it("blocks the build on validation errors rather than throwing at the UI", async () => {
+    // A project with no Theme Project fails THEME_PROJECT_REQUIRED.
+    const empty: Project = { ...createEmptyProject("Empty"), themeProjectGroups: [] };
+    const service = createDeploymentService([]);
+    const outcome = await service.buildVerified(empty, foundationDeviceProfile);
+    expect(outcome.status).toBe("blocked");
+    if (outcome.status !== "blocked") return;
+    expect(outcome.reason.length).toBeGreaterThan(0);
+    // With no adapter configured, that is a reportable state, not a crash.
+    expect(service.targets()).toEqual([]);
   });
 });
