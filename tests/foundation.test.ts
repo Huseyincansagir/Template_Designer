@@ -24,7 +24,7 @@ class SetValueCommand implements Command {
 }
 
 describe("Phase 0 foundation", () => {
-  it("creates a versioned project with a device profile and theme boundary", () => {
+  it("creates a versioned project with a device profile and theme project group boundary", () => {
     const project = createEmptyProject("Demo");
 
     expect(project).toMatchObject({
@@ -32,7 +32,8 @@ describe("Phase 0 foundation", () => {
       schemaVersion: 1,
       deviceProfileId: "foundation-profile",
     });
-    expect(project.themes).toHaveLength(1);
+    expect(project.themeProjectGroups).toHaveLength(1);
+    expect(project.themeProjectGroups[0]?.themeProjects).toEqual([]);
     expect(project.assets).toEqual([]);
   });
 
