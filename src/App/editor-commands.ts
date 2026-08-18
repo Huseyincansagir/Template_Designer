@@ -7,32 +7,33 @@ export type EditorCommandId =
   | "scene.reorder"
   | "scene.move"
   | "widget.reorder"
-  | "widget.move"
-  | "widget.edit-properties"
-  | "canvas.delete-selection";
+  | "canvas.delete-selection"
+  | "widget.open-properties";
+
+export type EditorCommandKind = "mutation" | "navigation";
 
 export type EditorCommandDescriptor = {
   id: EditorCommandId;
+  kind: EditorCommandKind;
   label: string;
   shortcut?: string;
   supportedSelectionKinds: readonly SelectionKind[];
-  disabledReason?: string;
 };
 
 /**
- * UI command palette/context-menu descriptors. Execution is routed through
- * the canonical application command/use-case layer by the application shell.
+ * UI command palette/context-menu descriptors. Persistent operations are
+ * executed through the canonical application/use-case layer. Navigation
+ * entries are explicitly not document mutations.
  */
 export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
-  { id: "project.add-theme-project", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
-  { id: "theme.add-rotation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
-  { id: "rotation.add-scene", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
-  { id: "scene.reorder", label: "Reorder Scene", supportedSelectionKinds: ["scene"] },
-  { id: "scene.move", label: "Move Scene", supportedSelectionKinds: ["scene"] },
-  { id: "widget.reorder", label: "Reorder Widget", supportedSelectionKinds: ["widget"] },
-  { id: "widget.move", label: "Move Widget", supportedSelectionKinds: ["widget"] },
-  { id: "widget.edit-properties", label: "Edit Properties", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group", "project", "asset"] },
-  { id: "canvas.delete-selection", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget"] },
+  { id: "project.add-theme-project", kind: "mutation", label: "Add Theme Project", supportedSelectionKinds: ["project", "theme-group"] },
+  { id: "theme.add-rotation", kind: "mutation", label: "Add Rotation", supportedSelectionKinds: ["theme"] },
+  { id: "rotation.add-scene", kind: "mutation", label: "Add Scene", supportedSelectionKinds: ["rotation"] },
+  { id: "scene.reorder", kind: "mutation", label: "Reorder Scene", supportedSelectionKinds: ["scene"] },
+  { id: "scene.move", kind: "mutation", label: "Move Scene", supportedSelectionKinds: ["scene"] },
+  { id: "widget.reorder", kind: "mutation", label: "Reorder Widget", supportedSelectionKinds: ["widget"] },
+  { id: "canvas.delete-selection", kind: "mutation", label: "Delete Selection", shortcut: "Delete", supportedSelectionKinds: ["widget", "scene", "rotation", "theme", "theme-group"] },
+  { id: "widget.open-properties", kind: "navigation", label: "Open Properties", supportedSelectionKinds: ["widget"] },
 ];
 
 export function commandsForSelection(selectionKind: SelectionKind | undefined): readonly EditorCommandDescriptor[] {

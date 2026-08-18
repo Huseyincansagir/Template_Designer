@@ -1,13 +1,12 @@
 import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createEmptyProject } from "../Domain/factories";
 import { InMemoryDocumentStore } from "../Core/document-store";
-import type { Command } from "../Core/commands";
 import { createEditorApplication } from "../Core/editor-application";
 import { buildDeploymentPackage, verifyDeploymentPackage } from "../Core/export";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import type { Asset, Geometry, PrimitiveValue, Project, Rotation, RuntimeContext, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
-import { intersects, normalizeRect, snapGeometry, updateWidgetGeometries, type CanvasPoint, type CanvasRect } from "./canvas-interaction";
+import { intersects, normalizeRect, snapGeometry, type CanvasPoint, type CanvasRect } from "./canvas-interaction";
 import { commandsForSelection, type EditorCommandId } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
@@ -133,7 +132,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     store.open(createEmptyProject());
     return store;
   }, []);
-  const documentSnapshot = useSyncExternalStore(documentStore.subscribe.bind(documentStore), () => documentStore.getSnapshot(), () => documentStore.getSnapshot());
+  const documentSubscribe = useMemo(() => (listener: () => void) => documentStore.subscribe(listener), [documentStore]);
+  const documentSnapshotReader = useMemo(() => () => documentStore.getSnapshot(), [documentStore]);
+  const documentSnapshot = useSyncExternalStore(documentSubscribe, documentSnapshotReader, documentSnapshotReader);
   const project = documentSnapshot.project ?? createEmptyProject();
   const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
   const [leftWidth, setLeftWidth] = useState(286);
@@ -204,11 +205,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setMenuOpen(null);
   };
 
-  const runCommand = (command: Command) => {
-    editorApplication.executeCommand(command);
-    logAction(`> ${command.label}`, "EVENT");
-  };
-
   const undo = () => {
     if (documentStore.undo()) logAction("> undo()", "EVENT");
   };
@@ -217,20 +213,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (documentStore.redo()) logAction("> redo()", "EVENT");
   };
 
-  const replaceProject = (nextProject: Project) => {
-    documentStore.replaceCurrent(nextProject);
-  };
-
   const createProject = () => {
-    const previousProject = project;
     const nextProject = createEmptyProject("Untitled Project");
-    runCommand({ label: "Create Project", execute: () => replaceProject(nextProject), undo: () => replaceProject(previousProject) });
+    documentStore.create(nextProject);
     setSelection(null);
     setSelectedIds([]);
     setViewMode("design");
     setOpenDocuments(["Project Overview"]);
     setActiveDocument("Project Overview");
-    logAction("New project command executed");
+    setGeometryOverrides({});
+    logAction("New document created", "EVENT");
   };
 
   const saveDocument = () => {
@@ -238,54 +230,65 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     logAction("Project saved", "EVENT");
   };
 
-  const addThemeProject = () => {
+  const addThemeProject = (): boolean => {
     const groupId = resolvedSelection?.group?.id ?? group?.id;
-    if (!groupId) return;
-    editorApplication.addThemeProject(groupId);
-    logAction("Theme Project added", "EVENT");
+    if (!groupId) return false;
+    const result = editorApplication.addThemeProject(groupId);
+    if (result.changed) logAction("Theme Project added", "EVENT");
+    return result.changed;
   };
 
-  const addRotation = () => {
+  const addRotation = (): boolean => {
     const themeId = resolvedSelection?.theme?.id;
-    if (!themeId) return;
-    editorApplication.addRotation(themeId);
-    logAction("Rotation added", "EVENT");
+    if (!themeId) return false;
+    const result = editorApplication.addRotation(themeId);
+    if (result.changed) logAction("Rotation added", "EVENT");
+    return result.changed;
   };
 
-  const addScene = () => {
+  const addScene = (): boolean => {
     const rotationId = resolvedSelection?.rotation?.id;
-    if (!rotationId) return;
-    editorApplication.addScene(rotationId);
-    logAction("Scene added", "EVENT");
+    if (!rotationId) return false;
+    const result = editorApplication.addScene(rotationId);
+    if (result.changed) logAction("Scene added", "EVENT");
+    return result.changed;
   };
 
-  const deleteSelectionCommand = () => {
-    if (!selectedIds.length) return;
-    editorApplication.deleteSelection(selectedIds);
+  const deleteSelectionCommand = (): boolean => {
+    if (!selectedIds.length) return false;
+    const result = editorApplication.deleteSelection(selectedIds);
+    if (!result.changed) return false;
     setSelection(null);
     setSelectedIds([]);
     logAction("Selection deleted", "EVENT");
+    return true;
   };
 
-  const duplicateSelectionCommand = () => {
-    if (!selectedIds.length) return;
-    editorApplication.duplicateSelection(selectedIds);
-    logAction("Selection duplicated", "EVENT");
+  const duplicateSelectionCommand = (): boolean => {
+    if (!selectedIds.length) return false;
+    const result = editorApplication.duplicateSelection(selectedIds);
+    if (result.changed) logAction("Selection duplicated", "EVENT");
+    return result.changed;
   };
 
   const executeEditorDescriptor = (commandId: EditorCommandId) => {
     const node = resolvedSelection;
-    if (commandId === "project.add-theme-project") addThemeProject();
-    else if (commandId === "theme.add-rotation") addRotation();
-    else if (commandId === "rotation.add-scene") addScene();
+    let changed = false;
+    if (commandId === "project.add-theme-project") changed = addThemeProject();
+    else if (commandId === "theme.add-rotation") changed = addRotation();
+    else if (commandId === "rotation.add-scene") changed = addScene();
     else if (commandId === "scene.reorder" || commandId === "scene.move") {
-      if (node?.scene && node.rotation) editorApplication.moveScene(node.rotation.id, node.scene.id, 0);
+      if (node?.scene && node.rotation) changed = editorApplication.moveScene(node.rotation.id, node.scene.id, 0).changed;
     } else if (commandId === "widget.reorder") {
-      if (node?.widget && node.scene) editorApplication.moveWidget(node.scene.id, node.widget.id, 0);
-    } else if (commandId === "widget.edit-properties") activatePanel("properties");
-    else if (commandId === "widget.move") activatePanel("properties");
-    else if (commandId === "canvas.delete-selection") deleteSelectionCommand();
-    logAction(`${commandId} executed`, "EVENT");
+      if (node?.widget && node.scene) changed = editorApplication.moveWidget(node.scene.id, node.widget.id, 0).changed;
+    } else if (commandId === "canvas.delete-selection") changed = deleteSelectionCommand();
+    else if (commandId === "widget.open-properties") {
+      activatePanel("properties");
+      logAction("Properties panel opened", "EVENT");
+      setContextMenu(null);
+      return;
+    }
+    if (changed) logAction(`${commandId} executed`, "EVENT");
     setContextMenu(null);
   };
 
@@ -440,9 +443,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const commitGeometryCommand = (updates: Readonly<Record<string, Geometry>>, label: string) => {
-    const previous = project;
-    const next = updateWidgetGeometries(project, updates);
-    runCommand({ label, execute: () => replaceProject(next), undo: () => replaceProject(previous) });
+    const result = editorApplication.setWidgetGeometries(updates, label);
+    if (result.changed) logAction(`${label} committed`, "EVENT");
     setGeometryOverrides({});
   };
 
@@ -626,7 +628,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   );
 
   const commitSelectionGeometryField = (field: keyof Geometry, value: number) => {
-    const previous = project;
     const updates: Record<string, Geometry> = {};
     selectedIds.forEach((id) => {
       const widget = resolveCanonicalNode(project, id)?.widget;
@@ -637,8 +638,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Geometry edit blocked: selection is locked or not a Widget", "WARN");
       return;
     }
-    const next = updateWidgetGeometries(project, updates);
-    runCommand({ label: `Set widget ${field}`, execute: () => replaceProject(next), undo: () => replaceProject(previous) });
+    const result = editorApplication.setWidgetGeometries(updates, `Set widget ${field}`);
+    if (result.changed) logAction(`Set widget ${field}`, "EVENT");
   };
 
   const renderProperties = () => {
@@ -728,7 +729,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <section className="canvas-workspace" aria-label="Canvas editor">
             <div className="studio-toolbar"><div className="tool-group"><button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button><button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button><span className="tool-divider" /><button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button><button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button></div><div className="tool-group"><button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button><button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button><span className="tool-divider" /><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.max(50, current - 10))}>−</button><span className="zoom-readout">{zoom}%</span><button type="button" className="zoom-button" onClick={() => setZoom((current) => Math.min(200, current + 10))}>+</button></div></div>
             <div className={`canvas-stage ${gridVisible ? "show-grid" : ""} ${canvasTool === "pan" ? "pan-mode" : ""}`} onClick={() => { if (!suppressCanvasClickRef.current) clearSelection(); setContextMenu(null); }} onContextMenu={(event) => { event.preventDefault(); setContextMenu({ x: event.clientX, y: event.clientY, kind: selection?.kind ?? "canvas" }); }}><div className="canvas-rail-label">{viewMode === "design" ? "DESIGN STUDIO" : "RUNTIME PREVIEW"}</div><div className="device-canvas-wrap" style={{ transform: `scale(${zoom / 100})` }} onClick={(event) => event.stopPropagation()}><div className="device-frame"><div className="device-frame-header"><span>DISPLAY</span><span>R{activeRotation?.angle ?? 0} · {canvasWidth} × {canvasHeight}</span></div><div className="device-screen" ref={canvasScreenRef} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp}><div className="canvas-widget-layer">{canvasAvailable && canvasWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || canvasWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "Register the canonical DeviceProfile before editing this display." : activeScene ? "Scene contains no widgets." : "Create or select a canonical Rotation and Scene to begin canvas editing."}</span></div>}</div></div><div className="device-frame-footer"><span>ASPECT LOCKED</span><span>R{activeRotation?.angle ?? 0}</span></div></div></div><div className="canvas-overlay-note">{activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "Canvas shell · select a canonical Rotation or Scene"}</div></div>
-            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}</div><div className="context-actions"><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled title="Requires a selected widget">Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled title="Requires a selected widget">Delete</button></div></div>
+            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}</div><div className="context-actions"><button type="button" className="context-action" disabled title="Requires a selected widget">Align</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled title="Requires a selected widget">Lock</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" onPointerDown={(event) => beginResize("right", event)} />}
           {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}
@@ -737,7 +738,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         {floatingPanels.map((panel) => renderPanelContainer(panel, panel === "explorer" ? renderExplorer() : panel === "assets" ? renderAssets() : panel === "properties" ? renderProperties() : panel === "simulator" ? renderSimulator() : renderConsole()))}
       </main>
 
-      {contextMenu && <div className="editor-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>{commandsForSelection(contextMenu.kind).map((command) => <button type="button" key={command.id} disabled={Boolean(command.disabledReason)} title={command.disabledReason} onClick={() => executeEditorDescriptor(command.id)}><span>{command.label}</span>{command.shortcut && <kbd>{command.shortcut}</kbd>}</button>)}{commandsForSelection(contextMenu.kind).length === 0 && <span className="context-menu-empty">No commands for this selection</span>}</div>}
+      {contextMenu && <div className="editor-context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>{commandsForSelection(contextMenu.kind).map((command) => <button type="button" key={command.id} onClick={() => executeEditorDescriptor(command.id)}><span>{command.label}</span>{command.shortcut && <kbd>{command.shortcut}</kbd>}</button>)}{commandsForSelection(contextMenu.kind).length === 0 && <span className="context-menu-empty">No commands for this selection</span>}</div>}
 
       <footer className="statusbar"><span><span className="status-led" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span>{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 

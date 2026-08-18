@@ -1,10 +1,67 @@
-import type { Geometry, Project, RotationAngle, Scene, ThemeProject, Widget } from "../Domain/models";
+import type { Geometry, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 import { InMemoryDocumentStore } from "./document-store";
 
 export type ProjectMutation = (project: Project) => Project;
+export type MutationResult = { readonly changed: boolean };
 
 function clone<T>(value: T): T { return structuredClone(value); }
 function newId(prefix: string): string { return `${prefix}-${crypto.randomUUID()}`; }
+function equalProject(left: Project, right: Project): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+
+function mapProjectGroups(project: Project, map: (group: ThemeProjectGroup) => ThemeProjectGroup): Project {
+  return { ...project, themeProjectGroups: project.themeProjectGroups.map(map) };
+}
+
+function mapThemeProjects(group: ThemeProjectGroup, map: (theme: ThemeProject) => ThemeProject): ThemeProjectGroup {
+  return { ...group, themeProjects: group.themeProjects.map(map) };
+}
+
+function mapRotations(theme: ThemeProject, map: (rotation: Rotation) => Rotation): ThemeProject {
+  return { ...theme, rotations: theme.rotations.map(map) };
+}
+
+function mapScenes(rotation: Rotation, map: (scene: Scene) => Scene): Rotation {
+  return { ...rotation, scenes: rotation.scenes.map(map) };
+}
+
+function mapWidgets(scene: Scene, map: (widget: Widget) => Widget): Scene {
+  return { ...scene, widgets: scene.widgets.map(map) };
+}
+
+function duplicateWidget(widget: Widget): Widget {
+  return {
+    ...clone(widget),
+    id: newId("widget"),
+    name: `${widget.name} Copy`,
+    geometry: { ...widget.geometry, x: widget.geometry.x + 10, y: widget.geometry.y + 10 },
+  };
+}
+
+function duplicateScene(scene: Scene): Scene {
+  return {
+    ...clone(scene),
+    id: newId("scene"),
+    name: `${scene.name} Copy`,
+    widgets: scene.widgets.map(duplicateWidget),
+  };
+}
+
+function duplicateRotation(rotation: Rotation): Rotation {
+  return {
+    ...clone(rotation),
+    id: newId("rotation"),
+    scenes: rotation.scenes.map(duplicateScene),
+  };
+}
+
+function duplicateThemeProject(theme: ThemeProject): ThemeProject {
+  return {
+    ...clone(theme),
+    id: newId("theme"),
+    name: `${theme.name} Copy`,
+    rotations: theme.rotations.map(duplicateRotation),
+  };
+}
 
 export class EditorApplication {
   constructor(readonly documents: InMemoryDocumentStore) {}
@@ -13,114 +70,140 @@ export class EditorApplication {
     this.documents.execute(command);
   }
 
-  execute(label: string, mutation: ProjectMutation): void {
-    const before = clone(this.documents.getCurrent() ?? (() => { throw new Error("No document is open"); })());
-    let after: Project | undefined;
+  execute(label: string, mutation: ProjectMutation): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current) throw new Error("No document is open");
+
+    const before = clone(current);
+    const after = mutation(clone(before));
+    if (equalProject(before, after)) return { changed: false };
+
     this.documents.execute({
       label,
-      execute: () => {
-        after = after ? clone(after) : mutation(clone(before));
-        this.documents.replaceCurrent(clone(after));
-      },
+      execute: () => this.documents.replaceCurrent(clone(after)),
       undo: () => this.documents.replaceCurrent(clone(before)),
     });
+    return { changed: true };
   }
 
-  addThemeProject(groupId: string, name = "New Theme Project"): void {
-    this.execute(`Add Theme Project: ${name}`, (project) => ({
-      ...project,
-      themeProjectGroups: project.themeProjectGroups.map((group) => group.id === groupId ? {
-        ...group,
-        themeProjects: [...group.themeProjects, { id: newId("theme"), name, rotations: [], resources: [] }],
-      } : group),
-    }));
+  addThemeProject(groupId: string, name = "New Theme Project"): MutationResult {
+    return this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
+      ...group,
+      themeProjects: [...group.themeProjects, { id: newId("theme"), name, rotations: [], resources: [] }],
+    } : group));
   }
 
-  addRotation(themeId: string, angle: RotationAngle = 0): void {
-    this.execute(`Add Rotation: R${angle}`, (project) => ({
-      ...project,
-      themeProjectGroups: project.themeProjectGroups.map((group) => ({ ...group, themeProjects: group.themeProjects.map((theme) => theme.id === themeId ? {
-        ...theme,
-        rotations: [...theme.rotations, { id: newId("rotation"), angle, width: 720, height: 1280, scenes: [] }],
-      } : theme) })),
-    }));
+  addRotation(themeId: string, angle: RotationAngle = 0): MutationResult {
+    return this.execute(`Add Rotation: R${angle}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => theme.id === themeId ? {
+      ...theme,
+      rotations: [...theme.rotations, { id: newId("rotation"), angle, width: 720, height: 1280, scenes: [] }],
+    } : theme)));
   }
 
-  addScene(rotationId: string, name = "New Scene"): void {
-    this.execute(`Add Scene: ${name}`, (project) => mapProject(project, (theme, rotation) => rotation.id === rotationId ? {
+  addScene(rotationId: string, name = "New Scene"): MutationResult {
+    return this.execute(`Add Scene: ${name}`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => rotation.id === rotationId ? {
       ...rotation,
       scenes: [...rotation.scenes, { id: newId("scene"), name, widgets: [], priority: 0, activationConditions: [] }],
-    } : rotation));
+    } : rotation))));
   }
 
-  moveScene(rotationId: string, sceneId: string, toIndex: number): void {
-    this.execute("Move Scene", (project) => mapProject(project, (theme, rotation) => {
-      if (rotation.id !== rotationId) return rotation;
+  moveScene(rotationId: string, sceneId: string, toIndex: number): MutationResult {
+    return this.execute("Move Scene", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => {
+      if (rotation.id !== rotationId || toIndex < 0 || toIndex >= rotation.scenes.length) return rotation;
+      const fromIndex = rotation.scenes.findIndex((scene) => scene.id === sceneId);
+      if (fromIndex < 0 || fromIndex === toIndex) return rotation;
       const scenes = [...rotation.scenes];
-      const from = scenes.findIndex((scene) => scene.id === sceneId);
-      if (from < 0) return rotation;
-      const [scene] = scenes.splice(from, 1);
-      scenes.splice(Math.max(0, Math.min(toIndex, scenes.length)), 0, scene);
+      const [scene] = scenes.splice(fromIndex, 1);
+      scenes.splice(toIndex, 0, scene);
       return { ...rotation, scenes };
-    }));
+    }))));
   }
 
-  moveWidget(sceneId: string, widgetId: string, toIndex: number): void {
-    this.execute("Move Widget", (project) => mapProject(project, (theme, rotation, scene) => {
-      if (!scene) return rotation;
-      if (scene.id !== sceneId) return scene;
+  moveWidget(sceneId: string, widgetId: string, toIndex: number): MutationResult {
+    return this.execute("Move Widget", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+      if (scene.id !== sceneId || toIndex < 0 || toIndex >= scene.widgets.length) return scene;
+      const fromIndex = scene.widgets.findIndex((widget) => widget.id === widgetId);
+      if (fromIndex < 0 || fromIndex === toIndex) return scene;
       const widgets = [...scene.widgets];
-      const from = widgets.findIndex((widget) => widget.id === widgetId);
-      if (from < 0) return scene;
-      const [widget] = widgets.splice(from, 1);
-      widgets.splice(Math.max(0, Math.min(toIndex, widgets.length)), 0, widget);
+      const [widget] = widgets.splice(fromIndex, 1);
+      widgets.splice(toIndex, 0, widget);
       return { ...scene, widgets };
-    }));
+    })))));
   }
 
-  editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): void {
-    this.execute("Edit Widget Properties", (project) => mapProject(project, (theme, rotation, scene) => !scene ? rotation : scene.id === sceneId ? {
+  setWidgetGeometries(updates: Readonly<Record<string, Geometry>>, label = "Edit Widget Geometry"): MutationResult {
+    return this.execute(label, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => mapWidgets(scene, (widget) => updates[widget.id] ? { ...widget, geometry: clone(updates[widget.id]) } : widget))))));
+  }
+
+  editWidgetProperties(sceneId: string, widgetId: string, patch: Partial<Pick<Widget, "name" | "enabled" | "visible" | "locked" | "geometry" | "zIndex" | "content" | "style">>): MutationResult {
+    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? {
       ...scene,
-      widgets: scene.widgets.map((widget) => widget.id === widgetId ? { ...widget, ...patch } : widget),
-    } : scene));
+      widgets: scene.widgets.map((widget) => widget.id === widgetId ? { ...widget, ...clone(patch) } : widget),
+    } : scene)))));
   }
 
-  deleteSelection(ids: readonly string[]): void {
-    this.execute("Delete Selection", (project) => ({
-      ...project,
-      themeProjectGroups: project.themeProjectGroups.map((group) => ({ ...group,
-        themeProjects: group.themeProjects.filter((theme) => !ids.includes(theme.id)).map((theme) => ({ ...theme,
-          rotations: theme.rotations.filter((rotation) => !ids.includes(rotation.id)).map((rotation) => ({ ...rotation,
-            scenes: rotation.scenes.filter((scene) => !ids.includes(scene.id)).map((scene) => ({ ...scene, widgets: scene.widgets.filter((widget) => !ids.includes(widget.id)) })),
-          })),
+  deleteSelection(ids: readonly string[]): MutationResult {
+    if (!ids.length) return { changed: false };
+    const selected = new Set(ids);
+    return this.execute("Delete Selection", (project) => mapProjectGroups(project, (group) => ({
+      ...group,
+      themeProjects: group.themeProjects
+        .filter((theme) => !selected.has(theme.id))
+        .map((theme) => ({
+          ...theme,
+          rotations: theme.rotations
+            .filter((rotation) => !selected.has(rotation.id))
+            .map((rotation) => ({
+              ...rotation,
+              scenes: rotation.scenes
+                .filter((scene) => !selected.has(scene.id))
+                .map((scene) => ({ ...scene, widgets: scene.widgets.filter((widget) => !selected.has(widget.id)) })),
+            })),
         })),
-      })),
-    }));
+    })));
   }
 
-  duplicateSelection(ids: readonly string[]): void {
-    this.execute("Duplicate Selection", (project) => ({
-      ...project,
-      themeProjectGroups: project.themeProjectGroups.map((group) => ({ ...group,
-        themeProjects: group.themeProjects.flatMap((theme) => ids.includes(theme.id) ? [theme, { ...clone(theme), id: newId("theme"), name: `${theme.name} Copy` }] : [theme]),
-      })),
+  duplicateSelection(ids: readonly string[]): MutationResult {
+    if (!ids.length) return { changed: false };
+    const selected = new Set(ids);
+    return this.execute("Duplicate Selection", (project) => mapProjectGroups(project, (group) => {
+      const themeProjects: ThemeProject[] = [];
+      for (const theme of group.themeProjects) {
+        if (selected.has(theme.id)) {
+          themeProjects.push(theme, duplicateThemeProject(theme));
+          continue;
+        }
+
+        const rotations: Rotation[] = [];
+        for (const rotation of theme.rotations) {
+          if (selected.has(rotation.id)) {
+            rotations.push(rotation, duplicateRotation(rotation));
+            continue;
+          }
+
+          const scenes: Scene[] = [];
+          for (const scene of rotation.scenes) {
+            if (selected.has(scene.id)) {
+              scenes.push(scene, duplicateScene(scene));
+              continue;
+            }
+
+            const widgets: Widget[] = [];
+            for (const widget of scene.widgets) {
+              widgets.push(widget);
+              if (selected.has(widget.id)) widgets.push(duplicateWidget(widget));
+            }
+            scenes.push({ ...scene, widgets });
+          }
+          rotations.push({ ...rotation, scenes });
+        }
+        themeProjects.push({ ...theme, rotations });
+      }
+      return { ...group, themeProjects };
     }));
   }
 }
 
-function mapProject(project: Project, map: (theme: ThemeProject, rotation: any, scene?: Scene) => any): Project {
-  return {
-    ...project,
-    themeProjectGroups: project.themeProjectGroups.map((group) => ({ ...group,
-      themeProjects: group.themeProjects.map((theme) => ({ ...theme,
-        rotations: theme.rotations.map((rotation) => ({ ...mapRotation(rotation, theme, map) })),
-      })),
-    })),
-  };
+export function createEditorApplication(store: InMemoryDocumentStore): EditorApplication {
+  return new EditorApplication(store);
 }
-function mapRotation(rotation: any, theme: ThemeProject, map: (theme: ThemeProject, rotation: any, scene?: Scene) => any): any {
-  const direct = map(theme, rotation);
-  return { ...direct, scenes: direct.scenes.map((scene: Scene) => map(theme, rotation, scene)) };
-}
-
-export function createEditorApplication(store: InMemoryDocumentStore): EditorApplication { return new EditorApplication(store); }

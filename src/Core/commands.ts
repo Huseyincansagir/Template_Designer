@@ -22,7 +22,12 @@ export class CommandHistory {
   }
 
   get snapshot(): CommandHistorySnapshot {
-    return { canUndo: this.canUndo, canRedo: this.canRedo, undoCount: this.undoStack.length, redoCount: this.redoStack.length };
+    return {
+      canUndo: this.canUndo,
+      canRedo: this.canRedo,
+      undoCount: this.undoStack.length,
+      redoCount: this.redoStack.length,
+    };
   }
 
   execute(command: Command): void {
@@ -33,18 +38,22 @@ export class CommandHistory {
   }
 
   undo(): boolean {
-    const command = this.undoStack.pop();
+    const command = this.undoStack[this.undoStack.length - 1];
     if (!command) return false;
+
     command.undo();
+    this.undoStack.pop();
     this.redoStack.push(command);
     this.emit();
     return true;
   }
 
   redo(): boolean {
-    const command = this.redoStack.pop();
+    const command = this.redoStack[this.redoStack.length - 1];
     if (!command) return false;
+
     command.execute();
+    this.redoStack.pop();
     this.undoStack.push(command);
     this.emit();
     return true;
@@ -59,5 +68,7 @@ export class CommandHistory {
   get canUndo(): boolean { return this.undoStack.length > 0; }
   get canRedo(): boolean { return this.redoStack.length > 0; }
 
-  private emit(): void { this.listeners.forEach((listener) => listener()); }
+  private emit(): void {
+    this.listeners.forEach((listener) => listener());
+  }
 }

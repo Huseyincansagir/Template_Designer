@@ -30,24 +30,23 @@ function serialize(project: Project | undefined): string {
 export class InMemoryDocumentStore implements DocumentStore {
   private currentProject: Project | undefined;
   private savedProject: Project | undefined;
+  private snapshot: DocumentSnapshot;
   private readonly listeners = new Set<() => void>();
   readonly history: CommandHistory;
 
   constructor(history = new CommandHistory()) {
     this.history = history;
-    this.history.subscribe(() => this.emit());
+    this.snapshot = {
+      project: undefined,
+      isOpen: false,
+      isDirty: false,
+      history: history.snapshot,
+    };
+    this.history.subscribe(() => this.refreshSnapshot());
   }
 
   getCurrent(): Project | undefined { return this.currentProject; }
-
-  getSnapshot(): DocumentSnapshot {
-    return {
-      project: this.currentProject,
-      isOpen: Boolean(this.currentProject),
-      isDirty: serialize(this.currentProject) !== serialize(this.savedProject),
-      history: this.history.snapshot,
-    };
-  }
+  getSnapshot(): DocumentSnapshot { return this.snapshot; }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -58,7 +57,7 @@ export class InMemoryDocumentStore implements DocumentStore {
     this.currentProject = project;
     this.savedProject = project;
     this.history.clear();
-    this.emit();
+    this.refreshSnapshot();
   }
 
   create(project: Project): void { this.open(project); }
@@ -67,18 +66,18 @@ export class InMemoryDocumentStore implements DocumentStore {
     this.currentProject = undefined;
     this.savedProject = undefined;
     this.history.clear();
-    this.emit();
+    this.refreshSnapshot();
   }
 
   save(): void {
     this.savedProject = this.currentProject;
-    this.emit();
+    this.refreshSnapshot();
   }
 
   replaceCurrent(project: Project): void {
     if (!this.currentProject) throw new Error("No document is open");
     this.currentProject = project;
-    this.emit();
+    this.refreshSnapshot();
   }
 
   execute(command: Command): void {
@@ -89,5 +88,13 @@ export class InMemoryDocumentStore implements DocumentStore {
   undo(): boolean { return this.history.undo(); }
   redo(): boolean { return this.history.redo(); }
 
-  private emit(): void { this.listeners.forEach((listener) => listener()); }
+  private refreshSnapshot(): void {
+    this.snapshot = {
+      project: this.currentProject,
+      isOpen: Boolean(this.currentProject),
+      isDirty: serialize(this.currentProject) !== serialize(this.savedProject),
+      history: this.history.snapshot,
+    };
+    this.listeners.forEach((listener) => listener());
+  }
 }
