@@ -342,6 +342,41 @@ export class EditorApplication {
   }
 
   /**
+   * One undoable command that places several widgets in a Scene (display kit).
+   * Profile filtering stays in the UI; Core only validates geometry and names.
+   */
+  addWidgets(sceneId: string, specs: readonly { widgetType: string; geometry: Geometry; name?: string }[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current || !findUniqueScene(current, sceneId) || specs.length === 0) return { changed: false };
+    if (specs.some((spec) => spec.widgetType.trim().length === 0 || !isValidGeometry(spec.geometry) || (spec.name !== undefined && spec.name.trim().length === 0))) return { changed: false };
+    const created = specs.map(() => newId("widget"));
+    const result = this.execute(specs.length === 1 ? `Add Widget: ${specs[0].widgetType}` : `Add ${specs.length} Widgets`, (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
+      if (scene.id !== sceneId) return scene;
+      let maxZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
+      const existing = scene.widgets.map((widget) => widget.name);
+      const added = specs.map((spec, index) => {
+        maxZ += 1;
+        const name = uniqueDefaultName(spec.name?.trim() || defaultWidgetName(spec.widgetType), existing);
+        existing.push(name);
+        return {
+          id: created[index],
+          name,
+          widgetType: spec.widgetType,
+          enabled: true,
+          visible: true,
+          locked: false,
+          geometry: clampGeometry(clone(spec.geometry), rotation),
+          zIndex: maxZ,
+          bindings: [],
+          assetIds: [],
+        };
+      });
+      return { ...scene, widgets: [...scene.widgets, ...added] };
+    })))));
+    return result.changed ? { changed: true, createdIds: created } : result;
+  }
+
+  /**
    * Creates a sibling Theme Project Group. Without this the hierarchy had
    * exactly one group forever: the scaffold created it and no command could
    * add another, while delete refused to remove the last one.

@@ -633,6 +633,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [clipboard, setClipboard] = useState<{ widgets: Widget[]; cut: boolean } | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmRequest | null>(null);
   const [duplicateMode, setDuplicateMode] = useState(false);
+  const [placeWidgetType, setPlaceWidgetType] = useState<string | null>(null);
   const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string; priority: number }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "", priority: MIN_BINDING_PRIORITY });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
@@ -1114,7 +1115,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return result.changed;
   };
 
-  const addScene = (): boolean => {
+  const addScene = (requestedName?: string): boolean => {
     if (blockedInPreview("Add Scene")) return false;
     // Navigation is authoritative: Add Scene targets the Rotation / Form the
     // canvas is showing, so it works from the switcher, the menu and the tree.
@@ -1124,7 +1125,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return false;
     }
     const rotation = resolveCanonicalNode(project, rotationId)?.rotation;
-    const name = uniqueDefaultName("New Scene", rotation?.scenes.map((scene) => scene.name) ?? []);
+    const name = uniqueDefaultName(requestedName?.trim() || "New Scene", rotation?.scenes.map((scene) => scene.name) ?? []);
     const result = editorApplication.addScene(rotationId, name);
     if (result.changed) {
       const createdId = result.createdIds?.[0];
@@ -1139,7 +1140,65 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return result.changed;
   };
 
-  const addWidget = (widgetType: string): boolean => {
+  const defaultWidgetBox = (widgetType: string): { width: number; height: number } => {
+    if (widgetType === "digit") return { width: 280, height: 180 };
+    if (widgetType === "direction") return { width: 160, height: 120 };
+    if (widgetType === "warning") return { width: 360, height: 72 };
+    if (widgetType === "media") return { width: 240, height: 160 };
+    return { width: 200, height: 48 };
+  };
+
+  const enterPlaceMode = (widgetType: string): boolean => {
+    if (blockedInPreview("Add Widget")) return false;
+    if (!activeScene?.id || !activeProfile) {
+      logAction("Add Widget blocked: select an active Scene first", "WARN");
+      return false;
+    }
+    if (!activeProfile.supportedWidgetTypes.includes(widgetType)) {
+      logAction(`Widget type '${widgetType}' is not supported by the active DeviceProfile`, "WARN");
+      return false;
+    }
+    setDuplicateMode(false);
+    setPlaceWidgetType(widgetType);
+    logAction(`Place ${defaultWidgetName(widgetType)}: click the canvas · Esc exits`, "EVENT");
+    return true;
+  };
+
+  const addDisplayKit = (): boolean => {
+    if (blockedInPreview("Add Widget")) return false;
+    if (!activeScene?.id || !activeRotation || !activeProfile) {
+      logAction("Display kit blocked: select an active Scene first", "WARN");
+      return false;
+    }
+    const width = activeRotation.width;
+    const height = activeRotation.height;
+    const types = new Set(activeProfile.supportedWidgetTypes);
+    const specs: { widgetType: string; geometry: Geometry; name: string }[] = [];
+    if (types.has("media")) specs.push({ widgetType: "media", name: "Background", geometry: { x: 0, y: 0, width, height } });
+    if (types.has("digit")) specs.push({ widgetType: "digit", name: "Floor", geometry: { x: Math.round(width * 0.2), y: Math.round(height * 0.28), width: Math.round(width * 0.6), height: Math.round(height * 0.22) } });
+    if (types.has("direction")) specs.push({ widgetType: "direction", name: "Direction", geometry: { x: Math.round(width * 0.35), y: Math.round(height * 0.16), width: Math.round(width * 0.3), height: Math.round(height * 0.1) } });
+    if (types.has("warning")) specs.push({ widgetType: "warning", name: "Warning", geometry: { x: Math.round(width * 0.1), y: Math.round(height * 0.54), width: Math.round(width * 0.8), height: Math.round(height * 0.1) } });
+    if (types.has("text")) specs.push({ widgetType: "text", name: "Caption", geometry: { x: Math.round(width * 0.1), y: Math.round(height * 0.82), width: Math.round(width * 0.8), height: Math.round(height * 0.08) } });
+    if (!specs.length) {
+      logAction("Display kit: the active DeviceProfile declares no widget types", "WARN");
+      return false;
+    }
+    const result = editorApplication.addWidgets(activeScene.id, specs);
+    if (!result.changed) {
+      logAction("Display kit failed", "WARN");
+      return false;
+    }
+    const createdIds = result.createdIds ?? [];
+    if (createdIds[0]) {
+      setExpandedNodes((current) => ({ ...current, [activeScene.id]: true, ...(activeRotation ? { [activeRotation.id]: true } : {}) }));
+      setSelectedIds([createdIds[0]]);
+      setSelection({ id: createdIds[0], label: specs[0].name, kind: "widget", nodeType: specs[0].widgetType, detail: "Visible" });
+    }
+    logAction(`Display kit added · ${createdIds.length} widget(s)`, "EVENT");
+    return true;
+  };
+
+  const addWidget = (widgetType: string, at?: CanvasPoint): boolean => {
     if (blockedInPreview("Add Widget")) return false;
     const sceneId = activeScene?.id;
     if (!sceneId || !activeRotation || !activeProfile) {
@@ -1150,15 +1209,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction(`Widget type '${widgetType}' is not supported by the active DeviceProfile`, "WARN");
       return false;
     }
-    const width = 120;
-    const height = 80;
-    // Cascade by widget size + snap grid (S4-01 / UI-D-0017) so successive
-    // adds are independently selectable. Wrap after 8 steps to the origin.
+    const { width, height } = defaultWidgetBox(widgetType);
     const cascade = (activeScene?.widgets.length ?? 0) % 8;
     const stepX = width + snapGridSize;
     const stepY = height + snapGridSize;
-    const x = Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * stepX) / snapGridSize) * snapGridSize);
-    const y = Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * stepY) / snapGridSize) * snapGridSize);
+    const x = at
+      ? Math.round((at.x - width / 2) / snapGridSize) * snapGridSize
+      : Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * stepX) / snapGridSize) * snapGridSize);
+    const y = at
+      ? Math.round((at.y - height / 2) / snapGridSize) * snapGridSize
+      : Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * stepY) / snapGridSize) * snapGridSize);
     const name = uniqueDefaultName(defaultWidgetName(widgetType), activeScene.widgets.map((widget) => widget.name));
     const result = editorApplication.addWidget(sceneId, widgetType, { x, y, width, height }, name);
     if (!result.changed) {
@@ -1889,7 +1949,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     else if (commandId === "asset.delete") changed = deleteAssetsCommand(selectedAssetIds.length ? selectedAssetIds : resolvedSelection?.asset ? [resolvedSelection.asset.id] : []);
     else if (commandId === "node.rename") { requestRename(); setContextMenu(null); return; }
     else if (commandId === "rotation.add-scene") changed = addScene();
-    else if (commandId.startsWith("scene.add-widget:")) changed = addWidget(commandId.slice("scene.add-widget:".length));
+    else if (commandId.startsWith("scene.add-widget:")) { enterPlaceMode(commandId.slice("scene.add-widget:".length)); setContextMenu(null); return; }
     else if (commandId === "widget.bring-forward" || commandId === "widget.send-backward" || commandId === "widget.bring-to-front" || commandId === "widget.send-to-back") changed = changeWidgetZOrder(commandId.replace("widget.", "") as ZOrderOperation);
     else if (commandId === "widget.lock-toggle") changed = toggleWidgetProperty("locked");
     else if (commandId === "widget.hide-toggle") changed = toggleWidgetProperty("visible");
@@ -2655,6 +2715,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       consumeCanvasClickSuppression();
       return;
     }
+    if (placeWidgetType) {
+      if (blockedInPreview("Add Widget")) return;
+      addWidget(placeWidgetType, toCanvasPoint(event));
+      return;
+    }
     if (duplicateMode) {
       if (blockedInPreview("Duplicate place")) return;
       const sceneId = activeScene?.id;
@@ -2759,6 +2824,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (excluded && descriptor?.id !== "save" && descriptor?.id !== "new") return;
     if (event.key === "Escape") {
       event.preventDefault();
+      if (placeWidgetType) {
+        setPlaceWidgetType(null);
+        logAction("Place mode exited", "EVENT");
+        return;
+      }
       if (duplicateMode) {
         setDuplicateMode(false);
         logAction("Duplicate mode exited", "EVENT");
@@ -3111,7 +3181,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Test Scene in Simulator", disabled: !activeSceneNode, onClick: () => { activatePanel("simulator"); traceRuntime(); } },
     ],
     Widget: [
-      ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, title: activeScene?.id ? undefined : "Requires an active Scene", onClick: () => addWidget(widgetType) })),
+      ...(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => ({ label: `Add ${defaultWidgetName(widgetType)} Widget`, disabled: !activeScene?.id, title: activeScene?.id ? "Click the canvas to place" : "Requires an active Scene", onClick: () => enterPlaceMode(widgetType) })),
+      { label: "Add Display Kit", disabled: !activeScene?.id, title: activeScene?.id ? "Place a profile-driven set of widgets on this Scene" : "Requires an active Scene", onClick: addDisplayKit },
       { label: selectedWidgetsAllLocked ? "Unlock Selection" : "Lock Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("locked") },
       { label: selectedWidgetsAllVisible ? "Hide Selection" : "Show Selection", disabled: !selectedWidgetIds.length, onClick: () => toggleWidgetProperty("visible") },
       { label: selectedWidgetsAllEnabled ? "Disable Selection" : "Enable Selection", disabled: !selectedWidgetIds.length, title: selectedWidgetIds.length ? "A disabled widget stays in the layout but the runtime does not present it" : "Requires a selected widget", onClick: () => toggleWidgetProperty("enabled") },
@@ -3155,6 +3226,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             <span className="tool-divider" />
             <button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button>
             <button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button>
+            <span className="tool-divider" />
+            {(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => (
+              <button
+                type="button"
+                key={widgetType}
+                className={`studio-tool ${placeWidgetType === widgetType ? "active" : ""}`}
+                disabled={viewMode === "preview" || !activeScene?.id}
+                title={activeScene?.id ? `Place ${defaultWidgetName(widgetType)} · click the canvas` : "Requires an active Scene"}
+                onClick={() => enterPlaceMode(widgetType)}
+              >{widgetType === "digit" ? "88" : widgetType === "direction" ? "▲" : widgetType === "warning" ? "!" : widgetType === "media" ? "▣" : "T"} <span>{defaultWidgetName(widgetType)}</span></button>
+            ))}
           </div>
           <span className="tool-divider" />
           <label className="navigator-field">
@@ -3209,7 +3291,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
               {scenes.length === 0 && <span className="navigator-empty">No Scene</span>}
             </div>
             <div className="scene-switcher-actions">
-              <button type="button" className="small-action" disabled={!activeRotationNode} title="Add a Scene to the active Rotation / Form" onClick={addScene}>+ Scene</button>
+              <button type="button" className="small-action" disabled={!activeRotationNode} title="Add a Scene to the active Rotation / Form" onClick={() => addScene()}>+ Scene</button>
               <button type="button" className="small-action" disabled={sceneIndex <= 0} aria-label="Move active Scene earlier" title="Move the active Scene earlier (activation order tie-break)" onClick={() => moveActiveScene(-1)}>↑</button>
               <button type="button" className="small-action" disabled={sceneIndex < 0 || sceneIndex >= scenes.length - 1} aria-label="Move active Scene later" title="Move the active Scene later" onClick={() => moveActiveScene(1)}>↓</button>
             </div>
@@ -3766,7 +3848,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" disabled={viewMode === "preview"} checked={node.scene.enabled !== false} onChange={(event) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="Used By" value={listAssetReferenceLabels(project, node.asset.id).join("; ") || "unused"} /><button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
         </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={viewMode === "preview"} ariaLabel="Project name" onCommit={(value) => renameNodeById(project.id, value)} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} disabled={viewMode === "preview"} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
@@ -3827,6 +3909,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             <li key={stage} className={sdStage === stage ? "active" : sdResult?.status === "verified" ? "done" : sdResult?.status === "failed" && sdResult.stage === stage ? "failed" : ""}>{stage}</li>
           ))}
         </ol>
+        <ul className="deployment-readiness" aria-label="Package readiness">
+          <li>{activeProfile ? "Profile compatible" : "No DeviceProfile"}</li>
+          <li>{(activeTheme?.rotations.length ?? 0) === 4 ? "Required rotations available (4/4)" : "Required rotations missing"}</li>
+          <li>{validation.issues.some((issue) => issue.severity === "error" && issue.code.includes("ASSET")) ? "Asset / format errors" : "Media formats review"}</li>
+          <li>{validation.valid ? "Runtime / bindings valid" : `${validation.issues.filter((issue) => issue.severity === "error").length} validation error(s)`}</li>
+          <li>{lastPackage?.verified ? "Package verified · Ready" : "Package not built"}</li>
+        </ul>
         {!nativeTransport && (
           <div className="deployment-notice">
             <strong>No removable-storage transport in this build</strong>
@@ -3940,7 +4029,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {leftVisible && <div className="splitter" role="separator" aria-label="Resize left panel" aria-orientation="vertical" aria-valuenow={leftWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setLeftWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("left", event)} />}
           <section className="canvas-workspace" aria-label="Canvas editor">
             {renderEditorChrome()}
-            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""}`} data-testid="canvas-stage" onClick={() => { if (!isCanvasClickSuppressed()) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN" : previewActive ? `PREVIEW · ${runtime.activeScene?.name ?? ""}` : "PREVIEW · NO SCENE ACTIVATES"}</div>{viewMode === "preview" && !previewActive && <div className="preview-inactive-note" role="status"><strong>No Scene activates with the current runtime inputs</strong><span>{runtime.candidates.length === 0 ? "This Rotation / Form has no Scene." : `${runtime.candidates.length} Scene(s) were evaluated and none matched. Set the runtime states in the Simulator, or relax a Scene Activation rule.`}</span><span className="preview-inactive-hint">The canvas below still shows the Design Mode layout; it is not a runtime result.</span></div>}<div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCaptureLost} onContextMenu={(event) => {
+            <div className={`canvas-stage ${canvasTool === "pan" ? "pan-mode" : ""} ${placeWidgetType ? "place-mode" : ""}`} data-testid="canvas-stage" onClick={() => { if (!isCanvasClickSuppressed()) clearSelection(); setContextMenu(null); }}><div className="canvas-rail-label">{placeWidgetType ? `PLACE ${defaultWidgetName(placeWidgetType).toUpperCase()} · click to add · Esc exits` : duplicateMode ? "DUPLICATE MODE · click to place · Esc exits" : viewMode === "design" ? "DESIGN" : previewActive ? `PREVIEW · ${runtime.activeScene?.name ?? ""}` : "PREVIEW · NO SCENE ACTIVATES"}</div>{viewMode === "preview" && !previewActive && <div className="preview-inactive-note" role="status"><strong>No Scene activates with the current runtime inputs</strong><span>{runtime.candidates.length === 0 ? "This Rotation / Form has no Scene." : `${runtime.candidates.length} Scene(s) were evaluated and none matched. Set the runtime states in the Simulator, or relax a Scene Activation rule.`}</span><span className="preview-inactive-hint">The canvas below still shows the Design Mode layout; it is not a runtime result.</span></div>}<div className="device-canvas-wrap" onClick={(event) => event.stopPropagation()}><div className="device-frame" style={{ aspectRatio: `${canvasWidth} / ${canvasHeight}` }}><div className="device-frame-header"><span>DISPLAY</span><span>{activeRotation ? `R${activeRotation.angle} · ${canvasWidth} × ${canvasHeight}` : "No rotation selected"}</span></div><div className="device-screen" ref={canvasScreenRef} tabIndex={0} onClick={(event) => handleCanvasClick(event)} onPointerDown={beginCanvasMarquee} onPointerMove={handleCanvasPointerMove} onPointerUp={handleCanvasPointerUp} onPointerCancel={handleCanvasPointerCancel} onLostPointerCapture={handleCanvasPointerCaptureLost} onContextMenu={(event) => {
       event.preventDefault();
       event.stopPropagation();
       const point = toCanvasPoint(event);
@@ -3954,8 +4043,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       } else {
         setContextMenu(null);
       }
-    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "The saved DeviceProfile is not registered in this build. Choose a registered profile to continue." : activeScene ? "Scene contains no widgets." : "Add a Scene to this rotation to start placing widgets."}</span>{!activeProfile ? availableProfiles.map((profile) => <button type="button" key={profile.id} className="context-action" onClick={(event) => { event.stopPropagation(); setDeviceProfile(profile.id); }}>Use {profile.name}</button>) : activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : activeRotation && !activeScene ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>{activeRotation ? `R${activeRotation.angle}` : ""}</span><span>{canvasWidth} × {canvasHeight}</span></div></div></div></div>
-            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={viewMode === "preview" || !activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : activeScene?.id ? `Add a ${defaultWidgetName(activeProfile?.supportedWidgetTypes[0] ?? "widget")} widget to ${activeScene.name} - use the Widget menu for another type` : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={deleteSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
+    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "The saved DeviceProfile is not registered in this build. Choose a registered profile to continue." : activeScene ? "Place a widget from the palette, or drop a display kit." : "Add a Scene to this rotation to start placing widgets."}</span>{!activeProfile ? availableProfiles.map((profile) => <button type="button" key={profile.id} className="context-action" onClick={(event) => { event.stopPropagation(); setDeviceProfile(profile.id); }}>Use {profile.name}</button>) : activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <>{(activeProfile.supportedWidgetTypes).map((widgetType) => <button type="button" key={widgetType} className="context-action" onClick={(event) => { event.stopPropagation(); enterPlaceMode(widgetType); }}>Place {defaultWidgetName(widgetType)}</button>)}<button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addDisplayKit(); }}>Display kit</button></> : activeRotation && !activeScene ? <>{["Idle", "Travel Up", "Travel Down", "Fire", "Overload"].map((preset) => <button type="button" key={preset} className="context-action" onClick={(event) => { event.stopPropagation(); addScene(preset); }}>{preset}</button>)}<button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button></> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>{activeRotation ? `R${activeRotation.angle}` : ""}</span><span>{canvasWidth} × {canvasHeight}</span></div></div></div></div>
+            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={viewMode === "preview" || selectedEditableWidgets.length < 2} onClick={() => alignSelection("left", "align")} title="Align left">Align</button><button type="button" className="context-action" disabled={viewMode === "preview" || selectedEditableWidgets.length < 3} onClick={() => alignSelection("horizontal", "distribute")} title="Distribute horizontally">Distribute</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={deleteSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
           {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}

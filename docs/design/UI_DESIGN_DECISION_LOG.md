@@ -252,3 +252,23 @@ These decisions are canonical and live in their source documents. They are liste
 - **Canonical source:** This log; UI spec §8
 - **Date:** 2026-08-19
 
+### UI-D-0019 — Profile widget palette and click-to-place
+- **Topic:** How a designer adds a widget.
+- **Context:** Add Widget always created the first DeviceProfile type at a cascade point. The elevator Design Studio reference shows a type palette and click-to-place.
+- **Decision:** Chrome exposes one studio-tool per `supportedWidgetTypes`. Choosing a type enters place mode; the next canvas click adds that widget at the click, clamped. Esc exits. Menu and context `scene.add-widget:*` enter the same place mode.
+- **Reason:** Two-step Add → type → place. Profile-driven; no invented widget IDs.
+- **Alternatives:** (a) keep first-type cascade — rejected: undiscoverable; (b) new domain types kat_no/ok — rejected: DeviceProfile types are the contract.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; ui-ux-system widget insertion; DeviceProfile.supportedWidgetTypes
+- **Date:** 2026-08-19
+
+### UI-D-0020 — Display kit is a profile-filtered Scene command
+- **Topic:** Typical elevator face without a new widget catalog.
+- **Context:** Empty scenes force the designer to invent layout. Elevator ref 01 shows Floor + Direction + Warning + captions.
+- **Decision:** `addWidgets` places a kit (Background/media, Floor/digit, Direction, Warning, Caption/text) using percent boxes of the active Rotation. Types absent from the profile are skipped. One undo step.
+- **Reason:** Elastic across Foundation/Compact. Names are display names, not new types.
+- **Alternatives:** (a) 9 canonical scenes / 12 widget IDs — DOMAIN CONTRADICTION, not implemented; (b) no kit — rejected: empty canvas is the main friction.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; DeviceProfile; elevator ref 01 as layout hint only
+- **Date:** 2026-08-19
+

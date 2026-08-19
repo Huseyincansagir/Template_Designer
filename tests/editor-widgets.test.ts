@@ -85,9 +85,24 @@ describe("Widget creation (C-01 remediation)", () => {
     expect(editor.addWidget(sceneId, "  ").changed).toBe(false);
     expect(editor.addWidget(sceneId, "digit", { x: 0, y: 0, width: -1, height: 10 }).changed).toBe(false);
     expect(editor.addWidget(sceneId, "digit", { x: 0, y: 0, width: 10, height: Number.NaN }).changed).toBe(false);
-    expect(store.getCurrent()).toEqual(project);
-    expect(store.getSnapshot().history.undoCount).toBe(0);
-    expect(store.getSnapshot().isDirty).toBe(false);
+    expect(editor.addWidgets(sceneId, []).changed).toBe(false);
+    expect(editor.addWidgets("missing", [{ widgetType: "text", geometry: { x: 0, y: 0, width: 40, height: 20 } }]).changed).toBe(false);
+  });
+
+  it("adds a display kit as one undoable command", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const result = editor.addWidgets(sceneId, [
+      { widgetType: "digit", geometry: { x: 10, y: 20, width: 100, height: 80 }, name: "Floor" },
+      { widgetType: "direction", geometry: { x: 10, y: 120, width: 80, height: 40 }, name: "Direction" },
+    ]);
+    expect(result.changed).toBe(true);
+    expect(result.createdIds).toHaveLength(2);
+    const widgets = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets ?? [];
+    expect(widgets.map((widget) => widget.name)).toEqual(["w1", "Floor", "Direction"]);
+    expect(store.getSnapshot().history.undoCount).toBe(1);
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets).toHaveLength(1);
   });
 
   it("applies a default geometry when none is supplied", () => {

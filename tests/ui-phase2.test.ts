@@ -58,5 +58,8 @@ describe("UI Phase 2 foundations", () => {
     expect(app).toContain("deploy-dialog");
     expect(app).not.toContain("SDCardTarget");
     expect(app).not.toContain("writePackage");
+    expect(app).toContain("placeWidgetType");
+    expect(app).toContain("addDisplayKit");
+    expect(app).toContain("enterPlaceMode");
   });
 });

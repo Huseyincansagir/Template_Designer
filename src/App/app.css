@@ -291,6 +291,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .canvas-stage { position: relative; display: grid; place-items: center; min-height: 0; overflow: auto; background-color: var(--canvas-bg); }
 .canvas-stage.pan-mode { cursor: grab; }
 .canvas-stage.pan-mode:active { cursor: grabbing; }
+.canvas-stage.place-mode { cursor: crosshair; }
 .canvas-rail-label { position: absolute; top: 8px; left: 10px; color: #4f6469; font-size: 8px; font-weight: 700; letter-spacing: .12em; pointer-events: none; }
 .device-canvas-wrap { display: grid; place-items: center; width: 100%; height: 100%; transform-origin: center center; transition: transform .12s ease; }
 .device-frame { display: grid; grid-template-rows: 16px minmax(0, 1fr) 14px; height: calc(100% - 16px); max-height: 100%; max-width: calc(100% - 24px); width: auto; aspect-ratio: 9 / 16; padding: 5px; border: 1px solid var(--device-bezel); border-radius: var(--radius-sm); background: var(--device-frame); box-shadow: var(--shadow-device); }
@@ -600,11 +601,11 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 /* Type-aware widget bodies: a display template is text, digits, direction
    glyphs and media, so Preview must show those, not a generic label. */
 .widget-render { display: grid; place-items: center; gap: 1px; width: 100%; min-width: 0; padding: 0 2px; overflow: hidden; text-align: center; }
-.widget-render-text { color: #e4f5f5; font-size: clamp(8px, 1.6cqw, 22px); font-weight: 650; line-height: 1.15; overflow-wrap: anywhere; }
-.widget-render-text.is-warning { color: #f4cf8a; }
-.widget-render-digit { color: #eafcfc; font-family: "Consolas", "Segoe UI Mono", monospace; font-size: clamp(10px, 3cqw, 44px); font-variant-numeric: tabular-nums; font-weight: 700; letter-spacing: 0.04em; }
-.widget-render-direction { color: var(--accent-on-dark); font-size: clamp(10px, 3cqw, 40px); line-height: 1; }
-.widget-render-media { display: grid; place-items: center; gap: 1px; }
+.widget-render-text { color: #e4f5f5; font-size: clamp(10px, 4cqw, 28px); font-weight: 650; line-height: 1.15; overflow-wrap: anywhere; }
+.widget-render-text.is-warning { width: 100%; height: 100%; background: rgba(182, 76, 76, 0.38); color: #f7d7a6; font-weight: 800; letter-spacing: 0.06em; }
+.widget-render-digit { color: #eafcfc; font-family: "Consolas", "Segoe UI Mono", monospace; font-size: clamp(16px, 12cqw, 72px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: 0.04em; }
+.widget-render-direction { color: var(--accent-on-dark); font-size: clamp(16px, 10cqw, 56px); line-height: 1; }
+.widget-render-media { display: grid; place-items: center; gap: 1px; width: 100%; height: 100%; background: rgba(19, 148, 154, 0.22); }
 .widget-render-media-glyph { color: var(--accent-on-dark); font-size: clamp(9px, 2cqw, 20px); line-height: 1; }
 .widget-render-media strong { overflow: hidden; max-width: 100%; color: #dcefef; font-size: 8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .widget-render-media small, .widget-render-empty small { color: #9bd4d4; font-size: 7px; }
@@ -653,6 +654,8 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 /* SD-card deployment panel: staged pipeline, explicit targets, verbatim result. */
 .deployment-panel { display: grid; gap: var(--space-2); padding: var(--space-2) 10px; overflow-y: auto; }
 .deployment-stages { display: flex; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deployment-readiness { display: grid; gap: 2px; margin: 0 0 var(--space-2); padding: 0; list-style: none; color: var(--text-secondary); font-size: var(--text-xs); }
+.deployment-readiness li { padding: 2px 0; border-bottom: 1px solid var(--border-subtle); }
 .deployment-stages li { padding: 1px var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted); font-size: var(--micro-label); text-transform: uppercase; letter-spacing: var(--kicker-tracking); }
 .deployment-stages li.active { border-color: var(--accent-hover); background: var(--accent-muted); color: var(--accent-active); font-weight: 700; }
 .deployment-stages li.done { border-color: var(--success); color: var(--success); }
