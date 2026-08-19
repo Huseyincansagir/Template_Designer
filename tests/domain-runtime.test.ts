@@ -119,6 +119,20 @@ describe("canonical runtime evaluation", () => {
     expect(result.activeSceneId).toBe("fire");
     expect(bindings).toEqual([{ bindingId: "fire-widget-binding", widgetId: "fire-widget", matched: true, action: "play", contentId: "asset-used-video" }]);
   });
+
+  it("activates a Scene whose condition reads a runtime setting, not a state", () => {
+    const scenes: Scene[] = [{
+      id: "en-scene",
+      name: "EN",
+      widgets: [],
+      priority: 1,
+      enabled: true,
+      activationConditions: [{ stateId: "language", operator: "equals", value: "EN", source: "setting" }],
+      activationConditionMode: "all",
+    }];
+    expect(selectActiveScene(scenes, { values: {}, settings: { language: "EN" } }, profile).activeSceneId).toBe("en-scene");
+    expect(selectActiveScene(scenes, { values: { language: "EN" }, settings: { language: "TR" } }, profile).activeSceneId).toBeUndefined();
+  });
 });
 
 describe("canonical validation", () => {

@@ -648,6 +648,44 @@ describe("Refusal policy is explained before it is enforced (D2-05/D2-06/D2-09)"
     expect(describeSelectionRefusal(["theme"], "duplicate", 1)).toBeUndefined();
     expect(editor.duplicateSelection([themeId]).changed).toBe(true);
   });
+
+  it("refuses Theme Project Group duplicate in policy and in Core (D2-09)", () => {
+    const { project } = fixture();
+    const { store, editor } = setup(project);
+    const groupId = project.themeProjectGroups[0].id;
+    expect(describeSelectionRefusal(["theme-group"], "duplicate", 1)).toMatch(/not defined for Theme Project Groups/);
+    expect(describeSelectionRefusal(["theme-group"], "duplicate", 2)).toMatch(/not defined for Theme Project Groups/);
+    expect(editor.duplicateSelection([groupId]).changed).toBe(false);
+    expect(current(store).themeProjectGroups).toHaveLength(1);
+    expect(store.getSnapshot().history.undoCount).toBe(0);
+  });
+});
+
+describe("Floor mappings command", () => {
+  it("writes floor mappings as one undoable command and refuses duplicate NFC identifiers", () => {
+    const { project, themeId } = fixture();
+    const { store, editor } = setup(project);
+    const mapping = {
+      id: createStableId("floor-mapping"),
+      entries: [
+        { firmwareValue: "G", displayValue: "Ground" },
+        { firmwareValue: "1", displayValue: "1" },
+      ],
+    };
+    expect(editor.setThemeFloorMappings(themeId, [mapping]).changed).toBe(true);
+    expect(current(store).themeProjectGroups[0].themeProjects[0].floorMappings).toEqual([mapping]);
+    expect(editor.setThemeFloorMappings(themeId, [{
+      id: mapping.id,
+      entries: [
+        { firmwareValue: "\u00c7at\u0131", displayValue: "A" },
+        { firmwareValue: "C\u0327at\u0131", displayValue: "B" },
+      ],
+    }]).changed).toBe(false);
+    expect(editor.setThemeFloorMappings(themeId, [{ id: mapping.id, entries: [{ firmwareValue: "  ", displayValue: "x" }] }]).changed).toBe(false);
+    expect(editor.setThemeFloorMappings("missing-theme", [mapping]).changed).toBe(false);
+    expect(store.undo()).toBe(true);
+    expect(current(store).themeProjectGroups[0].themeProjects[0].floorMappings ?? []).toEqual([]);
+  });
 });
 describe("Deployment goes through the application service (F16)", () => {
   it("builds a verified package and reports its transports", async () => {

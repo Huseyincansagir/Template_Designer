@@ -101,4 +101,32 @@ describe("architecture boundaries", () => {
     // And the one module that may do it, does.
     expect(readFileSync(identityModule, "utf8")).toMatch(/randomUUID/);
   });
+
+  it("Preview Mode guards every document mutation the UI can fire (D5-19)", () => {
+    const app = readFileSync(join(process.cwd(), "src/App/App.tsx"), "utf8");
+    for (const command of [
+      "Undo", "Redo", "Delete", "Duplicate", "Paste",
+      "Add Theme Project Group", "Add Theme Project", "Add Scene", "Add Widget",
+      "Widget configuration", "Change Widget Type", "Scene activation",
+      "Duplicate Scene", "Duplicate Theme Project", "Move Scene",
+      "Widget toggle", "Z-order",
+      "Delete Asset", "Import Asset", "Change Device Profile", "Rename",
+      "Floor mapping", "Revert to Saved", "Duplicate Mode",
+    ]) {
+      expect(app, command).toContain(`blockedInPreview("${command}")`);
+    }
+    expect(app).toMatch(/blockedInPreview\(visible \? "Show All" : "Hide All"\)/);
+    expect(app).toMatch(/blockedInPreview\(kind === "align" \? "Align" : "Distribute"\)/);
+    expect(app).toMatch(/if \(viewMode === "preview"\) \{\s*logAction\("Preview Mode evaluates the runtime/);
+    expect(app).toMatch(/const beginCanvasMarquee[\s\S]*if \(viewMode === "preview"\) return/);
+    expect(app).toMatch(/const beginWidgetResize[\s\S]*viewMode === "preview"\) return/);
+    expect(app).toMatch(/const beginSelectionResize[\s\S]*viewMode === "preview"\) return/);
+  });
+
+  it("chrome navigation selects the node it shows (L-11)", () => {
+    const app = readFileSync(join(process.cwd(), "src/App/App.tsx"), "utf8");
+    expect(app).toMatch(/const navigateToTheme[\s\S]*setSelectedIds\(theme \? \[theme\.id\] : \[\]\)[\s\S]*kind: "theme"/);
+    expect(app).toMatch(/const navigateToRotation[\s\S]*setSelectedIds\(rotation \? \[rotation\.id\] : \[\]\)[\s\S]*kind: "rotation"/);
+    expect(app).toMatch(/const navigateToScene[\s\S]*setSelectedIds\(scene \? \[scene\.id\] : \[\]\)[\s\S]*kind: "scene"/);
+  });
 });

@@ -84,4 +84,15 @@ describe("Runtime coercion (INT-55 remediation)", () => {
     expect(conditionMatches(condition, { values: {} }, foundationDeviceProfile)).toBe(true);
     expect(conditionMatches({ ...condition, negated: false }, { values: {} }, foundationDeviceProfile)).toBe(false);
   });
+
+  it("matches a setting-sourced condition against context.settings, not values (D5-10)", () => {
+    const language = { stateId: "language", operator: "equals" as const, value: "en", source: "setting" as const };
+    expect(conditionMatches(language, { values: { language: "tr" }, settings: { language: "en" } }, foundationDeviceProfile)).toBe(true);
+    expect(conditionMatches(language, { values: { language: "en" }, settings: { language: "tr" } }, foundationDeviceProfile)).toBe(false);
+    expect(conditionMatches(
+      { stateId: "language", operator: "equals", value: "en" },
+      { values: {}, settings: { language: "en" } },
+      foundationDeviceProfile,
+    )).toBe(false);
+  });
 });
