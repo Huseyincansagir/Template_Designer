@@ -352,15 +352,29 @@ export class EditorApplication {
    * the deployment package carries (`export.ts` asset records are logical,
    * `binary: false`).
    */
-  addAssets(drafts: readonly AssetDraft[]): MutationResult {
+  addAssets(drafts: readonly AssetDraft[], options?: { themeId?: string; themeResourceIndexes?: readonly number[] }): MutationResult {
     const current = this.documents.getCurrent();
     if (!current || drafts.length === 0) return { changed: false };
     const normalized = drafts.map(normalizeAssetDraft);
     if (normalized.some((draft) => draft === undefined)) return { changed: false };
     const accepted = normalized as readonly AssetDraft[];
     const created = accepted.map((draft) => ({ id: newId("asset"), ...draft } as Asset));
+    const themeId = options?.themeId;
+    const themeExists = Boolean(themeId && current.themeProjectGroups.some((group) => group.themeProjects.some((theme) => theme.id === themeId)));
+    const resourceIndexes = new Set(options?.themeResourceIndexes ?? []);
+    const attachIds = themeExists
+      ? created.filter((_, index) => resourceIndexes.has(index)).map((asset) => asset.id)
+      : [];
     const label = created.length === 1 ? `Import Asset: ${created[0].name}` : `Import ${created.length} Assets`;
-    const result = this.execute(label, (project) => ({ ...project, assets: [...project.assets, ...clone(created)] }));
+    const result = this.execute(label, (project) => {
+      const withAssets: Project = { ...project, assets: [...project.assets, ...clone(created)] };
+      if (!themeId || attachIds.length === 0) return withAssets;
+      return mapAllThemes(withAssets, (theme) => {
+        if (theme.id !== themeId) return theme;
+        const extra = attachIds.filter((id) => !theme.resources.includes(id));
+        return extra.length ? { ...theme, resources: [...theme.resources, ...extra] } : theme;
+      });
+    });
     return result.changed ? { changed: true, createdIds: created.map((asset) => asset.id) } : result;
   }
 

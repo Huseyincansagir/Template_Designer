@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createEmptyProject } from "../Domain/factories";
 import { CommandHistory } from "../Core/commands";
 import { InMemoryDocumentStore } from "../Core/document-store";
-import { createEditorApplication, defaultWidgetName, type MutationResult } from "../Core/editor-application";
+import { createEditorApplication, defaultWidgetName, type AssetDraft, type MutationResult } from "../Core/editor-application";
 import { createDeploymentService } from "../Core/deployment-service";
 import { createRemovableStorageAdapter } from "../Infrastructure/tauri-removable-storage";
 import type { RemovableVolume } from "../Core/removable-storage";
@@ -13,7 +13,7 @@ import { MAX_BINDING_PRIORITY, MIN_BINDING_PRIORITY } from "../Domain/models";
 import { stableSerialize } from "../Core/serialize";
 import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
-import { createAssetImportSource } from "../Infrastructure/asset-import";
+import { createAssetImportSource, draftsFromFiles, extensionOf, isFileDrag } from "../Infrastructure/asset-import";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
@@ -862,18 +862,18 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   // ---- Asset lifecycle -----------------------------------------------------
 
-  const importAssets = async (): Promise<boolean> => {
+  const isProfileSupportedDraft = (draft: AssetDraft): boolean => {
+    const extension = extensionOf(draft.sourcePath) || extensionOf(draft.name);
+    const allowed = (activeProfile?.supportedFormats ?? []).map((format) => format.toLowerCase());
+    if (!extension) return false;
+    if (allowed.length === 0) return Boolean(draft.mediaType);
+    return allowed.includes(extension);
+  };
+
+  const commitImportedDrafts = (drafts: readonly AssetDraft[], origin: "picker" | "drop", themeId?: string): boolean => {
     if (blockedInPreview("Import Asset")) return false;
-    if (!assetImportSource) {
-      logAction("Asset import is unavailable in this build", "WARN");
-      return false;
-    }
-    const drafts = await assetImportSource.pick({
-      acceptedExtensions: activeProfile?.supportedFormats,
-      sourcePrefix: "assets",
-    });
     if (!drafts.length) {
-      logAction("Asset import cancelled", "WARN");
+      if (origin === "picker") logAction("Asset import cancelled", "WARN");
       return false;
     }
     const existingNames = project.assets.map((asset) => asset.name);
@@ -882,30 +882,74 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       existingNames.push(name);
       return { ...draft, name };
     });
-    const result = editorApplication.addAssets(named);
+    const themeResourceIndexes = themeId
+      ? named.flatMap((draft, index) => isProfileSupportedDraft(draft) ? [index] : [])
+      : [];
+    const result = editorApplication.addAssets(named, themeId ? { themeId, themeResourceIndexes } : undefined);
     if (!result.changed) {
       logAction("Asset import produced no valid asset record", "WARN");
       return false;
     }
     const createdIds = result.createdIds ?? [];
+    const live = documentStore.getCurrent() ?? project;
     setLeftDockTab("assets");
     activatePanel("assets");
-    setAssetCategory("depot");
+    const untyped = named.filter((draft) => !draft.mediaType);
+    const unsupported = named.filter((draft) => !isProfileSupportedDraft(draft));
+    if (unsupported.length) setAssetCategory("unsupported");
+    else setAssetCategory(themeResourceIndexes.length ? "resources" : "depot");
     if (createdIds.length === 1) {
-      const asset = project.assets.find((candidate) => candidate.id === createdIds[0]);
+      const asset = live.assets.find((candidate) => candidate.id === createdIds[0]);
       setSelectedIds([createdIds[0]]);
-      setSelection({ id: createdIds[0], label: named[0].name, kind: "asset", detail: asset?.mediaType ?? named[0].mediaType });
+      setSelection({ id: createdIds[0], label: named[0].name, kind: "asset", detail: asset?.mediaType ?? named[0].mediaType ?? "type not assigned" });
     }
-    // Every picked file is now imported; the ones whose format the profile
-    // cannot classify arrive without a semantic type and are reported, not
-    // dropped (F7c).
-    const unassigned = named.filter((draft) => !draft.mediaType);
-    logAction(`${createdIds.length} asset(s) imported via ${assetImportSource.kind}`, "EVENT");
-    if (unassigned.length) {
-      setAssetCategory("unsupported");
-      logAction(`${unassigned.length} of them have no media type yet (${unassigned.map((draft) => draft.name).join(", ")}) — assign one in Properties, or delete them. They are listed under Unsupported Files.`, "WARN");
+    const via = origin === "drop" ? "drop" : (assetImportSource?.kind ?? "import");
+    logAction(`${createdIds.length} asset(s) imported via ${via}${themeResourceIndexes.length ? ` · ${themeResourceIndexes.length} added to Theme Resources` : ""}`, "EVENT");
+    if (untyped.length) {
+      logAction(`${untyped.length} of them have no media type yet (${untyped.map((draft) => draft.name).join(", ")}) — assign one in Properties, or delete them. They are listed under Unsupported Files.`, "WARN");
+    } else if (unsupported.length) {
+      logAction(`${unsupported.length} of them use a format the DeviceProfile does not declare (${unsupported.map((draft) => draft.name).join(", ")}) — they rest under Unsupported Files until referenced.`, "WARN");
     }
     return true;
+  };
+
+  const importAssets = async (themeId?: string): Promise<boolean> => {
+    if (blockedInPreview("Import Asset")) return false;
+    if (!assetImportSource) {
+      logAction("Asset import is unavailable in this build", "WARN");
+      return false;
+    }
+    const drafts = await assetImportSource.pick({ sourcePrefix: "assets" });
+    return commitImportedDrafts(drafts, "picker", themeId);
+  };
+
+  const handleShellDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event.dataTransfer)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleShellDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!isFileDrag(event.dataTransfer) || event.dataTransfer.files.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest(".canvas-workspace")) {
+      logAction("Canvas is not an import target. Drop files on Project Explorer, Asset Browser or Theme Resources.", "WARN");
+      return;
+    }
+    const treeNodeId = target?.closest("[data-node-id]")?.getAttribute("data-node-id") ?? undefined;
+    const themeFromTree = treeNodeId ? resolveCanonicalNode(project, treeNodeId)?.theme?.id : undefined;
+    const themeFromInspector = target?.closest("[data-theme-resources]")?.getAttribute("data-theme-resources") ?? undefined;
+    const inExplorer = Boolean(target?.closest("[data-panel='explorer']") || target?.closest(".project-tree"));
+    const inAssets = Boolean(target?.closest("[data-panel='assets']") || target?.closest(".asset-list") || target?.closest(".asset-toolbar"));
+    const inThemeResources = Boolean(target?.closest("[data-theme-resources]"));
+    if (!inExplorer && !inAssets && !inThemeResources) {
+      logAction("Drop files on Project Explorer, Asset Browser or Theme Resources. Canvas and other chrome are not import targets.", "WARN");
+      return;
+    }
+    const drafts = draftsFromFiles(Array.from(event.dataTransfer.files), { sourcePrefix: "assets" });
+    commitImportedDrafts(drafts, "drop", themeFromInspector ?? themeFromTree);
   };
 
   const deleteAssetsCommand = (assetIds: readonly string[]): boolean => {
@@ -1816,7 +1860,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     else if (commandId === "scene.delete") changed = deleteNodeCommand(resolvedSelection?.scene?.id ?? activeSceneNode?.id, "Scene");
     else if (commandId === "scene.move-earlier") changed = moveActiveScene(-1);
     else if (commandId === "scene.move-later") changed = moveActiveScene(1);
-    else if (commandId === "asset.import") { setContextMenu(null); void importAssets(); return; }
+    else if (commandId === "asset.import") { setContextMenu(null); void importAssets(resolvedSelection?.theme?.id); return; }
     else if (commandId === "asset.delete") changed = deleteAssetsCommand(selectedAssetIds.length ? selectedAssetIds : resolvedSelection?.asset ? [resolvedSelection.asset.id] : []);
     else if (commandId === "node.rename") { requestRename(); setContextMenu(null); return; }
     else if (commandId === "rotation.add-scene") changed = addScene();
@@ -2153,11 +2197,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const icon = node.kind === "Scene" ? "◈" : node.kind === "Widget" ? "◇" : node.kind === "Rotation / Form" ? "▧" : node.kind === "Project" ? "▣" : node.kind === "Resources" ? "▤" : "▱";
     return (
       <li key={node.id} className={`tree-node ${node.disabled ? "is-disabled" : ""}`}>
-        <div className={`tree-row ${isSelected ? "is-selected" : ""}`} style={{ paddingLeft: `${10 + depth * 15}px` }} onContextMenu={(event) => { event.preventDefault(); selectNode(node); setContextMenu({ x: event.clientX, y: event.clientY, kind: resolveCanonicalNode(project, node.id)?.kind ?? "canvas" }); }}>
+        <div className={`tree-row ${isSelected ? "is-selected" : ""}`} data-node-id={node.id} style={{ paddingLeft: `${10 + depth * 15}px` }} onContextMenu={(event) => { event.preventDefault(); selectNode(node); setContextMenu({ x: event.clientX, y: event.clientY, kind: resolveCanonicalNode(project, node.id)?.kind ?? "canvas" }); }}>
           {node.children && node.children.length > 0 ? (
             <button type="button" className="tree-expander" aria-label={`${expanded ? "Collapse" : "Expand"} ${node.label}`} aria-expanded={expanded} onClick={() => toggleExpanded(node.id)}>{expanded ? "▾" : "▸"}</button>
           ) : <span className="tree-expander-placeholder" />}
-          <button type="button" className="tree-label" aria-current={isSelected ? "true" : undefined} onClick={(event) => selectNode(node, event.shiftKey || isCanonicalModifier(event))} disabled={node.disabled}>
+          <button type="button" className="tree-label" title={node.detail ? `${node.label} · ${node.detail}` : node.label} aria-current={isSelected ? "true" : undefined} onClick={(event) => selectNode(node, event.shiftKey || isCanonicalModifier(event))} disabled={node.disabled}>
             <span className="tree-icon">{icon}</span>
             <span className="tree-copy"><strong>{node.label}</strong>{node.detail && <small>{node.detail}</small>}</span>
           </button>
@@ -3590,7 +3634,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const renderThemeResourcesSection = (theme: ThemeProject) => (
-    <section className="property-section">
+    <section className="property-section" data-theme-resources={theme.id}>
       <div className="property-section-title">Theme Resources</div>
       <PropertyRow label="Rotations" value={String(theme.rotations.length)} />
       <PropertyRow label="Floor Mappings" value={String(theme.floorMappings?.length ?? 0)} />
@@ -3808,7 +3852,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     </>
   );
 
-  const renderPanelContainer = (panel: PanelId, content: ReactNode) => panelModes[panel] === "closed" ? null : panelModes[panel] === "floating" ? <div className={`floating-tool-panel floating-${panel}`} data-panel={panel}>{content}</div> : <aside className="tool-panel">{content}</aside>;
+  const renderPanelContainer = (panel: PanelId, content: ReactNode) => panelModes[panel] === "closed" ? null : panelModes[panel] === "floating" ? <div className={`floating-tool-panel floating-${panel}`} data-panel={panel}>{content}</div> : <aside className="tool-panel" data-panel={panel}>{content}</aside>;
 
   const settingsContent: Record<SettingsCategory, ReactNode> = {
     General: <><h3>General</h3><p>Application-level behavior stays separate from Project, Theme and Runtime settings.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.confirmDestructive} onChange={(event) => setSettingsDraft((current) => ({ ...current, confirmDestructive: event.target.checked }))} /> Confirm destructive commands</label></>,
@@ -3824,7 +3868,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   return (
-    <div className="app-shell" onClick={() => menuOpen && setMenuOpen(null)}>
+    <div className="app-shell" onClick={() => menuOpen && setMenuOpen(null)} onDragOver={handleShellDragOver} onDrop={handleShellDrop}>
       <header className="application-bar">
         <div className="brand-block"><span className="brand-mark">TD</span><div><strong>Template Designer</strong></div></div>
         <nav className="menu-bar" aria-label="Application menu">{menuKeys.map((menu) => <div key={menu} className="menu-item-wrap"><button type="button" className={`menu-button ${menuOpen === menu ? "is-open" : ""}`} aria-haspopup="menu" aria-expanded={menuOpen === menu} onClick={(event) => { event.stopPropagation(); setMenuOpen((current) => current === menu ? null : menu); }}>{menu}</button>{menuOpen === menu && <div className="menu-popover" onClick={(event) => event.stopPropagation()}>{menuItems[menu].map((item) => <button key={item.label} type="button" className="menu-command" disabled={item.disabled} title={item.title} onClick={item.onClick}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</button>)}</div>}</div>)}</nav>

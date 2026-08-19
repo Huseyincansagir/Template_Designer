@@ -38,6 +38,16 @@ describe("UI Phase 2 foundations", () => {
     expect(defaultPanelLayoutForViewport(1920, 1080).console).toBe("docked");
   });
 
+  it("imports OS files on Explorer, Assets and Theme Resources and refuses canvas drop", () => {
+    const app = readFileSync(resolve("src/App/App.tsx"), "utf8");
+    expect(app).toContain("handleShellDrop");
+    expect(app).toContain("Canvas is not an import target");
+    expect(app).toContain("data-theme-resources");
+    expect(app).toContain("data-node-id");
+    expect(app).not.toMatch(/acceptedExtensions:\s*activeProfile/);
+    expect(app).toContain("title={node.detail");
+  });
+
   it("assigns the flexible row of the canvas workspace to the device stage", () => {
     const css = readFileSync(resolve(__dirname, "../src/App/app.css"), "utf8");
     expect(css).toMatch(/\.canvas-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);

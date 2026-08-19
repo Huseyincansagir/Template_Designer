@@ -7,7 +7,7 @@ import { selectActiveScene } from "../src/Core/runtime";
 import { validateProject } from "../src/Core/validation";
 import { compactDeviceProfile, createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
 import { LocalStorageProjectStorage, PROJECT_STORAGE_KEY } from "../src/Infrastructure/project-storage";
-import { displayNameOf, extensionOf, inferMediaType, isTauriRuntime, toAssetDraft } from "../src/Infrastructure/asset-import";
+import { displayNameOf, draftsFromFiles, extensionOf, inferMediaType, isFileDrag, isTauriRuntime, toAssetDraft } from "../src/Infrastructure/asset-import";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../src/Infrastructure/project-file";
 import { describeSelectionRefusal } from "../src/App/editor-commands";
 import { createStableId } from "../src/Domain/identity";
@@ -105,6 +105,24 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
     expect(current(store).assets).toHaveLength(0);
     expect(store.redo()).toBe(true);
     expect(current(store).assets).toHaveLength(2);
+  });
+
+  it("attaches supported drop imports to Theme Resources in the same command", () => {
+    const { project, themeId } = fixture();
+    const { store, editor } = setup(project);
+    const result = editor.addAssets([
+      { name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" },
+      { name: "Notes", sourcePath: "assets/notes.txt" },
+    ], { themeId, themeResourceIndexes: [0] });
+    expect(result.changed).toBe(true);
+    expect(result.createdIds).toHaveLength(2);
+    const theme = current(store).themeProjectGroups[0].themeProjects[0];
+    expect(theme.resources).toEqual([result.createdIds?.[0]]);
+    expect(current(store).assets.map((asset) => asset.name)).toEqual(["Lobby", "Notes"]);
+    expect(store.getSnapshot().history.undoCount).toBe(1);
+    expect(store.undo()).toBe(true);
+    expect(current(store).assets).toHaveLength(0);
+    expect(current(store).themeProjectGroups[0].themeProjects[0].resources).toEqual([]);
   });
 
   it("edits asset name, path and media type through the canonical pipeline", () => {
@@ -441,6 +459,18 @@ describe("Asset import inference (browser transport)", () => {
     expect(unclassified.mediaType).toBeUndefined();
     expect(unclassified.metadata?.typeInferred).toBe(false);
     expect(relative?.metadata?.typeInferred).toBe(true);
+  });
+
+  it("keeps unclassified files when converting a dropped file list", () => {
+    const drafts = draftsFromFiles([
+      { name: "lobby.png", type: "image/png" },
+      { name: "readme.txt", type: "text/plain" },
+    ], { sourcePrefix: "assets" });
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0]?.mediaType).toBe("image");
+    expect(drafts[1]?.mediaType).toBeUndefined();
+    expect(isFileDrag({ types: ["Files"] })).toBe(true);
+    expect(isFileDrag({ types: ["text/plain"] })).toBe(false);
   });
 
   it("detects the Tauri shell so import can record real paths", () => {

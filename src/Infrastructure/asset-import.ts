@@ -74,6 +74,15 @@ type PickedFileLike = {
  * Converts a picked file into a logical asset record. Exported so the same
  * rules are testable without a DOM and reused by every import source.
  */
+export function draftsFromFiles(files: ReadonlyArray<PickedFileLike>, options: AssetPickOptions = {}): readonly AssetDraft[] {
+  return files.map((file) => toAssetDraft(file, options));
+}
+
+export function isFileDrag(dataTransfer: { types?: Iterable<string> } | null | undefined): boolean {
+  if (!dataTransfer?.types) return false;
+  return Array.from(dataTransfer.types).includes("Files");
+}
+
 export function toAssetDraft(file: PickedFileLike, options: AssetPickOptions = {}): AssetDraft {
   // A file whose media type cannot be inferred is still imported, with no type
   // assigned. Silently dropping it lost the file and contradicted
@@ -124,9 +133,13 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
       }
       input.style.display = "none";
       let settled = false;
+      const onWindowFocus = () => {
+        window.setTimeout(() => finish([]), 400);
+      };
       const finish = (drafts: readonly AssetDraft[]) => {
         if (settled) return;
         settled = true;
+        window.removeEventListener("focus", onWindowFocus);
         input.remove();
         resolve(drafts);
       };
@@ -135,8 +148,9 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
         finish(files.map((file) => toAssetDraft(file, options)));
       });
       // A cancelled dialog fires `cancel` in modern browsers; the focus
-      // fallback keeps the promise from leaking in older ones.
+      // fallback keeps the promise from leaking in older engines that omit it.
       input.addEventListener("cancel", () => finish([]));
+      window.addEventListener("focus", onWindowFocus);
       this.documentRef.body.appendChild(input);
       input.click();
     });
