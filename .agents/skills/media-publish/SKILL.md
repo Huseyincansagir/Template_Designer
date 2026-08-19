@@ -10,8 +10,8 @@ Use this skill for deployment-package construction and the real V1 Windows SD-ca
 Editable Project
    -> Template Compiler / Package Builder
    -> Deployment Package
-   -> Deployment Manager
-   -> SDCardTarget
+   -> DeploymentService
+   -> RemovableStorageAdapter
    -> Removable SD Card
 ```
 
@@ -56,7 +56,7 @@ React components call application services. They do not access drives directly.
 ```text
 UI
  -> DeploymentService
- -> SDCardAdapter
+ -> RemovableStorageAdapter (native-tauri | in-memory)
  -> Windows removable storage
 ```
 

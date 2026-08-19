@@ -59,10 +59,11 @@ The same deployment package must later be usable by a Wi-Fi target without chang
 Deployment is transport-independent at the application layer.
 
 ```text
-DeploymentManager
-  -> DeploymentTarget
-       -> SDCardTarget        [V1 active]
-       -> WiFiDeviceTarget    [V2 reserved]
+UI
+  -> DeploymentService
+       -> RemovableStorageAdapter   [V1: Tauri / in-memory]
+            -> physical SD card
+       -> WiFiDeviceTarget          [V2 reserved]
 ```
 
 A separate future `DeviceTransport` abstraction may model communication with an ESP32-C6. It must not be conflated with the SD-card target.

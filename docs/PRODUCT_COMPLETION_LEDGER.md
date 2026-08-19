@@ -257,7 +257,7 @@ Neither could be settled by running anything, because `cargo` is absent. Both we
 
 | Item | Why |
 |------|-----|
-| SD-card write / verify / safe-eject | Needs the Tauri fs/dialog plugins, a Rust toolchain (`cargo` is not installed) and real hardware. `SDCardTarget` remains the isolated adapter seam. Never simulated. |
+| SD-card write / verify / safe-eject | Needs the Tauri fs/dialog plugins, a Rust toolchain (`cargo` is not installed) and real hardware. The adapter is `RemovableStorageAdapter` (`native-tauri` / `in-memory`). Never simulated. |
 | Binary media in the deployment package (`D5-23`) | The V1 package deliberately carries logical `*.asset.json` records with `binary: false`; materialization belongs to the deployment adapter (`AGENTS.md` package boundary). |
 | `bundle.icon` | Needs icon tooling. |
 | Floor Mapping **editor** | `FloorMapping` is validated and exported, and the digit inspector selects among existing mappings, but no authoring UI exists. `TEMPLATE_SCHEMA_V1` defines no such structure, so the domain shape is the only definition (D6). |
@@ -291,7 +291,7 @@ Independent live measurement on 2026-08-19 against the running Vite app at `127.
 | FC-11 | P2 | BUG | A failed SD write must not clobber a previous package | Rust wrote in place | No staging directory | Write to `template-designer.next`, then rename over the live root. | `sd_card.rs` `write_package_blocking` | Uncompiled (`cargo` absent) | **CODE COMPLETE, TAURI UNVERIFIED** |
 | FC-12 | P2 | UX | Device frame usable at 1280×720 | Frame 231×411 with console open | Console 120px + wide panels | Auto-collapse console and narrow docks below 1360×800. Live: stage 810×547, frame 299×531. | `defaultPanelLayoutForViewport` | `tests/ui-phase2.test.ts`; live `docs/visual-qa/editor-1280-compact.png` | **FIXED** |
 | FC-13 | P1 | STATE BUG | Preview cannot mutate the document | Inspector rename/geometry/profile/z-order/scene priority and Import still wrote | `blockedInPreview` not on every helper | Guard remaining helpers; z-order disabled when locked. | `App.tsx` | `tests/ui-phase2.test.ts` asserts no `writePackage` / `SDCardTarget` | **FIXED** |
-| FC-14 | P1 | STATE BUG | UI must not advertise a stub SD adapter | `createDeploymentService([new SDCardTarget()])` plus dead `writePackage` | Adapter-plane leftover | App uses empty adapter list; real path is `deployToSdCard`. Stub remains for tests of `write()`. | `App.tsx` | ui-phase2 source contract | **FIXED** |
+| FC-14 | P1 | STATE BUG | UI must not advertise a stub SD adapter | `createDeploymentService([new SDCardTarget()])` plus dead `writePackage` | Adapter-plane leftover | Stub file deleted. `DeploymentService` takes only `RemovableStorageAdapter`. Product path is `deployToSdCard`. | `App.tsx`, `deployment-service.ts` | architecture + ui-phase2 source contract | **FIXED** |
 | FC-15 | P2 | UX | One Visual Type control; sequence entries loopable | Duplicate Visual Type; item `loop` display-only | Copy-paste inspector | Removed duplicate; per-entry loop checkbox; Continue Playback. | `App.tsx` | — | **FIXED** |
 
 **Stale ledger note:** Floor Mapping authoring **was** added in PD-04; the "Out of scope" row above is historical.

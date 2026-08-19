@@ -638,7 +638,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // rather than offering a deployment that cannot happen.
   const storageAdapterRef = useRef<Awaited<ReturnType<typeof createRemovableStorageAdapter>>>(undefined);
   const deploymentService = useMemo(
-    () => createDeploymentService([], storageAdapterRef.current),
+    () => createDeploymentService(storageAdapterRef.current),
     [storageAdapterReady],
   );
   const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});

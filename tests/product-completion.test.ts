@@ -12,7 +12,6 @@ import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../sr
 import { describeSelectionRefusal } from "../src/App/editor-commands";
 import { createStableId } from "../src/Domain/identity";
 import { createDeploymentService } from "../src/Core/deployment-service";
-import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import type { Project, Widget } from "../src/Domain/models";
 
 function widget(id: string, widgetType = "media", overrides: Partial<Widget> = {}): Widget {
@@ -688,62 +687,30 @@ describe("Floor mappings command", () => {
   });
 });
 describe("Deployment goes through the application service (F16)", () => {
-  it("builds a verified package and reports its transports", async () => {
+  it("builds a verified package through DeploymentService", async () => {
     const { project, sceneId, themeId } = fixture([widget("w1", "media")]);
     const { store, editor } = setup(project);
     const assetId = editor.addAssets([{ name: "Lobby", sourcePath: "assets/lobby.png", mediaType: "image" }]).createdIds?.[0] as string;
     editor.setThemeResources(themeId, [assetId]);
     editor.setWidgetConfiguration(sceneId, "w1", { mediaType: "image", assetIds: [assetId] });
 
-    const service = createDeploymentService([new SDCardTarget()]);
-    expect(service.targets().map((target) => target.id)).toEqual(["sd-card"]);
+    const service = createDeploymentService();
+    expect(service.storageKind).toBeUndefined();
     const outcome = await service.buildVerified(current(store), foundationDeviceProfile);
     expect(outcome.status).toBe("built");
     if (outcome.status !== "built") return;
-    // Verification is a separate step, and only it may set the flag.
     expect(outcome.package.verified).toBe(true);
     expect(outcome.package.manifest.assetIds).toEqual([assetId]);
   });
 
-  it("reports the transport's own refusal instead of implying success", async () => {
-    const { project } = fixture();
-    const { store } = setup(project);
-    const service = createDeploymentService([new SDCardTarget()]);
-    const built = await service.buildVerified(current(store), foundationDeviceProfile);
-    expect(built.status).toBe("built");
-    if (built.status !== "built") return;
-    const written = await service.write(built.package, "sd-card");
-    // The legacy adapter-plane write() still refuses; the product path is
-    // deployToSdCard + RemovableStorageAdapter, not this stub.
-    expect(written.status).toBe("unavailable");
-    if (written.status !== "unavailable") return;
-    expect(written.code).toBe("SD_CARD_DEPLOYMENT_NOT_IMPLEMENTED");
-    expect(written.reason).toMatch(/reserved for a later phase/i);
-  });
-
-  it("refuses an unverified package and an unknown transport", async () => {
-    const { project } = fixture();
-    const { store } = setup(project);
-    const service = createDeploymentService([new SDCardTarget()]);
-    const built = await service.buildVerified(current(store), foundationDeviceProfile);
-    if (built.status !== "built") throw new Error("expected a built package");
-    const unverified = { ...built.package, verified: false };
-    const refusedUnverified = await service.write(unverified, "sd-card");
-    expect(refusedUnverified).toMatchObject({ status: "unavailable", code: "DEPLOYMENT_PACKAGE_NOT_VERIFIED" });
-    const refusedTarget = await service.write(built.package, "wifi");
-    expect(refusedTarget).toMatchObject({ status: "unavailable", code: "DEPLOYMENT_TARGET_MISMATCH" });
-  });
-
   it("blocks the build on validation errors rather than throwing at the UI", async () => {
-    // A project with no Theme Project fails THEME_PROJECT_REQUIRED.
     const empty: Project = { ...createEmptyProject("Empty"), themeProjectGroups: [] };
-    const service = createDeploymentService([]);
+    const service = createDeploymentService();
     const outcome = await service.buildVerified(empty, foundationDeviceProfile);
     expect(outcome.status).toBe("blocked");
     if (outcome.status !== "blocked") return;
     expect(outcome.reason.length).toBeGreaterThan(0);
-    // With no adapter configured, that is a reportable state, not a crash.
-    expect(service.targets()).toEqual([]);
+    expect(service.storageKind).toBeUndefined();
   });
 });
 describe("Stable identity (C10a)", () => {
@@ -815,7 +782,7 @@ describe("Unassigned resources (F7c)", () => {
     const blocking = issues.find((issue) => issue.code === "REFERENCED_ASSET_TYPE_UNASSIGNED");
     expect(blocking?.severity).toBe("error");
     expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(false);
-    const service = createDeploymentService([]);
+    const service = createDeploymentService();
     expect((await service.buildVerified(current(store), foundationDeviceProfile)).status).toBe("blocked");
 
     // Assigning the type resolves it and the package builds.
@@ -888,7 +855,7 @@ describe("DeviceProfile version drift is detectable (F9b)", () => {
   it("carries the version into the deployment manifest and switches it with the profile", async () => {
     const { project } = fixture();
     const { store, editor } = setup(project);
-    const service = createDeploymentService([]);
+    const service = createDeploymentService();
     const built = await service.buildVerified(current(store), foundationDeviceProfile);
     if (built.status !== "built") throw new Error("expected a built package");
     // The firmware needs the version to detect drift on its side.

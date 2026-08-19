@@ -123,6 +123,19 @@ describe("architecture boundaries", () => {
     expect(app).toMatch(/const beginSelectionResize[\s\S]*viewMode === "preview"\) return/);
   });
 
+  it("does not ship the Phase-0 SDCardTarget stub as a deployment transport", () => {
+    const infrastructure = sourceFiles(join(process.cwd(), "src/Infrastructure"))
+      .map((file) => readFileSync(file, "utf8"))
+      .join("\n");
+    const app = readFileSync(join(process.cwd(), "src/App/App.tsx"), "utf8");
+    const core = readFileSync(join(process.cwd(), "src/Core/deployment-service.ts"), "utf8");
+    expect(infrastructure).not.toMatch(/SD_CARD_DEPLOYMENT_NOT_IMPLEMENTED|reserved for a later phase/);
+    expect(app).not.toMatch(/new SDCardTarget\s*\(/);
+    expect(app).not.toMatch(/\bwritePackage\b/);
+    expect(core).not.toMatch(/\btargets\s*\(/);
+    expect(core).not.toMatch(/async write\(/);
+  });
+
   it("chrome navigation selects the node it shows (L-11)", () => {
     const app = readFileSync(join(process.cwd(), "src/App/App.tsx"), "utf8");
     expect(app).toMatch(/const navigateToTheme[\s\S]*setSelectedIds\(theme \? \[theme\.id\] : \[\]\)[\s\S]*kind: "theme"/);

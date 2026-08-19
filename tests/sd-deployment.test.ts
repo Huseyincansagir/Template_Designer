@@ -5,7 +5,6 @@ import { createEditorApplication } from "../src/Core/editor-application";
 import { createDeploymentService } from "../src/Core/deployment-service";
 import { PACKAGE_ROOT_DIRECTORY, binaryMediaCopiesFromPackage, contentByteLength, isAbsoluteFilesystemPath, preflightDeployment, unsafePackagePathReason } from "../src/Core/removable-storage";
 import { InMemoryRemovableStorage, type InMemoryVolumeSeed } from "../src/Infrastructure/in-memory-removable-storage";
-import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import { createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
 import type { DeploymentPackage, Project } from "../src/Domain/models";
 
@@ -74,7 +73,7 @@ async function builtPackage(storage?: InMemoryRemovableStorage): Promise<{ pkg: 
   const store = new InMemoryDocumentStore(new CommandHistory());
   store.open(sceneProject());
   createEditorApplication(store);
-  const service = createDeploymentService([new SDCardTarget()], storage);
+  const service = createDeploymentService(storage);
   const outcome = await service.buildVerified(store.getCurrent() as Project, foundationDeviceProfile);
   if (outcome.status !== "built") throw new Error(`expected a built package, got ${outcome.reason}`);
   return { pkg: outcome.package, service };

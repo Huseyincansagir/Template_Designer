@@ -1,5 +1,5 @@
 import { buildDeploymentPackage, verifyDeploymentPackage } from "./export";
-import { ApplicationError, type DeploymentTargetAdapter } from "./application";
+import { ApplicationError } from "./application";
 import {
   PACKAGE_ROOT_DIRECTORY,
   binaryMediaCopiesFromPackage,
@@ -13,7 +13,7 @@ import {
   type VolumeProbe,
   type WriteProgress,
 } from "./removable-storage";
-import type { DeploymentPackage, DeploymentTarget, DeviceProfile, Project } from "../Domain/models";
+import type { DeploymentPackage, DeviceProfile, Project } from "../Domain/models";
 
 /**
  * The application service the UI talks to for packaging and deployment.
@@ -29,10 +29,6 @@ import type { DeploymentPackage, DeploymentTarget, DeviceProfile, Project } from
 export type PackageBuildOutcome =
   | { readonly status: "built"; readonly package: DeploymentPackage }
   | { readonly status: "blocked"; readonly reason: string; readonly code: string };
-
-export type DeploymentOutcome =
-  | { readonly status: "written"; readonly target: DeploymentTarget }
-  | { readonly status: "unavailable"; readonly reason: string; readonly code: string };
 
 export type SdDeploymentStage = "preflight" | "write" | "verify" | "complete";
 
@@ -65,15 +61,7 @@ export type SdDeploymentResult =
   };
 
 export class DeploymentService {
-  constructor(
-    private readonly adapters: readonly DeploymentTargetAdapter[] = [],
-    private readonly storage?: RemovableStorageAdapter,
-  ) {}
-
-  /** Transports this build offers. Empty is a legitimate, reportable state. */
-  targets(): readonly DeploymentTarget[] {
-    return this.adapters.map((adapter) => adapter.target);
-  }
+  constructor(private readonly storage?: RemovableStorageAdapter) {}
 
   /** Whether a real removable-storage transport is wired in this build. */
   get storageKind(): RemovableStorageAdapter["kind"] | undefined {
@@ -97,28 +85,6 @@ export class DeploymentService {
     } catch (error) {
       if (error instanceof ApplicationError) return { status: "blocked", reason: error.message, code: error.code };
       return { status: "blocked", reason: error instanceof Error ? error.message : "Package build failed.", code: "EXPORT_FAILED" };
-    }
-  }
-
-  /**
-   * Hands a verified package to a transport adapter. Kept because the adapter
-   * plane is part of the architecture contract; the SD-card path below is the
-   * one a user actually drives.
-   */
-  async write(packageFile: DeploymentPackage, targetId: string): Promise<DeploymentOutcome> {
-    const adapter = this.adapters.find((candidate) => candidate.target.id === targetId);
-    if (!adapter) {
-      return { status: "unavailable", reason: `No deployment transport with id '${targetId}' is configured in this build.`, code: "DEPLOYMENT_TARGET_MISMATCH" };
-    }
-    if (!packageFile.verified) {
-      return { status: "unavailable", reason: "Refusing to write a package that has not been verified.", code: "DEPLOYMENT_PACKAGE_NOT_VERIFIED" };
-    }
-    try {
-      await adapter.deploy(packageFile);
-      return { status: "written", target: adapter.target };
-    } catch (error) {
-      if (error instanceof ApplicationError) return { status: "unavailable", reason: error.message, code: error.code };
-      return { status: "unavailable", reason: error instanceof Error ? error.message : "The deployment transport failed.", code: "DEPLOYMENT_FAILED" };
     }
   }
 
@@ -292,9 +258,6 @@ export class DeploymentService {
   }
 }
 
-export function createDeploymentService(
-  adapters: readonly DeploymentTargetAdapter[],
-  storage?: RemovableStorageAdapter,
-): DeploymentService {
-  return new DeploymentService(adapters, storage);
+export function createDeploymentService(storage?: RemovableStorageAdapter): DeploymentService {
+  return new DeploymentService(storage);
 }
