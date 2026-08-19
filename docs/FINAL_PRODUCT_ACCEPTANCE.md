@@ -10,7 +10,7 @@
 
 A designer can create a project, pick a device, switch R0/R90/R180/R270, add and switch Scenes, create and configure widgets, import assets (browser file picker), bind, preview, simulate, validate, build a verified package, save, undo/redo, and open a dedicated SD deployment dialog.
 
-**Automated:** typecheck PASS · **177/177** tests PASS · production build PASS.
+**Automated:** typecheck PASS · **182/182** tests PASS · production build PASS.
 
 **Live (Playwright Chromium, clean localStorage, 0 console errors):**
 
@@ -18,7 +18,7 @@ A designer can create a project, pick a device, switch R0/R90/R180/R270, add and
 |----------|--------------|--------------|
 | 1920×1080 | 1326×821 | 453×805 |
 | 1440×900 | 846×607 | 332×591 |
-| 1280×720 | 686×427 | 231×411 |
+| 1280×720 (console collapsed) | 810×547 | 299×531 |
 
 Before this pass the same 1920×1080 stage was **32px**. Screenshots: `docs/visual-qa/`.
 
@@ -80,13 +80,13 @@ Canonical domain, mutation pipeline, persistence, runtime, and Tauri boundary we
 | Empty/error/disabled states | VERIFIED | VERIFIED | VERIFIED |
 | Console errors | 0 | 0 | 0 |
 
-Remaining visually weak: default widgets still start near the canvas centre (cascade improved); asset list has type glyphs rather than thumbnails (bytes not held in browser transport); 1280 device is small because side panels stay docked.
+Remaining visually weak: default widgets still start near the canvas centre (cascade improved); asset list has type glyphs rather than thumbnails (bytes not held in browser transport); Explorer labels truncate at 1280.
 
 ## Regression Tests
 
 ```
 npm run typecheck   PASS
-npm test            PASS  177/177
+npm test            PASS  182/182
 npm run build       PASS
 npm run tauri:check BLOCKED  cargo not installed
 ```
@@ -99,12 +99,12 @@ New coverage: canvas `1fr` contract; four-rotation invariant; missing-angle repa
 |----|-----|--------|
 | Native SD write on a physical card | P1 env | HARDWARE UNVERIFIED |
 | Tauri shell / `cargo check` | P1 env | UNVERIFIED |
-| Binary media materialisation on the card | P2 | DEFERRED (logical `*.asset.json`; `sd_copy_file` unused) |
-| Native file dialogs | P2 | DEFERRED (interfaces exist; browser input is wired) |
+| Binary media copy (`sd_copy_file`) | P1 | CODE COMPLETE — copies when `resolvedPath` is an absolute file; browser imports stay logical-only |
+| Native import path recording | P2 | CODE COMPLETE — Tauri webview uses OS picker + `File.path`; unverified without Tauri |
+| Atomic staging (`template-designer.next`) | P2 | CODE COMPLETE in Rust; `cargo` absent so uncompiled |
 | Audio channel authoring | — | BLOCKED ON PRODUCT (PD-01) |
 | Asset thumbnails | P3 | DEFERRED |
 | Explorer search at 12+ scenes | P3 | DEFERRED |
-| Atomic staging directory on the card | P2 | CODE incomplete in Rust; cargo blocked |
 
 ## Recommended Next Steps
 
@@ -122,7 +122,7 @@ New coverage: canvas `1fr` contract; four-rotation invariant; missing-angle repa
 5. **Tauri actually verified?** **UNVERIFIED**.
 6. **UI change:** compact CAD shell, canvas-first, fused navigation, Deploy dialog.
 7. **Still visually weak:** 1280 device size; widget default size vs display; no thumbnails.
-8. **Canvas dominates?** **Yes** at 1440 and 1920. At 1280, usable but tight.
+8. **Canvas dominates?** **Yes** at 1440 and 1920. At 1280, console auto-collapses; frame 299×531 (was 231×411).
 9. **Toolbar compact?** **Yes** (32px app bar, 33px editor chrome).
 10. **Scene navigation efficient?** **Yes** — always-visible tab strip.
 11. **Assets discoverable?** **Yes** — Assets dock + Import; no thumbnails.

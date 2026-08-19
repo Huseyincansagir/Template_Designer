@@ -284,4 +284,11 @@ Independent live measurement on 2026-08-19 against the running Vite app at `127.
 
 **Still CODE COMPLETE, HARDWARE/TAURI UNVERIFIED:** SD write/flush/verify/eject (`cargo` absent; no physical card). Binary media copy via `sd_copy_file` is implemented in Rust and unused from TS because browser import has no real path — recorded, not faked.
 
+| ID | Sev | Class | Expected | Observed | Root cause | Decision | Fix | Test | Status |
+|----|-----|-------|----------|----------|------------|----------|-----|------|--------|
+| FC-09 | P1 | INCOMPLETE WORKFLOW | Resolved media files land on the card | `sd_copy_file` existed in Rust with no TS caller | Adapter had no `copyFile`; deploy stopped at JSON | After JSON verify, copy assets with `metadata.resolvedPath` and an absolute source. Unresolved assets stay as logical records (honest browser outcome). | `RemovableStorageAdapter.copyFile`, `binaryMediaCopiesFromPackage`, Tauri `sd_copy_file` camelCase, in-memory `BINARY:` records | `tests/sd-deployment.test.ts`, `tests/tauri-boundary.test.ts` | **CODE COMPLETE, HARDWARE UNVERIFIED** |
+| FC-10 | P2 | INCOMPLETE WORKFLOW | Native import records a real path | `createAssetImportSource` always used the browser source | Tauri factory never branched | In the Tauri webview the OS picker is used and `File.path` is recorded as `resolvedPath`. | `isTauriRuntime` + `NativeWebviewAssetImportSource` | `isTauriRuntime` unit test | **CODE COMPLETE, TAURI UNVERIFIED** |
+| FC-11 | P2 | BUG | A failed SD write must not clobber a previous package | Rust wrote in place | No staging directory | Write to `template-designer.next`, then rename over the live root. | `sd_card.rs` `write_package_blocking` | Uncompiled (`cargo` absent) | **CODE COMPLETE, TAURI UNVERIFIED** |
+| FC-12 | P2 | UX | Device frame usable at 1280×720 | Frame 231×411 with console open | Console 120px + wide panels | Auto-collapse console and narrow docks below 1360×800. Live: stage 810×547, frame 299×531. | `defaultPanelLayoutForViewport` | `tests/ui-phase2.test.ts`; live `docs/visual-qa/editor-1280-compact.png` | **FIXED** |
+
 **Stale ledger note:** Floor Mapping authoring **was** added in PD-04; the "Out of scope" row above is historical.
