@@ -3670,7 +3670,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const renderDeployment = () => {
     const nativeTransport = deploymentService.storageKind === "native-tauri";
     const selected = sdVolumes.find((volume) => volume.id === sdSelectedId);
-    const probeless = selected ? deploymentService.preflight(lastPackage ?? { files: [], verified: false } as unknown as DeploymentPackage, selected, undefined) : undefined;
+    const probeless = selected && lastPackage ? deploymentService.preflight(lastPackage, selected, undefined) : undefined;
     const formatBytes = (bytes: number | undefined) => bytes === undefined ? "unknown" : bytes >= 1_073_741_824 ? `${(bytes / 1_073_741_824).toFixed(1)} GB` : bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${bytes} B`;
     return (
       <div className="deployment-panel">
