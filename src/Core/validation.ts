@@ -5,6 +5,7 @@ import type {
   Condition,
   DeviceProfile,
   FloorMapping,
+  MediaSlideItem,
   Project,
   RuntimeStateDefinition,
   RuntimeSettingDefinition,
@@ -424,7 +425,12 @@ function collectReferencedAssetIds(project: Project, profile?: DeviceProfile): R
             (Array.isArray(widget.assetIds) ? (widget.assetIds as readonly string[]) : []).forEach((id) => referenced.add(id));
             if (widget.audioAssetId) referenced.add(widget.audioAssetId);
             if (widget.mediaSlide) {
-              referenced.add(widget.mediaSlide.assetId);
+              // A Media Slide is an ordered sequence (PD-02). The legacy
+              // `mediaSlide.assetId` field no longer exists; walking only that
+              // leftover would treat sequence-only assets as unused and let an
+              // unsupported-format entry ship as a warning.
+              const items = Array.isArray(widget.mediaSlide.items) ? widget.mediaSlide.items : [];
+              items.forEach((item: MediaSlideItem) => referenced.add(item.assetId));
               if (widget.mediaSlide.audioAssetId) referenced.add(widget.mediaSlide.audioAssetId);
             }
             (Array.isArray(widget.bindings) ? (widget.bindings as readonly Binding[]) : []).forEach((binding) => { if (binding.contentId) referenced.add(binding.contentId); });
