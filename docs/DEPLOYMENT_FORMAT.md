@@ -1,5 +1,7 @@
 # Deployment Package Format
 
+> **STM32 cihaz paketi:** bu belgedeki `theme.pkg` örneği **mantıksal** pakettir. MyApplication_6 `template-designer/*.json` okumaz. Cihaz ağacı ve uyumluluk: [`stm32-contract/`](stm32-contract/).
+
 ## Purpose
 
 The deployment package is the boundary between editable project data and physical delivery. It is transport-independent.

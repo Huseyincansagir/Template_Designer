@@ -16,6 +16,7 @@ Uygulama offline-first çalışır. UI React + TypeScript + CSS tabanlıdır; ge
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — architecture boundaries
 - [`docs/PROJECT_PLAN.md`](./docs/PROJECT_PLAN.md) — implementation phases
 - [`docs/DEPLOYMENT_FORMAT.md`](./docs/DEPLOYMENT_FORMAT.md) — package/deployment boundary
+- [`docs/stm32-contract/`](./docs/stm32-contract/) — MyApplication_6 STM32 / SD kart runtime sözleşmesi (cihaz `0:/tN/tema.cfg`, V2 JSON değil)
 - [`docs/DEVICE_PROTOCOL.md`](./docs/DEVICE_PROTOCOL.md) — future device protocol boundary
 - [`AGENTS.md`](./AGENTS.md) — coding-agent contract
 
