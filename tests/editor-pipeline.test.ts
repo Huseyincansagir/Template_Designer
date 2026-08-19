@@ -98,6 +98,32 @@ describe("canonical editor mutation pipeline remediation", () => {
     expect(current(store).themeProjectGroups[0].themeProjects).toHaveLength(1);
   });
 
+  it("infers the four rotations from a sibling R0 when display is omitted", () => {
+    const { project, groupId } = hierarchyProject();
+    const { store, editor } = setup(project);
+    expect(project.themeProjectGroups[0].themeProjects[0].rotations.map((rotation) => rotation.angle)).toEqual([0]);
+    expect(editor.addThemeProject(groupId, "Inferred").changed).toBe(true);
+    const added = current(store).themeProjectGroups[0].themeProjects.find((theme) => theme.name === "Inferred");
+    expect(added?.rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
+    expect(added?.rotations[0]).toMatchObject({ width: 720, height: 1280 });
+    expect(added?.rotations[1]).toMatchObject({ width: 1280, height: 720 });
+    expect(added?.rotations[2]).toMatchObject({ width: 720, height: 1280 });
+    expect(added?.rotations[3]).toMatchObject({ width: 1280, height: 720 });
+    expect(added?.rotations.every((rotation) => rotation.scenes.length === 0)).toBe(true);
+  });
+
+  it("refuses Add Theme Project when no display and no sibling R0 exist", () => {
+    const empty = createEmptyProject();
+    const project: Project = {
+      ...empty,
+      themeProjectGroups: [{ ...empty.themeProjectGroups[0], themeProjects: [] }],
+    };
+    const { store, editor } = setup(project);
+    expect(editor.addThemeProject(project.themeProjectGroups[0].id, "Dead").changed).toBe(false);
+    expect(current(store).themeProjectGroups[0].themeProjects).toEqual([]);
+    expect(store.getSnapshot().history.undoCount).toBe(0);
+  });
+
   it("refuses to delete or duplicate a Rotation so the canonical four always survive", () => {
     const { project, rotationId } = hierarchyProject();
     const { store, editor } = setup(project);

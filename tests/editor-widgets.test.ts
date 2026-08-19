@@ -98,6 +98,83 @@ describe("Widget creation (C-01 remediation)", () => {
   });
 });
 
+/**
+ * UI Add Widget placement (S4-01). Core stores the geometry it is given; the
+ * cascade that chooses that geometry lives inline in App.tsx so it is
+ * specified here rather than extracted. Each new widget steps by
+ * width+grid / height+grid from the scene-centre default, wrapping after 8.
+ */
+function cascadedAddWidgetGeometry(
+  existingWidgetCount: number,
+  rotation: { width: number; height: number },
+  snapGridSize = 10,
+  size = { width: 120, height: 80 },
+) {
+  const cascade = existingWidgetCount % 8;
+  const stepX = size.width + snapGridSize;
+  const stepY = size.height + snapGridSize;
+  const x = Math.max(0, Math.round((((rotation.width - size.width) / 2) + cascade * stepX) / snapGridSize) * snapGridSize);
+  const y = Math.max(0, Math.round((((rotation.height - size.height) / 2) + cascade * stepY) / snapGridSize) * snapGridSize);
+  return { x, y, width: size.width, height: size.height };
+}
+
+describe("Widget add cascade (S4-01)", () => {
+  const rotation = { width: 720, height: 1280 };
+  const grid = 10;
+  const size = { width: 120, height: 80 };
+
+  it("places the first widget at the documented scene-centre default", () => {
+    const first = cascadedAddWidgetGeometry(0, rotation, grid, size);
+    expect(first).toEqual({ x: 300, y: 600, width: 120, height: 80 });
+    expect(first.x).toBe(((rotation.width - size.width) / 2));
+    expect(first.y).toBe(((rotation.height - size.height) / 2));
+  });
+
+  it("places the first widget at the origin when the scene-centre default is origin", () => {
+    expect(cascadedAddWidgetGeometry(0, { width: 120, height: 80 }, grid, size)).toEqual({
+      x: 0,
+      y: 0,
+      width: 120,
+      height: 80,
+    });
+  });
+
+  it("offsets the second widget by width+grid on X and height+grid on Y", () => {
+    const first = cascadedAddWidgetGeometry(0, rotation, grid, size);
+    const second = cascadedAddWidgetGeometry(1, rotation, grid, size);
+    expect(second.x).toBe(first.x + size.width + grid);
+    expect(second.y).toBe(first.y + size.height + grid);
+    expect(second).toEqual({ x: 430, y: 690, width: 120, height: 80 });
+  });
+
+  it("does not stack identically on the previous widget", () => {
+    const first = cascadedAddWidgetGeometry(0, rotation, grid, size);
+    const second = cascadedAddWidgetGeometry(1, rotation, grid, size);
+    expect(second).not.toEqual(first);
+    expect({ x: second.x, y: second.y }).not.toEqual({ x: first.x, y: first.y });
+  });
+
+  it("wraps the cascade after eight widgets instead of stacking every add at one origin", () => {
+    const positions = Array.from({ length: 8 }, (_, index) => cascadedAddWidgetGeometry(index, rotation, grid, size));
+    const unique = new Set(positions.map((geometry) => `${geometry.x},${geometry.y}`));
+    expect(unique.size).toBe(8);
+    expect(cascadedAddWidgetGeometry(8, rotation, grid, size)).toEqual(positions[0]);
+  });
+
+  it("persists cascaded geometries through addWidget so successive widgets stay selectable", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    const first = cascadedAddWidgetGeometry(1, rotation, grid, size);
+    const second = cascadedAddWidgetGeometry(2, rotation, grid, size);
+    expect(editor.addWidget(sceneId, "text", first).changed).toBe(true);
+    expect(editor.addWidget(sceneId, "digit", second).changed).toBe(true);
+    const widgets = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets ?? [];
+    expect(widgets[1]?.geometry).toEqual(first);
+    expect(widgets[2]?.geometry).toEqual(second);
+    expect(widgets[2]?.geometry).not.toEqual(widgets[1]?.geometry);
+  });
+});
+
 describe("Duplicate integrity (INT-56 remediation)", () => {
   it("re-parents bindings to the copy and returns stable copy ids", () => {
     const { project, sceneId } = projectWithScene();

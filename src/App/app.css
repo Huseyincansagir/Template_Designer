@@ -142,9 +142,11 @@ button:disabled.btn-primary, button:disabled.toolbar-button.primary, button:disa
 
 .studio-tool, .mode-button { padding: 0 var(--space-2); border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: var(--text-sm); }
 .studio-tool span { margin-left: var(--space-1); font-size: var(--text-xs); }
-.studio-tool:hover, .mode-button:hover { border-color: var(--border); background: var(--accent-muted); color: var(--accent-hover); }
-.studio-tool.active, .mode-button.active { border-color: var(--accent); background: var(--accent-muted); color: var(--accent-hover); font-weight: 700; }
-.studio-tool:active, .mode-button:active { background: #c9ecee; }
+.studio-tool:hover:not(:disabled), .mode-button:hover:not(:disabled) { border-color: var(--border); background: var(--surface-hover); color: var(--text-primary); }
+.studio-tool.active, .mode-button.active,
+.studio-tool.active:hover:not(:disabled), .mode-button.active:hover:not(:disabled),
+.studio-tool.active:active:not(:disabled), .mode-button.active:active:not(:disabled) { border-color: var(--accent); background: var(--accent-muted); color: var(--accent-hover); font-weight: 700; }
+.studio-tool:active:not(:disabled), .mode-button:active:not(:disabled) { background: var(--surface-hover); }
 
 .small-action, .context-action, .zoom-button, .settings-button-secondary, .settings-button-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
@@ -275,12 +277,16 @@ input[type="checkbox"] { accent-color: var(--accent); }
    A previous 3-row template with a 4th navigator child assigned 1fr to
    navigation and squeezed the canvas to 32px (P0 live measurement). */
 .canvas-workspace { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; background: var(--canvas-bg); }
-.editor-chrome { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; min-height: 32px; padding: 2px 8px; border-bottom: 1px solid var(--border-strong); background: var(--surface); }
+/* Tools row + exclusive scene strip only. Locked heights so chrome cannot wrap
+   into a third band at 1280 and steal the canvas 1fr row. */
+.editor-chrome { display: grid; grid-template-rows: 32px 28px; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: hidden; border-bottom: 1px solid var(--border-strong); background: var(--surface); }
+.editor-chrome-row { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 8px; overflow-x: auto; overflow-y: hidden; }
+.editor-chrome-row.is-scenes { height: 28px; min-height: 0; border-top: 1px solid var(--border); }
 .studio-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 10px; border-bottom: 1px solid var(--border-strong); background: var(--surface-well); }
-.tool-group { display: flex; align-items: center; gap: var(--space-1); flex: 0 0 auto; }
+.tool-group { display: flex; align-items: center; gap: var(--space-1); flex: 0 1 auto; min-width: 0; }
 .tool-divider { width: 1px; height: 18px; margin: 0 4px; flex: 0 0 auto; background: var(--border); }
 .zoom-button { width: var(--control-height); padding-inline: 0; font-size: 15px; line-height: 16px; }
-.studio-toolbar .zoom-button { height: var(--control-height); }
+.studio-toolbar .zoom-button, .editor-chrome .zoom-button { height: var(--control-height); }
 .zoom-readout { display: inline-flex; align-items: center; height: var(--control-height); min-width: 42px; color: var(--text-secondary); font-size: var(--text-xs); text-align: center; }
 .canvas-stage { position: relative; display: grid; place-items: center; min-height: 0; overflow: auto; background-color: var(--canvas-bg); }
 .canvas-stage.pan-mode { cursor: grab; }
@@ -296,7 +302,9 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .canvas-empty-state strong { color: #bdd0d0; font-size: var(--text-sm); font-weight: 650; }
 .canvas-empty-state span:last-child { color: #7c979c; font-size: var(--micro-label); line-height: 1.45; }
 .empty-glyph { color: var(--accent-bright); font-size: 26px; line-height: 1; }
-.canvas-overlay-note { position: absolute; right: 14px; bottom: 10px; color: #4f6469; font-size: var(--micro-label); }
+/* Overlay caption competes with the device frame. Hidden until JS removes the
+   node; display:none does not change canvas-stage layout. */
+.canvas-overlay-note { display: none; pointer-events: none; }
 .canvas-context-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 26px; padding: 0 8px; border-top: 1px solid var(--border-strong); background: var(--surface); }
 .context-selection { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--text-secondary); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
 .selection-dot { background: var(--accent); }
@@ -310,6 +318,7 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .property-section { padding: 8px; border-bottom: 1px solid var(--border); }
 .property-section-title { margin-bottom: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs); font-weight: 800; letter-spacing: var(--kicker-tracking); text-transform: uppercase; }
 .property-row { display: grid; grid-template-columns: 1fr minmax(95px, 1.25fr); gap: var(--space-2); align-items: center; min-height: var(--row-height); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: var(--text-xs); }
+.property-row:hover { background: var(--surface-hover); }
 .property-row:last-child { border-bottom: 0; }
 .property-row strong { overflow: hidden; color: var(--text-primary); font-size: var(--text-xs); font-weight: 600; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .property-row .property-muted { color: var(--text-muted); font-weight: 500; }
@@ -514,6 +523,12 @@ body.relaxed-density .sim-input-row { min-height: 36px; }
 body.relaxed-density .panel-heading { min-height: 36px; }
 
 /* Responsive (§21): resize reflows; the inline 5-track template stays authoritative */
+@media (max-width: 1280px) {
+  /* Icon-only tools + hidden Theme kicker keep the two chrome rows from overflowing. */
+  .studio-tool span { display: none; }
+  .navigator-field > span { display: none; }
+  .editor-chrome-row { gap: 4px; }
+}
 @media (max-width: 1180px) {
   html, body, #root { min-width: 1000px; }
   .brand-block { min-width: 174px; }
@@ -548,8 +563,8 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 .scene-tab { display: inline-flex; flex: 0 0 auto; align-items: baseline; gap: 4px; max-width: 160px; height: var(--control-height-sm); padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-secondary); }
 .scene-tab strong { overflow: hidden; font-size: var(--text-xs); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .scene-tab small { color: var(--text-muted); font-size: 8px; white-space: nowrap; }
-.scene-tab:hover { border-color: var(--accent); color: var(--accent-hover); }
-.scene-tab.active { border-color: var(--accent-hover); background: var(--accent-muted); color: var(--accent-active); }
+.scene-tab:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-hover); color: var(--text-primary); }
+.scene-tab.active, .scene-tab.active:hover:not(:disabled) { border-color: var(--accent-hover); background: var(--accent-muted); color: var(--accent-active); }
 .scene-tab.active small { color: var(--accent-active); }
 .scene-tab.is-scene-disabled strong { text-decoration: line-through; }
 .scene-switcher-actions { display: flex; flex: 0 0 auto; gap: 4px; }

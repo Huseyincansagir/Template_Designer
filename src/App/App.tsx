@@ -1083,13 +1083,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     }
     const width = 120;
     const height = 80;
-    // Cascade the insertion point so repeated Add Widget never stacks
-    // identical boxes on top of each other (S4-01): each new widget steps
-    // by the snap grid from the scene centre, wrapping after 8 steps.
+    // Cascade by widget size + snap grid (S4-01 / UI-D-0017) so successive
+    // adds are independently selectable. Wrap after 8 steps to the origin.
     const cascade = (activeScene?.widgets.length ?? 0) % 8;
-    const cascadeStep = Math.max(snapGridSize * 4, 40);
-    const x = Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * cascadeStep) / snapGridSize) * snapGridSize);
-    const y = Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * cascadeStep) / snapGridSize) * snapGridSize);
+    const stepX = width + snapGridSize;
+    const stepY = height + snapGridSize;
+    const x = Math.max(0, Math.round((((activeRotation.width - width) / 2) + cascade * stepX) / snapGridSize) * snapGridSize);
+    const y = Math.max(0, Math.round((((activeRotation.height - height) / 2) + cascade * stepY) / snapGridSize) * snapGridSize);
     const name = uniqueDefaultName(defaultWidgetName(widgetType), activeScene.widgets.map((widget) => widget.name));
     const result = editorApplication.addWidget(sceneId, widgetType, { x, y, width, height }, name);
     if (!result.changed) {
@@ -3079,69 +3079,72 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const sceneIndex = scenes.findIndex((scene) => scene.id === activeSceneNode?.id);
     return (
       <div className="editor-chrome" aria-label="Editor tools, rotation and scene navigation">
-        <div className="tool-group">
-          <button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button>
-          <button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button>
-          <span className="tool-divider" />
-          <button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button>
-          <button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button>
-        </div>
-        <span className="tool-divider" />
-        <label className="navigator-field">
-          <span>Theme</span>
-          <select aria-label="Active Theme Project" value={activeTheme?.id ?? ""} disabled={allThemes.length === 0} onChange={(event) => navigateToTheme(event.target.value)}>
-            {allThemes.length === 0 ? <option value="">No Theme Project</option> : allThemes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
-          </select>
-        </label>
-        <div className="rotation-switcher" role="group" aria-label="Rotation / Form">
-          {rotations.length === 0 ? <span className="navigator-empty">No rotations</span> : rotations.map((rotation) => (
-            <button
-              key={rotation.id}
-              type="button"
-              className={rotation.angle === activeRotationNode?.angle ? "active" : ""}
-              aria-pressed={rotation.angle === activeRotationNode?.angle}
-              title={`Rotation / Form R${rotation.angle} · ${rotation.width} × ${rotation.height} · ${rotation.scenes.length} scene(s)`}
-              onClick={() => navigateToRotation(rotation.angle)}
-            >R{rotation.angle}</button>
-          ))}
-        </div>
-        <span className="navigator-dims" title="Active Rotation / Form logical size in scene units">{activeRotationNode ? `${activeRotationNode.width} × ${activeRotationNode.height}` : "—"}</span>
-        <span className="tool-divider" />
-        <div className="scene-switcher-row">
-          <div className="scene-switcher" role="tablist" aria-label="Scenes in the active Rotation / Form">
-            {scenes.map((scene) => {
-              const isActive = scene.id === activeSceneNode?.id;
-              const runtimeCandidate = runtime.activeSceneId === scene.id;
-              return (
-                <button
-                  key={scene.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  className={`scene-tab ${isActive ? "active" : ""} ${scene.enabled === false ? "is-scene-disabled" : ""}`}
-                  title={`${scene.name} · priority ${scene.priority} · ${scene.widgets.length} widget(s)${scene.enabled === false ? " · disabled" : ""}${scene.activationConditions.length ? ` · ${scene.activationConditions.length} activation condition(s)` : " · always eligible"}`}
-                  onClick={() => selectNode({ id: scene.id, label: scene.name, kind: "Scene", detail: `Priority ${scene.priority}` })}
-                >
-                  <strong>{scene.name}</strong>
-                  <small>{scene.widgets.length}{scene.enabled === false ? " · off" : ""}{runtimeCandidate ? " · live" : ""}</small>
-                </button>
-              );
-            })}
-            {scenes.length === 0 && <span className="navigator-empty">No Scene</span>}
+        <div className="editor-chrome-row">
+          <div className="tool-group">
+            <button type="button" className={`studio-tool ${canvasTool === "select" ? "active" : ""}`} onClick={() => setCanvasTool("select")} title="Select tool">↖ <span>Select</span></button>
+            <button type="button" className={`studio-tool ${canvasTool === "pan" ? "active" : ""}`} onClick={() => setCanvasTool("pan")} title="Pan tool">✥ <span>Pan</span></button>
+            <span className="tool-divider" />
+            <button type="button" className={`studio-tool ${gridVisible ? "active" : ""}`} onClick={() => setGridVisible((current) => !current)} title="Toggle grid">▦ <span>Grid</span></button>
+            <button type="button" className={`studio-tool ${snapEnabled ? "active" : ""}`} onClick={() => setSnapEnabled((current) => !current)} title="Toggle snap">⌁ <span>Snap</span></button>
           </div>
-          <div className="scene-switcher-actions">
-            <button type="button" className="small-action" disabled={!activeRotationNode} title="Add a Scene to the active Rotation / Form" onClick={addScene}>+ Scene</button>
-            <button type="button" className="small-action" disabled={sceneIndex <= 0} aria-label="Move active Scene earlier" title="Move the active Scene earlier (activation order tie-break)" onClick={() => moveActiveScene(-1)}>↑</button>
-            <button type="button" className="small-action" disabled={sceneIndex < 0 || sceneIndex >= scenes.length - 1} aria-label="Move active Scene later" title="Move the active Scene later" onClick={() => moveActiveScene(1)}>↓</button>
+          <span className="tool-divider" />
+          <label className="navigator-field">
+            <span>Theme</span>
+            <select aria-label="Active Theme Project" value={activeTheme?.id ?? ""} disabled={allThemes.length === 0} onChange={(event) => navigateToTheme(event.target.value)}>
+              {allThemes.length === 0 ? <option value="">No Theme Project</option> : allThemes.map((theme) => <option key={theme.id} value={theme.id}>{theme.name}</option>)}
+            </select>
+          </label>
+          <div className="rotation-switcher" role="group" aria-label="Rotation / Form">
+            {rotations.length === 0 ? <span className="navigator-empty">No rotations</span> : rotations.map((rotation) => (
+              <button
+                key={rotation.id}
+                type="button"
+                className={rotation.angle === activeRotationNode?.angle ? "active" : ""}
+                aria-pressed={rotation.angle === activeRotationNode?.angle}
+                title={`Rotation / Form R${rotation.angle} · ${rotation.width} × ${rotation.height} · ${rotation.scenes.length} scene(s)`}
+                onClick={() => navigateToRotation(rotation.angle)}
+              >R{rotation.angle}</button>
+            ))}
+          </div>
+          <span className="navigator-spacer" />
+          <div className="tool-group">
+            <button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button>
+            <button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button>
+            <span className="tool-divider" />
+            <button type="button" className="zoom-button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 10))}>−</button>
+            <span className="zoom-readout">{zoom}%</span>
+            <button type="button" className="zoom-button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 10))}>+</button>
           </div>
         </div>
-        <div className="tool-group">
-          <button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button>
-          <button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button>
-          <span className="tool-divider" />
-          <button type="button" className="zoom-button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 10))}>−</button>
-          <span className="zoom-readout">{zoom}%</span>
-          <button type="button" className="zoom-button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= MAX_ZOOM} onClick={() => setZoom((current) => Math.min(MAX_ZOOM, current + 10))}>+</button>
+        <div className="editor-chrome-row is-scenes">
+          <div className="scene-switcher-row">
+            <div className="scene-switcher" role="tablist" aria-label="Scenes in the active Rotation / Form">
+              {scenes.map((scene) => {
+                const isActive = scene.id === activeSceneNode?.id;
+                const runtimeCandidate = runtime.activeSceneId === scene.id;
+                return (
+                  <button
+                    key={scene.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`scene-tab ${isActive ? "active" : ""} ${scene.enabled === false ? "is-scene-disabled" : ""}`}
+                    title={`${scene.name} · priority ${scene.priority} · ${scene.widgets.length} widget(s)${scene.enabled === false ? " · disabled" : ""}${scene.activationConditions.length ? ` · ${scene.activationConditions.length} activation condition(s)` : " · always eligible"}`}
+                    onClick={() => selectNode({ id: scene.id, label: scene.name, kind: "Scene", detail: `Priority ${scene.priority}` })}
+                  >
+                    <strong>{scene.name}</strong>
+                    <small>{scene.widgets.length}{scene.enabled === false ? " · off" : ""}{runtimeCandidate ? " · live" : ""}</small>
+                  </button>
+                );
+              })}
+              {scenes.length === 0 && <span className="navigator-empty">No Scene</span>}
+            </div>
+            <div className="scene-switcher-actions">
+              <button type="button" className="small-action" disabled={!activeRotationNode} title="Add a Scene to the active Rotation / Form" onClick={addScene}>+ Scene</button>
+              <button type="button" className="small-action" disabled={sceneIndex <= 0} aria-label="Move active Scene earlier" title="Move the active Scene earlier (activation order tie-break)" onClick={() => moveActiveScene(-1)}>↑</button>
+              <button type="button" className="small-action" disabled={sceneIndex < 0 || sceneIndex >= scenes.length - 1} aria-label="Move active Scene later" title="Move the active Scene later" onClick={() => moveActiveScene(1)}>↓</button>
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -3651,7 +3654,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         <div className="inspector-context"><span className={`context-icon ${selection ? "has-selection" : ""}`}>{selection ? "◇" : "□"}</span><div><strong>{multi ? `${selectedIds.length} items selected` : selection?.label ?? "Document Properties"}</strong><small>{multi ? `${selectedIds.length} objects in the active Scene` : selection ? (selection.detail ?? (selection.nodeType ?? selection.kind)) : "Nothing selected"}</small></div></div>
         {selection && node ? <div className="properties-scroll">
           <section className="property-section"><div className="property-section-title">Identity</div>{multi ? <PropertyRow label="Name" value="*" /> : "name" in node.node ? <div className="property-row property-row-edit"><span>Name</span><DraftTextField scope={draftScope} value={String(node.node.name)} disabled={false} ariaLabel="Display name" focusToken={renameRequestId === selection.id ? renameRequestId : null} onCommit={(value) => renameNodeById(node.node.id, value)} /></div> : <PropertyRow label="Name" value={selection.label} muted />}<PropertyRow label="Type" value={multi ? valueFor((current) => current.widget?.widgetType ?? current.kind) : (widget?.widgetType ?? selection.nodeType ?? selection.kind)} /><PropertyRow label="Stable ID" value={multi ? valueFor((current) => String(current.node.id)) : selection.id} muted /></section>
-          <section className="property-section"><div className="property-section-title">Project</div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
+          {node.kind === "project" && <section className="property-section"><div className="property-section-title">Project</div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>}
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div>{multi ? <PropertyRow label="Widget Type" value={valueFor((current) => current.widget?.widgetType)} /> : <div className="property-row property-row-edit"><span>Widget Type</span><select aria-label="Widget type" value={widget.widgetType} onChange={(event) => changeWidgetType(event.target.value)}>{(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => <option key={widgetType} value={widgetType}>{defaultWidgetName(widgetType)}</option>)}{!(activeProfile?.supportedWidgetTypes ?? []).includes(widget.widgetType) && <option value={widget.widgetType}>{widget.widgetType} (unsupported)</option>}</select></div>}<div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
             <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField scope={`${draftScope}:x`} label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:y`} label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:w`} label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:h`} label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField scope={`${draftScope}:z`} value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={!geometryEditable} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { if (blockedInPreview("Z-order")) return; const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
@@ -3850,7 +3853,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       } else {
         setContextMenu(null);
       }
-    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "The saved DeviceProfile is not registered in this build. Choose a registered profile to continue." : activeScene ? "Scene contains no widgets." : "Add a Scene to this rotation to start placing widgets."}</span>{!activeProfile ? availableProfiles.map((profile) => <button type="button" key={profile.id} className="context-action" onClick={(event) => { event.stopPropagation(); setDeviceProfile(profile.id); }}>Use {profile.name}</button>) : activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : activeRotation && !activeScene ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>{activeRotation ? `R${activeRotation.angle}` : ""}</span><span>{canvasWidth} × {canvasHeight}</span></div></div></div><div className="canvas-overlay-note">{previewActive && runtime.activeScene ? `Preview · ${runtime.activeScene.name} · ${displayedWidgets.length} widget(s)` : activeScene ? `${activeScene.name} · ${canvasWidgets.length} widget(s)` : "No scene selected"}</div></div>
+    }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "The saved DeviceProfile is not registered in this build. Choose a registered profile to continue." : activeScene ? "Scene contains no widgets." : "Add a Scene to this rotation to start placing widgets."}</span>{!activeProfile ? availableProfiles.map((profile) => <button type="button" key={profile.id} className="context-action" onClick={(event) => { event.stopPropagation(); setDeviceProfile(profile.id); }}>Use {profile.name}</button>) : activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addWidget(activeProfile.supportedWidgetTypes[0]); }}>Add Widget</button> : activeRotation && !activeScene ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>{activeRotation ? `R${activeRotation.angle}` : ""}</span><span>{canvasWidth} × {canvasHeight}</span></div></div></div></div>
             <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={!activeScene?.id || !activeProfile?.supportedWidgetTypes.length} onClick={() => addWidget(activeProfile?.supportedWidgetTypes[0] ?? "")} title={activeScene?.id ? `Add a ${defaultWidgetName(activeProfile?.supportedWidgetTypes[0] ?? "widget")} widget to ${activeScene.name} - use the Widget menu for another type` : "Requires an active Scene"}>Add Widget</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={!selectedWidgetIds.length} onClick={deleteSelectionCommand} title={selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
