@@ -47,23 +47,28 @@ function solidPng(width, height, r, g, b) {
   return Buffer.concat([signature, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
-writeFileSync(join(root, "arkaplan.png"), solidPng(720, 1280, 11, 20, 24));
+const digitAssets = Object.fromEntries(Array.from({ length: 10 }, (_, digit) => [
+  `d${digit}`,
+  { id: id("asset"), name: `digit-${digit}`, sourcePath: `assets/digit-${digit}.png`, mediaType: "image" },
+]));
 
 const assets = {
-  bg: { id: id("asset"), name: "Kabin arka plan", sourcePath: "assets/arkaplan.png", mediaType: "image" },
-  video: { id: id("asset"), name: "Kabin video", sourcePath: "assets/kabin-loop.mp4", mediaType: "video" },
+  bg: { id: id("asset"), name: "Kabin arka plan", sourcePath: "assets/arkaplan.jpg", mediaType: "image" },
+  video: { id: id("asset"), name: "Kabin video", sourcePath: "assets/kapi.mp4", mediaType: "video" },
   fire: { id: id("asset"), name: "Yangın işareti", sourcePath: "assets/yangin.jpg", mediaType: "image" },
   noEntry: { id: id("asset"), name: "Girilmez işareti", sourcePath: "assets/girilmez.jpg", mediaType: "image" },
   overload: { id: id("asset"), name: "Aşırı yük işareti", sourcePath: "assets/asiri-yuk.jpg", mediaType: "image" },
   quake: { id: id("asset"), name: "Deprem işareti", sourcePath: "assets/deprem.jpg", mediaType: "image" },
+  arrowUp: { id: id("asset"), name: "arrow-up", sourcePath: "assets/arrow-up.png", mediaType: "image" },
+  arrowDown: { id: id("asset"), name: "arrow-down", sourcePath: "assets/arrow-down.png", mediaType: "image" },
+  ...digitAssets,
 };
 
 const mappingId = id("floor-mapping");
 const mapping = {
   id: mappingId,
   entries: [
-    { firmwareValue: "B1", displayValue: "B1" },
-    { firmwareValue: "0", displayValue: "G" },
+    { firmwareValue: "0", displayValue: "0" },
     { firmwareValue: "1", displayValue: "1" },
     { firmwareValue: "2", displayValue: "2" },
     { firmwareValue: "3", displayValue: "3" },
@@ -127,6 +132,7 @@ function direction(name, geo, z) {
     zIndex: z,
     bindings: [],
     assetIds: [],
+    content: { sourceStateId: "direction" },
     style: { directionStyleId: "direction-default" },
   };
 }

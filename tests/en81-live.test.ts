@@ -52,6 +52,29 @@ describe("live EN 81 cabin snapshots", () => {
       await page.waitForTimeout(300);
       const fire = await page.evaluate(() => [...document.querySelectorAll(".canvas-widget img.media-face")].map((img) => img.getBoundingClientRect().height));
       expect(Math.max(0, ...fire), `Yangın face heights ${JSON.stringify(fire)}`).toBeGreaterThan(40);
+
+      await page.getByRole("button", { name: "Seyir" }).first().click();
+      await page.getByRole("button", { name: "Simulator" }).first().click();
+      await page.waitForTimeout(400);
+      const previewOn = await page.locator(".mode-button.active", { hasText: "Preview" }).count();
+      expect(previewOn, "Simulator must switch the canvas to Preview").toBeGreaterThan(0);
+      await page.getByLabel("Simulator floor").selectOption("5");
+      await page.waitForTimeout(200);
+      const digits = await page.evaluate(() => [...document.querySelectorAll(".digit-face")].map((img) => ({
+        h: img.getBoundingClientRect().height,
+        alt: (img as HTMLImageElement).alt,
+      })));
+      expect(digits.some((digit) => digit.h > 20 && digit.alt === "5"), `digit faces ${JSON.stringify(digits)}`).toBe(true);
+      const arrows = await page.evaluate(() => [...document.querySelectorAll(".arrow-face")].map((img) => img.getBoundingClientRect().height));
+      expect(Math.max(0, ...arrows), `arrow faces ${JSON.stringify(arrows)}`).toBeGreaterThan(20);
+
+      await page.getByLabel("Fire").check();
+      await page.getByRole("button", { name: "Evaluate" }).click();
+      await page.waitForTimeout(300);
+      const fireScene = await page.evaluate(() => document.querySelector(".canvas-rail-label")?.textContent ?? "");
+      expect(fireScene).toMatch(/Yangın|FIRE|PREVIEW/i);
+      const fireText = await page.locator(".widget-render-text.is-warning").first().textContent();
+      expect(fireText ?? "").toMatch(/YANGIN|FIRE/i);
     } finally {
       await context.close();
       await browser.close();

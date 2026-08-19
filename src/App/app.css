@@ -631,6 +631,9 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 .widget-render-text { color: #e4f5f5; font-size: clamp(10px, 4cqw, 28px); font-weight: 650; line-height: 1.15; overflow-wrap: anywhere; }
 .widget-render-text.is-warning { width: 100%; height: 100%; background: rgba(182, 76, 76, 0.38); color: #f7d7a6; font-weight: 800; letter-spacing: 0.06em; }
 .widget-render-digit { color: #eafcfc; font-family: "Consolas", "Segoe UI Mono", monospace; font-size: clamp(16px, 12cqw, 72px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: 0.04em; }
+.widget-render-digit.has-face, .widget-render-direction.has-face { display: flex; align-items: center; justify-content: center; gap: 2px; position: absolute; inset: 0; background: transparent; }
+.digit-face { display: block; height: 88%; width: auto; max-width: 48%; object-fit: contain; }
+.arrow-face { display: block; width: 78%; height: 78%; object-fit: contain; }
 .widget-render-direction { color: var(--accent-on-dark); font-size: clamp(16px, 10cqw, 56px); line-height: 1; }
 .widget-render-media { display: grid; place-items: center; gap: 1px; width: 100%; height: 100%; background: rgba(19, 148, 154, 0.22); }
 .widget-render-media.has-face {

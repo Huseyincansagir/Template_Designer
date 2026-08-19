@@ -361,6 +361,15 @@ function coerceRuntimeInput(raw: string, type: RuntimeValueType): PrimitiveValue
   return raw;
 }
 
+function findNamedAsset(project: Project, names: readonly string[]): Asset | undefined {
+  const keys = names.map((name) => name.toLowerCase());
+  return project.assets.find((asset) => {
+    const file = asset.sourcePath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+    const stem = file.replace(/\.[a-z0-9]+$/, "");
+    return keys.includes(asset.name.toLowerCase()) || keys.includes(file) || keys.includes(stem);
+  });
+}
+
 export function mappedFloorDisplay(mapping: { entries: readonly { firmwareValue: unknown; displayValue: string }[] } | undefined, sourceValue: unknown): string | undefined {
   if (!mapping || sourceValue === undefined || sourceValue === null) return undefined;
   const needle = String(sourceValue).normalize("NFC");
@@ -1189,6 +1198,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           return;
         }
         applyOpenedProject(parsed.project, "EN 81 cabin example opened");
+        setRuntimeValues({ floor: "1", direction: "up" });
         saveDocument();
       } catch (error) {
         logAction(`EN 81 cabin example failed: ${error instanceof Error ? error.message : "unknown error"}`, "ERROR");
@@ -2332,6 +2342,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setPanelModes((current) => activateDockedPanel(current, panel));
     if (panel === "explorer" || panel === "assets") setLeftDockTab(panel);
     if (panel === "properties" || panel === "simulator") setRightDockTab(panel);
+    if (panel === "simulator") {
+      setViewMode("preview");
+      setRuntimeValues((current) => ({ ...current, floor: current.floor ?? "1", direction: current.direction ?? "up" }));
+    }
     logAction(`${panel[0].toUpperCase()}${panel.slice(1)} panel docked`);
   };
 
@@ -3318,13 +3332,33 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       const mapped = mappedFloorDisplay(mapping, sourceValue);
       const shown = previewActive
         ? mapped ?? (sourceValue === undefined || sourceValue === null ? "--" : String(sourceValue))
-        : mapped ?? (sourceStateId ? `[${sourceStateId}]` : "88");
+        : mapped ?? (sourceValue === undefined || sourceValue === null ? "8" : String(sourceValue));
+      const glyphs = shown.split("").map((character) => {
+        const asset = findNamedAsset(project, [`digit-${character}`, `digit_${character}`, character === "-" ? "digit-dash" : ""]);
+        const face = asset ? displaySrcForPreview(assetPreviews[asset.id]) : undefined;
+        return { character, face };
+      });
+      if (glyphs.some((glyph) => glyph.face)) {
+        return (
+          <span className="widget-render widget-render-digit has-face" title={sourceStateId ? `Value source: ${sourceStateId}` : "No value source selected"}>
+            {glyphs.map((glyph, index) => glyph.face
+              ? <img className="digit-face" src={glyph.face} alt={glyph.character} key={`${glyph.character}-${index}`} />
+              : <span key={`${glyph.character}-${index}`}>{glyph.character}</span>)}
+          </span>
+        );
+      }
       return <span className="widget-render widget-render-digit" title={sourceStateId ? `Value source: ${sourceStateId}` : "No value source selected"}>{shown}</span>;
     }
     if (widget.widgetType === "direction") {
       const style = String(widget.style?.directionStyleId ?? activeProfile?.directionStyles?.[0] ?? "");
-      const raw = previewActive && sourceValue !== undefined && sourceValue !== null ? String(sourceValue).toLowerCase() : style.toLowerCase();
-      const glyph = raw.includes("up") ? "▲" : raw.includes("down") ? "▼" : "◆";
+      const raw = (previewActive && sourceValue !== undefined && sourceValue !== null ? String(sourceValue) : sourceValue !== undefined && sourceValue !== null ? String(sourceValue) : style).toLowerCase();
+      const heading = raw.includes("up") ? "up" : raw.includes("down") ? "down" : "stopped";
+      const asset = findNamedAsset(project, heading === "stopped" ? ["arrow-stopped"] : [`arrow-${heading}`, `arrow_${heading}`]);
+      const face = asset ? displaySrcForPreview(assetPreviews[asset.id]) : undefined;
+      if (face) {
+        return <span className={`widget-render widget-render-direction has-face is-${heading}`} title={sourceStateId ? `Value source: ${sourceStateId}` : style}><img className="arrow-face" src={face} alt={heading} /></span>;
+      }
+      const glyph = heading === "up" ? "▲" : heading === "down" ? "▼" : "◆";
       return <span className="widget-render widget-render-direction" title={style ? `Direction style: ${style}` : "Profile default direction style"}>{glyph}</span>;
     }
     if (widget.widgetType === "media") {
@@ -4142,9 +4176,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     <>
       {renderPanelHeader("simulator", "TEST STUDIO", "Simulator")}
       {renderDockTabs("right")}
-      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setSimulationStatus("running"); traceRuntime(); }} title="Re-evaluate Scene activation and bindings against the current inputs and write the trace to the Console">Evaluate</button><button type="button" className="sim-button" onClick={resetSimulator} title="Clear every runtime state and reseed DeviceProfile setting defaults">Reset</button><span className="sim-status">{runtime.activeScene ? "ACTIVE" : "NO MATCH"}</span><span className="sim-note">V1 evaluates rules; timed media playback is device-runtime behaviour and is not simulated.</span></div>
+      <div className="simulator-toolbar"><button type="button" className="sim-button primary" onClick={() => { setViewMode("preview"); setSimulationStatus("running"); traceRuntime(); }} title="Switch to Preview and re-evaluate Scene activation against the current inputs">Evaluate</button><button type="button" className="sim-button" onClick={resetSimulator} title="Clear every runtime state and reseed DeviceProfile setting defaults">Reset</button><span className="sim-status">{runtime.activeScene ? "ACTIVE" : "NO MATCH"}</span><span className="sim-note">V1 evaluates rules; timed media playback is device-runtime behaviour and is not simulated.</span></div>
       <div className="simulator-scroll">
-        <section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{simulatorStates.length === 0 ? <div className="sim-empty">{profileStates.length === 0 ? "No state registry entries in active DeviceProfile." : `The active DeviceProfile marks none of its ${profileStates.length} runtime state(s) as simulator inputs.`}</div> : simulatorStateGroups.map(([category, states]) => <div className="sim-group" key={category}><div className="sim-group-title">{category}</div>{states.map((state) => { const current = runtimeValues[state.id]; return <label className="sim-input-row" key={state.id} title={state.description ?? `${state.displayName} (${state.type})`}><span>{state.displayName}<small>{state.type}</small></span>{renderRuntimeInput(state, current, (value) => setRuntimeValues((values) => value === null ? (() => { const next = { ...values }; delete next[state.id]; return next; })() : { ...values, [state.id]: value }))}</label>; })}</div>)}{hiddenStateCount > 0 && <p className="property-note">{hiddenStateCount} runtime state(s) are declared but not marked as simulator inputs, so the device supplies them and this panel does not.</p>}</section>
+        <section className="sim-section"><div className="property-section-title">Runtime States · DeviceProfile</div>{simulatorStates.length === 0 ? <div className="sim-empty">{profileStates.length === 0 ? "No state registry entries in active DeviceProfile." : `The active DeviceProfile marks none of its ${profileStates.length} runtime state(s) as simulator inputs.`}</div> : simulatorStateGroups.map(([category, states]) => <div className="sim-group" key={category}><div className="sim-group-title">{category}</div>{states.map((state) => { const current = runtimeValues[state.id]; const floorEntries = state.id === "floor" ? activeTheme?.floorMappings?.[0]?.entries ?? [] : []; return <label className="sim-input-row" key={state.id} title={state.description ?? `${state.displayName} (${state.type})`}><span>{state.displayName}<small>{state.type}</small></span>{floorEntries.length ? <select aria-label="Simulator floor" value={current == null ? "" : String(current)} onChange={(event) => setRuntimeValues((values) => event.target.value === "" ? (() => { const next = { ...values }; delete next.floor; return next; })() : { ...values, floor: event.target.value })}><option value="">Unset</option>{floorEntries.map((entry) => <option key={String(entry.firmwareValue)} value={String(entry.firmwareValue)}>{entry.displayValue}</option>)}</select> : renderRuntimeInput(state, current, (value) => setRuntimeValues((values) => value === null ? (() => { const next = { ...values }; delete next[state.id]; return next; })() : { ...values, [state.id]: value }))}</label>; })}</div>)}{hiddenStateCount > 0 && <p className="property-note">{hiddenStateCount} runtime state(s) are declared but not marked as simulator inputs, so the device supplies them and this panel does not.</p>}</section>
         <section className="sim-section"><div className="property-section-title">Runtime Settings · DeviceProfile</div>{profileSettings.length === 0 ? <div className="sim-empty">No runtime settings in active DeviceProfile.</div> : profileSettings.map((setting) => { const current = runtimeSettings[setting.id]; return <label className="sim-input-row" key={setting.id}><span>{setting.displayName}<small>{setting.type}</small></span>{renderRuntimeInput(setting, current, (value) => setRuntimeSettings((values) => value === null ? (() => { const next = { ...values }; delete next[setting.id]; return next; })() : { ...values, [setting.id]: value }))}</label>; })}</section>
         <section className="sim-section"><div className="property-section-title">Active Scene</div><div className="sim-empty">{`Evaluation context: R${runtimeRotation?.angle ?? "—"} · ${runtimeRotation?.scenes.length ?? 0} scene(s)`}</div><div className="active-scene-card"><strong>{runtime.activeScene?.name ?? "No active Scene"}</strong><span>{runtime.activeScene ? `Priority ${runtime.activeScene.priority}` : "Runtime inputs are empty"}</span></div>{runtime.candidates.length === 0 ? <div className="sim-empty">This Rotation / Form has no Scene to evaluate.</div> : runtime.candidates.map((candidate) => { const scene = runtimeRotation?.scenes.find((current) => current.id === candidate.sceneId); const reason = !scene ? "" : scene.enabled === false ? "disabled" : scene.activationConditions.length === 0 ? "always eligible" : candidate.matched ? `${scene.activationConditions.length} condition(s) met` : `${scene.activationConditionMode ?? "all"} of ${scene.activationConditions.length} condition(s) not met`; return <div className={`sim-row ${candidate.sceneId === runtime.activeSceneId ? "is-active-row" : ""}`} key={candidate.sceneId}><span>{scene?.name ?? candidate.sceneId}<small>priority {candidate.priority} · order {candidate.activationOrder} · {reason}</small></span><strong>{candidate.sceneId === runtime.activeSceneId ? "ACTIVE" : candidate.matched ? "MATCH" : "skip"}</strong></div>; })}</section>
         <section className="sim-section"><div className="property-section-title">Active Bindings</div>{activeBindings.length === 0 ? <div className="sim-empty">No bindings in the active Scene.</div> : activeBindings.map((evaluation) => <div className="sim-row" key={evaluation.bindingId}><span>{evaluation.widgetId}</span><strong>{evaluation.action} · {evaluation.matched ? "TRUE" : "FALSE"}</strong></div>)}</section>
