@@ -3,7 +3,7 @@ import { InMemoryDocumentStore } from "../src/Core/document-store";
 import { CommandHistory } from "../src/Core/commands";
 import { createEditorApplication } from "../src/Core/editor-application";
 import { createDeploymentService } from "../src/Core/deployment-service";
-import { PACKAGE_ROOT_DIRECTORY, contentByteLength, preflightDeployment } from "../src/Core/removable-storage";
+import { PACKAGE_ROOT_DIRECTORY, contentByteLength, preflightDeployment, unsafePackagePathReason } from "../src/Core/removable-storage";
 import { InMemoryRemovableStorage, type InMemoryVolumeSeed } from "../src/Infrastructure/in-memory-removable-storage";
 import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import { createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
@@ -293,5 +293,51 @@ describe("SD deployment: no transport is an explicit state, never a fake success
 
     const eject = await service.ejectTarget("E:\\");
     expect(eject.ok).toBe(false);
+  });
+});
+
+describe("Package path safety mirrors the native guard (G1 review)", () => {
+  it("refuses the Windows-normalized traversals a naive check misses", () => {
+    // Win32 strips trailing dots and spaces per segment BEFORE resolving `..`,
+    // so these parse as ordinary names and then escape the package directory.
+    for (const path of [".. /evil.txt", ".. ./evil.txt", "..  /evil.txt"]) {
+      expect(unsafePackagePathReason(path), path).toMatch(/traversal/);
+    }
+    // A trailing dot or space silently renames the file that was asked for.
+    expect(unsafePackagePathReason("manifest.json.")).toMatch(/dot or space/);
+    expect(unsafePackagePathReason("manifest.json ")).toMatch(/dot or space/);
+    expect(unsafePackagePathReason("themes/theme. /x.json")).toBeDefined();
+  });
+
+  it("refuses reserved device names, which would discard the data silently", () => {
+    // File creation on these SUCCEEDS and writes nothing, so a package
+    // containing one could report a fully successful, fully empty deployment.
+    for (const name of ["NUL", "nul", "CON", "aux", "PRN", "COM1", "LPT9"]) {
+      expect(unsafePackagePathReason(name), name).toMatch(/reserved device/);
+      expect(unsafePackagePathReason(`${name}.json`), `${name}.json`).toMatch(/reserved device/);
+      expect(unsafePackagePathReason(`themes/${name}/theme.json`), `nested ${name}`).toMatch(/reserved device/);
+    }
+    // A name that merely contains a reserved word is fine.
+    expect(unsafePackagePathReason("console.json")).toBeUndefined();
+    expect(unsafePackagePathReason("nullable.json")).toBeUndefined();
+  });
+
+  it("accepts the shapes the package builder actually produces", () => {
+    for (const path of ["manifest.json", "themes/theme-1/theme.json", "themes/theme-1/rotations/rot-1.json", "assets/asset-1.asset.json"]) {
+      expect(unsafePackagePathReason(path), path).toBeUndefined();
+    }
+  });
+
+  it("surfaces every unsafe shape through pre-flight with a remediation", async () => {
+    const { pkg } = await builtPackage();
+    const volume = { id: "E:\\", mountPath: "E:\\", volumeName: "SD", removable: true, readOnly: false, freeBytes: 1_000_000 };
+    for (const badPath of ["/absolute.json", "../escape.json", "a:b.json", ".. /evil.txt", "NUL.json", "manifest.json."]) {
+      const tampered: DeploymentPackage = { ...pkg, files: [...pkg.files, { path: badPath, kind: "manifest", content: "{}" }] };
+      const report = preflightDeployment(tampered, volume, { present: true, writable: true });
+      expect(report.ok, badPath).toBe(false);
+      const finding = report.findings.find((candidate) => candidate.code === "PACKAGE_FILE_NAME_INVALID");
+      expect(finding, badPath).toBeDefined();
+      expect(finding?.remediation.length).toBeGreaterThan(0);
+    }
   });
 });

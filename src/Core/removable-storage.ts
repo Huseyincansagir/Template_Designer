@@ -107,6 +107,35 @@ export function packageFileWrites(packageFile: DeploymentPackage): readonly Pack
  * refusal is testable without a device: a destructive write must never begin on
  * a maybe.
  */
+/**
+ * Windows reserved device names. `NUL`, `CON`, `COM1`… are writable paths that
+ * DISCARD every byte, so a package containing one would report a successful write
+ * having stored nothing. The native layer refuses them too; this check exists so
+ * the refusal reaches the user as a readable pre-flight finding rather than as a
+ * mid-write native error.
+ */
+const RESERVED_DEVICE_NAMES = new Set([
+  "CON", "PRN", "AUX", "NUL",
+  "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+  "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+]);
+
+/** Why a package path is unsafe, or undefined when it is fine. */
+export function unsafePackagePathReason(path: string): string | undefined {
+  if (path.trim().length === 0) return "it is empty";
+  if (path.startsWith("/") || path.startsWith("\\") || /^[A-Za-z]:/.test(path)) return "it is absolute";
+  if (/[:*?"<>|]/.test(path)) return "it contains a character the target filesystem forbids";
+  for (const segment of path.split(/[\\/]/)) {
+    if (segment.length === 0) continue;
+    // Windows strips trailing dots and spaces per segment BEFORE resolving `..`,
+    // so `".. "` traverses upwards and `"a.json."` silently renames the file.
+    const normalized = segment.replace(/[.\s]+$/, "");
+    if (normalized === "" || normalized === "." || normalized === "..") return `the segment '${segment}' resolves to a directory traversal`;
+    if (normalized !== segment) return `the segment '${segment}' ends in a dot or space, which the filesystem would silently rename`;
+    if (RESERVED_DEVICE_NAMES.has((segment.split(".")[0] ?? segment).toUpperCase())) return `the segment '${segment}' names a reserved device, and writing it would discard the data`;
+  }
+  return undefined;
+}
 export function preflightDeployment(
   packageFile: DeploymentPackage,
   volume: RemovableVolume | undefined,
@@ -131,12 +160,13 @@ export function preflightDeployment(
     findings.push({ severity: "error", code: "PACKAGE_MANIFEST_MISSING", message: "The package has no manifest.json.", remediation: "Rebuild the package; a target without a manifest cannot be read by the device." });
   }
   for (const file of files) {
-    if (file.path.trim().length === 0 || file.path.startsWith("/") || file.path.includes("..") || /[:*?"<>|]/.test(file.path)) {
+    const reason = unsafePackagePathReason(file.path);
+    if (reason) {
       findings.push({
         severity: "error",
         code: "PACKAGE_FILE_NAME_INVALID",
-        message: `Package path '${file.path}' is not a safe relative path.`,
-        remediation: "Rebuild the package. A path may not be absolute, traverse upwards, or contain characters the target filesystem forbids.",
+        message: `Package path '${file.path}' is not a safe relative path: ${reason}.`,
+        remediation: "Rebuild the package. A path may not be absolute, traverse upwards, name a reserved device, end a segment in a dot or space, or contain characters the target filesystem forbids.",
       });
     }
   }

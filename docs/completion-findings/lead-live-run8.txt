@@ -1,0 +1,16 @@
+
+== Floor mapping drives a digit widget ==
+PASS 1 mapping entry created
+PASS 2 firmware identifier set to a symbol
+PASS 3 display value set
+PASS 4 the mapping reads G -> LOBBY :: G -> LOBBY
+  digit style: ok:digit-default
+  value source: ok:floor
+PASS 5 the authored mapping is selectable on the widget :: ["Raw firmware value","floor-mapping-022fcf17-b510-4bf0-aff8-5d39e63112f2 (1 entries)"]
+  floor mapping: ok:floor-mapping-022fcf17-b510-4bf0-aff8-5d39e63112f2
+PASS 6 design mode names the bound source :: got "[floor]"
+PASS 7 the simulator offers the floor state as text
+PASS 8 a symbolic floor is entered as text, not a number spinner :: input type=text
+PASS 9 preview shows the MAPPED display value, not the raw identifier :: got "LOBBY" (expected LOBBY for firmware value G)
+PASS 10 an unmapped identifier falls back to the raw value :: got "7"
+PASS 11 the mapping survived save and reload :: G -> LOBBY
