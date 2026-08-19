@@ -37,9 +37,13 @@ Deployment Target
 SD Card   Wi-Fi (reserved V2)
 ```
 
-V1 implements only the SD-card target. A future Wi-Fi target may communicate with an ESP32-C6, but V1 must not implement Wi-Fi communication, ESP32 firmware, an ESP32 web page, cloud services or browser-to-device deployment.
+Product **V1** implements only the SD-card target. Product **V2** adds Wi-Fi (e.g. ESP32-C6). **SD card stays enabled in V2** — it is not removed, hidden, or treated as legacy-only. The same deployment package is delivered by SD and/or Wi-Fi.
 
-The deployment package must be transport-independent so the same package can later be delivered by SD card or Wi-Fi.
+V1 must not implement Wi-Fi communication, ESP32 firmware, an ESP32 web page, cloud services or browser-to-device deployment.
+
+The deployment package must be transport-independent so the same package can be delivered by SD card today and by Wi-Fi later without a second template format.
+
+See `docs/stm32-contract/SURUM_TASIMA_V1_V2.md`.
 
 ## Platform isolation
 

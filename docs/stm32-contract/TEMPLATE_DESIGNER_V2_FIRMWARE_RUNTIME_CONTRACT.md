@@ -33,7 +33,9 @@ A Designer engineer must be able to answer: *what must I generate so STM32 execu
 
 In scope: on-disk theme package, parsers, runtime (scene, widget pool, media, audio, glyphs), Designer V2 domain/export, compatibility, limits, validation ownership.
 
-Out of scope: implementing the compiler, changing `sahne_yukle`, Wi-Fi/ESP32, inventing a 3- vs 5-channel audio mixer, Arabic shaping.
+Out of scope for **ürün V1**: implementing the compiler in this audit, changing `sahne_yukle`, Wi-Fi/ESP32, inventing a 3- vs 5-channel audio mixer, Arabic shaping.
+
+**Taşıma (kullanıcı 2026-08-19):** ürün **V1 = yalnız SD**. Ürün **V2 = SD + Wi-Fi**. V2’de SD kart **devre dışı bırakılmaz**. Aynı cihaz paketi her iki taşıma ile gider. Ayrıntı: `docs/planning/SURUM_TASIMA_V1_V2.md`. “Template Designer V2” = Tauri uygulama kod tabanı; ürün sürümü V2 (Wi-Fi) ile aynı şey değildir.
 
 At this SHA the in-tree Qt writer (`tools/template_designer/`) is already **gone** (user deletion, commit `feb5f56`). Firmware still parses the **historical SD tree** (`tema.cfg` / `layout.cfg` / binaries). Designer V2 still emits a **logical JSON tree**. Those two trees are not the same format.
 

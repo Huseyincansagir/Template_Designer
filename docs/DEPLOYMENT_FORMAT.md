@@ -1,6 +1,8 @@
 # Deployment Package Format
 
-> **STM32 cihaz paketi:** bu belgedeki `theme.pkg` örneği **mantıksal** pakettir. MyApplication_6 `template-designer/*.json` okumaz. Cihaz ağacı ve uyumluluk: [`stm32-contract/`](stm32-contract/).
+> **STM32 cihaz paketi:** bu belgedeki `theme.pkg` örneği **mantıksal** pakettir. MyApplication_6 `template-designer/*.json` okumaz. Cihaz ağacı: [`stm32-contract/`](stm32-contract/).
+>
+> **Taşıma:** ürün V1 = SD. Ürün V2 = SD + Wi-Fi; SD **devre dışı bırakılmaz**. Aynı paket iki yolla da gider.
 
 ## Purpose
 

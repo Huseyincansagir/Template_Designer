@@ -9,7 +9,9 @@
 | Üst sözleşme | [TEMPLATE_DESIGNER_V2_FIRMWARE_RUNTIME_CONTRACT.md](../TEMPLATE_DESIGNER_V2_FIRMWARE_RUNTIME_CONTRACT.md) |
 | Binding ayrıntı | [binding_yapisi_20260819.md](../template-designer/research/binding_yapisi_20260819.md) |
 
-**Tek cümle:** V2’nin JSON paketini MCU’da okumak için firmware’i şişirmek **V1 işi değildir**. STM32 zaten `tema.cfg` + ikili okur. Asıl P0 boşluk Designer derleyicisindedir. Bu belge, STM32’de *ne zaman ve neyin* değişmesi gerektiğini listeler.
+**Tek cümle:** Designer JSON’unu MCU’da okumak için firmware’i şişirmek **ürün V1 işi değildir**. STM32 zaten `tema.cfg` + ikili okur. Asıl P0 boşluk Designer derleyicisindedir.
+
+**Taşıma:** ürün V1 = SD. Ürün V2 = SD + Wi-Fi; SD **kapanmaz**. Wi-Fi alıcısı ayrı iş; `sd_scan_templates` / `sahne_yukle` silinmez. `SURUM_TASIMA_V1_V2.md`.
 
 Kod yazılmadı. Kanıt: mevcut C sembolleri.
 
