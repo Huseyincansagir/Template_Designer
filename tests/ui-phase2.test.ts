@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDeviceProfileRegistry } from "../src/App/profile-registry";
 import { activateDockedPanel, defaultPanelLayout, floatingPanels } from "../src/App/panel-manager";
@@ -29,5 +31,15 @@ describe("UI Phase 2 foundations", () => {
   it("ships a profile with real runtime registries for the Simulator surfaces", () => {
     expect(foundationDeviceProfile.runtimeStates.length).toBeGreaterThan(0);
     expect(foundationDeviceProfile.runtimeSettings.length).toBeGreaterThan(0);
+  });
+
+  it("assigns the flexible row of the canvas workspace to the device stage", () => {
+    const css = readFileSync(resolve(__dirname, "../src/App/app.css"), "utf8");
+    expect(css).toMatch(/\.canvas-workspace\s*\{[^}]*grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);
+    const app = readFileSync(resolve(__dirname, "../src/App/App.tsx"), "utf8");
+    expect(app).toContain("renderEditorChrome()");
+    expect(app).not.toContain("renderCanvasNavigator()");
+    expect(app).toContain("data-testid=\"canvas-stage\"");
+    expect(app).toContain("deploy-dialog");
   });
 });
