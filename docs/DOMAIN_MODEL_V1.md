@@ -137,8 +137,13 @@ Widget type ile media type ayrı kavramlardır. Digit ve Direction semantic widg
 
 Popup diye ayrı bir widget veya domain nesnesi yoktur. Kata özel üst içerik de Media Slide'dır.
 
+> **Decision closure (V1):** a Media Slide is an ORDERED MEDIA SEQUENCE that may
+> mix Image and Video in any order, not a single media item. See
+> `docs/PRODUCT_DECISION_CLOSURE_V1.md` §2 for the shape and its consequences.
+
 ```text
 MediaSlide
+â”œâ”€â”€ items[]  (ORDERED: image | video, each with its own duration/loop/repeat)
 ├── media: image | video
 ├── duration
 ├── loop/repeat policy
@@ -150,6 +155,8 @@ MediaSlide
 Örneğin `floor == 5` koşuluna bağlanmış iki saniyelik fotoğraf ve ona bağlı ses, kullanıcıya popup gibi görünebilir; teknik olarak Media Slide'dır.
 
 ## Condition / Priority
+
+> **Decision closure (V1):** Scene presentation priority stays 0-10. **Binding** priority is a SEPARATE integer 0-15 deciding which binding wins on one widget; higher wins and document order breaks a tie. See `docs/PRODUCT_DECISION_CLOSURE_V1.md` section 3.
 
 Condition firmware-owned state/setting registry'den seçim yapar. Presentation priority 0–10 arasındadır. Daha yüksek priority kazanır; aynı priority'de runtime'da daha sonra aktif olan Scene kazanır.
 
@@ -183,6 +190,8 @@ BoundingGroup
 1 child varsa child merkezi; 2 child varsa ikisinin arasındaki merkez; 3 child varsa ortadaki child; 4 child varsa 2 ve 3 arasındaki merkez; 5 child varsa 3. child group referans merkezine gelir. Bu V1 geometry/layout davranışıdır; klasik widget-to-widget anchor graph değildir.
 
 ## Floor Number
+
+> **Decision closure (V1):** floor identifiers are SYMBOLIC UNICODE STRINGS, never an enum. `A`â€“`Z`, digits, `Restaurant`, `North` and localized identifiers including Arabic all work today. Comparison is NFC-normalized. The `floor` runtime state is a `string`. See `docs/PRODUCT_DECISION_CLOSURE_V1.md` §4.
 
 Floor runtime state'ten gelir. Sadece decimal integer değildir. `-1`, `0..11` ve firmware tarafından sağlanan `R`, `Z`, `K`, `T`, `P` gibi sembolik değerler desteklenebilir.
 
