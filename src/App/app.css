@@ -574,6 +574,23 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 .asset-toolbar .primary-action { border-color: var(--accent-hover); background: var(--accent-hover); color: #fff; }
 .asset-toolbar .primary-action:hover:not(:disabled) { background: var(--accent-active); border-color: var(--accent-active); color: #fff; }
 .asset-row { align-items: center; }
+.asset-thumb {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 28px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background-color: #eef3f4;
+  background-image: linear-gradient(45deg, #cfd8da 25%, transparent 25%), linear-gradient(-45deg, #cfd8da 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #cfd8da 75%), linear-gradient(-45deg, transparent 75%, #cfd8da 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+  color: var(--accent-hover);
+  font-size: var(--text-sm);
+}
+.asset-thumb img, .media-face { width: 100%; height: 100%; object-fit: contain; display: block; }
 .asset-row.is-selected { border-color: var(--accent-hover); background: var(--accent-muted); }
 .asset-row > span:nth-child(2) { display: grid; min-width: 0; }
 .asset-row > span:nth-child(2) small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -606,6 +623,15 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 .widget-render-digit { color: #eafcfc; font-family: "Consolas", "Segoe UI Mono", monospace; font-size: clamp(16px, 12cqw, 72px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: 0.04em; }
 .widget-render-direction { color: var(--accent-on-dark); font-size: clamp(16px, 10cqw, 56px); line-height: 1; }
 .widget-render-media { display: grid; place-items: center; gap: 1px; width: 100%; height: 100%; background: rgba(19, 148, 154, 0.22); }
+.widget-render-media.has-face {
+  position: relative;
+  background-color: #1a2a2e;
+  background-image: linear-gradient(45deg, #24383d 25%, transparent 25%), linear-gradient(-45deg, #24383d 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #24383d 75%), linear-gradient(-45deg, transparent 75%, #24383d 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+.widget-render-media.has-face .media-face { position: absolute; inset: 0; object-fit: contain; }
+.widget-render-media.has-face strong, .widget-render-media.has-face small { position: relative; z-index: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65); }
 .widget-render-media-glyph { color: var(--accent-on-dark); font-size: clamp(9px, 2cqw, 20px); line-height: 1; }
 .widget-render-media strong { overflow: hidden; max-width: 100%; color: #dcefef; font-size: 8px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .widget-render-media small, .widget-render-empty small { color: #9bd4d4; font-size: 7px; }

@@ -61,5 +61,7 @@ describe("UI Phase 2 foundations", () => {
     expect(app).toContain("placeWidgetType");
     expect(app).toContain("addDisplayKit");
     expect(app).toContain("enterPlaceMode");
+    expect(app).toContain("assetPreviews");
+    expect(app).toContain("activatePanel(\"simulator\")");
   });
 });

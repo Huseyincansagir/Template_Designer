@@ -13,7 +13,8 @@ import { MAX_BINDING_PRIORITY, MIN_BINDING_PRIORITY } from "../Domain/models";
 import { stableSerialize } from "../Core/serialize";
 import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
-import { createAssetImportSource, draftsFromFiles, extensionOf, isFileDrag } from "../Infrastructure/asset-import";
+import { createAssetImportSource, extensionOf, isFileDrag, pickedFromFiles } from "../Infrastructure/asset-import";
+import { displaySrcForPreview, editorPreviewFromBlob, revokeAssetPreview, type AssetPreview } from "./asset-preview";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
@@ -634,6 +635,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [confirmState, setConfirmState] = useState<ConfirmRequest | null>(null);
   const [duplicateMode, setDuplicateMode] = useState(false);
   const [placeWidgetType, setPlaceWidgetType] = useState<string | null>(null);
+  const [assetPreviews, setAssetPreviews] = useState<Record<string, AssetPreview>>({});
   const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string; priority: number }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "", priority: MIN_BINDING_PRIORITY });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
@@ -893,12 +895,27 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     return allowed.includes(extension);
   };
 
-  const commitImportedDrafts = (drafts: readonly AssetDraft[], origin: "picker" | "drop", themeId?: string): boolean => {
+  const attachEditorPreviews = (createdIds: readonly string[], picked: readonly { draft: AssetDraft; blob?: Blob }[]) => {
+    void (async () => {
+      const next: Record<string, AssetPreview> = {};
+      for (let index = 0; index < createdIds.length; index += 1) {
+        const blob = picked[index]?.blob;
+        if (!blob) continue;
+        const preview = await editorPreviewFromBlob(blob, picked[index]?.draft.mediaType);
+        if (preview) next[createdIds[index]] = preview;
+      }
+      if (!Object.keys(next).length) return;
+      setAssetPreviews((current) => ({ ...current, ...next }));
+    })();
+  };
+
+  const commitImportedDrafts = (picked: readonly { draft: AssetDraft; blob?: Blob }[], origin: "picker" | "drop", themeId?: string): boolean => {
     if (blockedInPreview("Import Asset")) return false;
-    if (!drafts.length) {
+    if (!picked.length) {
       if (origin === "picker") logAction("Asset import cancelled", "WARN");
       return false;
     }
+    const drafts = picked.map((entry) => entry.draft);
     const existingNames = project.assets.map((asset) => asset.name);
     const named = drafts.map((draft) => {
       const name = uniqueDefaultName(draft.name, existingNames);
@@ -926,6 +943,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       setSelectedIds([createdIds[0]]);
       setSelection({ id: createdIds[0], label: named[0].name, kind: "asset", detail: asset?.mediaType ?? named[0].mediaType ?? "type not assigned" });
     }
+    attachEditorPreviews(createdIds, picked.map((entry, index) => ({ draft: named[index] ?? entry.draft, blob: entry.blob })));
     const via = origin === "drop" ? "drop" : (assetImportSource?.kind ?? "import");
     logAction(`${createdIds.length} asset(s) imported via ${via}${themeResourceIndexes.length ? ` · ${themeResourceIndexes.length} added to Theme Resources` : ""}`, "EVENT");
     if (untyped.length) {
@@ -942,8 +960,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Asset import is unavailable in this build", "WARN");
       return false;
     }
-    const drafts = await assetImportSource.pick({ sourcePrefix: "assets" });
-    return commitImportedDrafts(drafts, "picker", themeId);
+    const picked = await assetImportSource.pick({ sourcePrefix: "assets" });
+    return commitImportedDrafts(picked, "picker", themeId);
   };
 
   const handleShellDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -971,8 +989,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       logAction("Drop files on Project Explorer, Asset Browser or Theme Resources. Canvas and other chrome are not import targets.", "WARN");
       return;
     }
-    const drafts = draftsFromFiles(Array.from(event.dataTransfer.files), { sourcePrefix: "assets" });
-    commitImportedDrafts(drafts, "drop", themeFromInspector ?? themeFromTree);
+    const picked = pickedFromFiles(Array.from(event.dataTransfer.files), { sourcePrefix: "assets" });
+    commitImportedDrafts(picked, "drop", themeFromInspector ?? themeFromTree);
   };
 
   const deleteAssetsCommand = (assetIds: readonly string[]): boolean => {
@@ -986,6 +1004,14 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         logAction("Delete Asset failed: the asset is no longer in the project", "WARN");
         return false;
       }
+      setAssetPreviews((current) => {
+        const next = { ...current };
+        for (const assetId of assetIds) {
+          revokeAssetPreview(next[assetId]);
+          delete next[assetId];
+        }
+        return next;
+      });
       setSelection((current) => current && assetIds.includes(current.id) ? null : current);
       setSelectedIds((current) => current.filter((id) => !assetIds.includes(id)));
       logAction(`${assetIds.length} asset(s) deleted${referenced.length ? " with their references cleared" : ""}`, "EVENT");
@@ -3092,9 +3118,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (widget.widgetType === "media") {
       const assetId = effect?.contentId ?? widget.mediaSlide?.items[0]?.assetId ?? widget.assetIds?.[0];
       const asset = assetId ? project.assets.find((candidate) => candidate.id === assetId) : undefined;
+      const face = displaySrcForPreview(assetId ? assetPreviews[assetId] : undefined);
       return (
-        <span className="widget-render widget-render-media">
-          <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>
+        <span className={`widget-render widget-render-media ${face ? "has-face" : ""}`}>
+          {face ? <img className="media-face" src={face} alt="" /> : <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>}
           <strong>{asset?.name ?? (assetId ? `${assetId} (unresolved)` : "No asset")}</strong>
           <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"}${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
         </span>
@@ -3261,6 +3288,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <div className="tool-group">
             <button type="button" className={`mode-button ${viewMode === "design" ? "active" : ""}`} onClick={() => setViewMode("design")}>Design</button>
             <button type="button" className={`mode-button ${viewMode === "preview" ? "active" : ""}`} onClick={() => setViewMode("preview")}>Preview</button>
+            <button type="button" className={`mode-button ${rightDockTab === "simulator" ? "active" : ""}`} onClick={() => activatePanel("simulator")} title="Open Test Studio / Simulator (runtime inputs)">Simulator</button>
             <span className="tool-divider" />
             <button type="button" className="zoom-button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= MIN_ZOOM} onClick={() => setZoom((current) => Math.max(MIN_ZOOM, current - 10))}>−</button>
             <span className="zoom-readout">{zoom}%</span>
@@ -3378,7 +3406,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           const uses = countAssetReferences(project, asset.id);
           return (
             <button type="button" className={`asset-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`} key={asset.id} aria-current={selectedIds.includes(asset.id) ? "true" : undefined} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: `${assetTypeLabel(asset.mediaType)} · ${uses > 0 ? `${uses} reference(s)` : "unused"}` })}>
-              <span className="asset-type">{assetGlyph(asset.mediaType)}</span>
+              <span className="asset-thumb">{displaySrcForPreview(assetPreviews[asset.id]) ? <img src={displaySrcForPreview(assetPreviews[asset.id])} alt="" /> : assetGlyph(asset.mediaType)}</span>
               <span><strong>{asset.name}</strong><small>{assetTypeLabel(asset.mediaType)} · {asset.sourcePath}</small></span>
               <span className={`asset-usage ${uses > 0 ? "is-used" : ""}`} title={uses > 0 ? `${uses} canonical reference(s)` : "Not referenced by any Theme resource, Widget or Binding"}>{uses > 0 ? `×${uses}` : "unused"}</span>
             </button>

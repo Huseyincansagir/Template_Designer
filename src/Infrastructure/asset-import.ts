@@ -14,11 +14,17 @@ import type { AssetDraft } from "../Core/editor-application";
  * a file input; the Tauri desktop build can implement the same interface with
  * a native dialog that yields real absolute paths, without any UI change.
  */
+export type PickedAsset = {
+  readonly draft: AssetDraft;
+  /** Session bytes for editor snapshots. Not part of the project document. */
+  readonly blob?: Blob;
+};
+
 export interface AssetImportSource {
   /** Human-readable name of the transport, shown to the user so the mechanism is never implied. */
   readonly kind: "browser-file-input" | "native-dialog";
-  /** Resolves with the picked logical asset records, or an empty array when the user cancels. */
-  pick(options?: AssetPickOptions): Promise<readonly AssetDraft[]>;
+  /** Resolves with picked logical records (and session blobs), or an empty array when the user cancels. */
+  pick(options?: AssetPickOptions): Promise<readonly PickedAsset[]>;
 }
 
 export type AssetPickOptions = {
@@ -78,6 +84,10 @@ export function draftsFromFiles(files: ReadonlyArray<PickedFileLike>, options: A
   return files.map((file) => toAssetDraft(file, options));
 }
 
+export function pickedFromFiles(files: ReadonlyArray<File>, options: AssetPickOptions = {}): readonly PickedAsset[] {
+  return files.map((file) => ({ draft: toAssetDraft(file, options), blob: file }));
+}
+
 export function isFileDrag(dataTransfer: { types?: Iterable<string> } | null | undefined): boolean {
   if (!dataTransfer?.types) return false;
   return Array.from(dataTransfer.types).includes("Files");
@@ -123,7 +133,7 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
 
   constructor(private readonly documentRef: Document) {}
 
-  pick(options: AssetPickOptions = {}): Promise<readonly AssetDraft[]> {
+  pick(options: AssetPickOptions = {}): Promise<readonly PickedAsset[]> {
     return new Promise((resolve) => {
       const input = this.documentRef.createElement("input");
       input.type = "file";
@@ -136,16 +146,16 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
       const onWindowFocus = () => {
         window.setTimeout(() => finish([]), 400);
       };
-      const finish = (drafts: readonly AssetDraft[]) => {
+      const finish = (picked: readonly PickedAsset[]) => {
         if (settled) return;
         settled = true;
         window.removeEventListener("focus", onWindowFocus);
         input.remove();
-        resolve(drafts);
+        resolve(picked);
       };
       input.addEventListener("change", () => {
         const files = Array.from(input.files ?? []);
-        finish(files.map((file) => toAssetDraft(file, options)));
+        finish(pickedFromFiles(files, options));
       });
       // A cancelled dialog fires `cancel` in modern browsers; the focus
       // fallback keeps the promise from leaking in older engines that omit it.
@@ -176,7 +186,7 @@ export class NativeWebviewAssetImportSource implements AssetImportSource {
   constructor(documentRef: Document) {
     this.inner = new BrowserFileAssetImportSource(documentRef);
   }
-  pick(options?: AssetPickOptions): Promise<readonly AssetDraft[]> {
+  pick(options?: AssetPickOptions): Promise<readonly PickedAsset[]> {
     return this.inner.pick(options);
   }
 }
