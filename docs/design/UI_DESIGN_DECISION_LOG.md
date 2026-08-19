@@ -272,3 +272,23 @@ These decisions are canonical and live in their source documents. They are liste
 - **Canonical source:** This log; DeviceProfile; elevator ref 01 as layout hint only
 - **Date:** 2026-08-19
 
+### UI-D-0021 — Asset assign is widget-targeted, type filter is not folders
+- **Topic:** Connecting imported files to media widgets without a folder model.
+- **Context:** Import registered logical records but the designer still had to hunt Properties → Media. Elevator ref 04 shows Images/Videos/Audio as a filter, not a depot-folder product.
+- **Decision:** (1) Asset Browser rows and the asset inspector expose **Assign to selected widget**. Image/video become the media widget’s primary `assetIds` (and replace sequence item 0 when a sequence exists); audio becomes `audioAssetId`. Digit/direction/text/warning refuse with WARN. (2) Empty media widgets offer **Assign asset…**, which opens the Asset Browser and remembers that widget. (3) Used By is the same reference list as delete-confirm. (4) All/Images/Videos/Audio is a list filter over the existing Depot/Resources/Scene/Unsupported categories. No `Images/Lobby` folders. Snapshots stay session-only.
+- **Reason:** The golden path is Import → assign → canvas face. Folders would invent a package layout the V1 logical records do not have.
+- **Alternatives:** (a) persist thumbnails in `*.asset.json` — rejected (binary:false); (b) drop-on-canvas import — already refused; (c) auto-assign on row click — rejected: row click inspects the asset.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; workflow W2; elevator ref 04 as filter hint only
+- **Date:** 2026-08-19
+
+### UI-D-0022 — Copy Scene to other rotations is explicit
+- **Topic:** Filling R90/R180/R270 without silent four-form geometry.
+- **Context:** Each Rotation has an independent Scene/Widget graph. Designers still need a way to reuse an Idle/Fire layout on another form.
+- **Decision:** `copySceneToRotations` copies the active Scene onto chosen sibling rotations of the same Theme Project, one undoable command. Names are kept when unique on the destination; widget ids/bindings are new; geometry is clamped to the destination display (no +10 duplicate offset). The source rotation is ignored. A rotation from another theme is refused. UI: Scene menu per-angle + “Copy to other rotations”; scene inspector buttons; context menu.
+- **Reason:** Explicit, not automatic. Independent graphs stay independent.
+- **Alternatives:** (a) one widget geometry on all 4 forms — DOMAIN CONTRADICTION; (b) duplicate-in-place only — rejected: that is a sibling on the same rotation.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; DeviceProfile four rotations; workflow W6
+- **Date:** 2026-08-19
+

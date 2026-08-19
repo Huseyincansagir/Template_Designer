@@ -7,6 +7,7 @@ export type EditorCommandId =
   | "theme.delete"
   | "rotation.add-scene"
   | "scene.duplicate"
+  | "scene.copy-to-other-rotations"
   | "scene.move-earlier"
   | "scene.move-later"
   | "scene.delete"
@@ -64,6 +65,7 @@ export const editorCommandDescriptors: readonly EditorCommandDescriptor[] = [
   { id: "theme.delete", kind: "mutation", label: "Delete Theme Project", supportedSelectionKinds: ["theme"] },
   { id: "rotation.add-scene", kind: "mutation", label: "Add Scene", supportedSelectionKinds: ["rotation", "scene"] },
   { id: "scene.duplicate", kind: "mutation", label: "Duplicate Scene", supportedSelectionKinds: ["scene"] },
+  { id: "scene.copy-to-other-rotations", kind: "mutation", label: "Copy Scene to other rotations", supportedSelectionKinds: ["scene"] },
   { id: "scene.move-earlier", kind: "mutation", label: "Move Scene Earlier", supportedSelectionKinds: ["scene"] },
   { id: "scene.move-later", kind: "mutation", label: "Move Scene Later", supportedSelectionKinds: ["scene"] },
   { id: "widget.bring-forward", kind: "mutation", label: "Bring Forward", supportedSelectionKinds: ["widget"] },

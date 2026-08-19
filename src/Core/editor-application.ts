@@ -245,6 +245,57 @@ function duplicateScene(scene: Scene, collect?: string[], bounds?: { readonly wi
   };
 }
 
+function findSceneHome(project: Project, sceneId: string): { theme: ThemeProject; rotation: Rotation; scene: Scene } | undefined {
+  let found: { theme: ThemeProject; rotation: Rotation; scene: Scene } | undefined;
+  let count = 0;
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      for (const rotation of theme.rotations) {
+        for (const scene of rotation.scenes) {
+          if (scene.id === sceneId) {
+            found = { theme, rotation, scene };
+            count += 1;
+          }
+        }
+      }
+    }
+  }
+  return count === 1 ? found : undefined;
+}
+
+/**
+ * Cross-rotation copy: keep authored names and geometry (clamped to the
+ * destination display). Unlike duplicate-in-place this is not a sibling "Copy"
+ * offset — the designer is filling another form of the same theme.
+ */
+function copySceneOntoRotation(scene: Scene, rotation: Rotation, siblingNames: readonly string[]): Scene {
+  const existing: string[] = [];
+  const widgets = scene.widgets.map((widget) => {
+    const id = newId("widget");
+    const name = uniqueDefaultName(widget.name, existing);
+    existing.push(name);
+    return {
+      ...clone(widget),
+      id,
+      name,
+      geometry: clampGeometry(widget.geometry, rotation),
+      bindings: widget.bindings.map((binding) => ({ ...clone(binding), id: newId("binding"), widgetId: id })),
+      mediaSlide: widget.mediaSlide
+        ? {
+            ...clone(widget.mediaSlide),
+            items: widget.mediaSlide.items.map((item) => ({ ...clone(item), id: newId("media-item") })),
+          }
+        : widget.mediaSlide,
+    };
+  });
+  return {
+    ...clone(scene),
+    id: newId("scene"),
+    name: uniqueDefaultName(scene.name, siblingNames),
+    widgets,
+  };
+}
+
 function duplicateRotation(rotation: Rotation): Rotation {
   return {
     ...clone(rotation),
@@ -373,6 +424,41 @@ export class EditorApplication {
       });
       return { ...scene, widgets: [...scene.widgets, ...added] };
     })))));
+    return result.changed ? { changed: true, createdIds: created } : result;
+  }
+
+  /**
+   * Copies a Scene onto sibling Rotation / Forms of the same Theme Project.
+   * One undoable command, even when several destinations are listed. The source
+   * rotation is ignored; a rotation from another theme is refused rather than
+   * silently mixing graphs. Geometry is clamped to each destination display.
+   */
+  copySceneToRotations(sceneId: string, targetRotationIds: readonly string[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current) return { changed: false };
+    const home = findSceneHome(current, sceneId);
+    if (!home) return { changed: false };
+    const siblingIds = new Set(home.theme.rotations.map((rotation) => rotation.id));
+    const destinations = [...new Set(targetRotationIds)].filter((id) => id !== home.rotation.id);
+    if (!destinations.length || destinations.some((id) => !siblingIds.has(id))) return { changed: false };
+    const created: string[] = [];
+    const result = this.execute(
+      destinations.length === 1 ? `Copy Scene to other rotation` : `Copy Scene to ${destinations.length} rotations`,
+      (project) => mapAllThemes(project, (theme) => {
+        if (theme.id !== home.theme.id) return theme;
+        const source = theme.rotations.find((rotation) => rotation.id === home.rotation.id)?.scenes.find((scene) => scene.id === sceneId);
+        if (!source) return theme;
+        return {
+          ...theme,
+          rotations: theme.rotations.map((rotation) => {
+            if (!destinations.includes(rotation.id)) return rotation;
+            const copy = copySceneOntoRotation(source, rotation, rotation.scenes.map((scene) => scene.name));
+            created.push(copy.id);
+            return { ...rotation, scenes: [...rotation.scenes, copy] };
+          }),
+        };
+      }),
+    );
     return result.changed ? { changed: true, createdIds: created } : result;
   }
 

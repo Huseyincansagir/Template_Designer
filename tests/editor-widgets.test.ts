@@ -114,6 +114,87 @@ describe("Widget creation (C-01 remediation)", () => {
   });
 });
 
+describe("copySceneToRotations", () => {
+  function projectWithFourRotations() {
+    const base = createEmptyProject("Copy Scene Fixture", foundationDeviceProfile);
+    const theme = base.themeProjectGroups[0].themeProjects[0];
+    const r0 = theme.rotations.find((rotation) => rotation.angle === 0);
+    if (!r0) throw new Error("scaffold missing R0");
+    const sceneId = "scene-idle";
+    const widget: Widget = {
+      id: "w-floor",
+      name: "Floor",
+      widgetType: "digit",
+      enabled: true,
+      visible: true,
+      locked: false,
+      geometry: { x: 10, y: 1100, width: 100, height: 200 },
+      zIndex: 1,
+      bindings: [{
+        id: "b-floor",
+        widgetId: "w-floor",
+        conditions: [{ stateId: "fire", operator: "equals", value: true }],
+        action: "show",
+      }],
+      assetIds: [],
+    };
+    const project: Project = {
+      ...base,
+      themeProjectGroups: [{
+        ...base.themeProjectGroups[0],
+        themeProjects: [{
+          ...theme,
+          rotations: theme.rotations.map((rotation) => rotation.id === r0.id
+            ? { ...rotation, scenes: [{ id: sceneId, name: "Idle", widgets: [widget], priority: 2, activationConditions: [] }] }
+            : rotation),
+        }],
+      }],
+    };
+    return { project, sceneId, r0, themeId: theme.id };
+  }
+
+  it("copies a Scene onto sibling rotations in one undoable command and clamps geometry", () => {
+    const { project, sceneId, r0 } = projectWithFourRotations();
+    const { store, editor } = setup(project);
+    const r90 = project.themeProjectGroups[0].themeProjects[0].rotations.find((rotation) => rotation.angle === 90);
+    const r180 = project.themeProjectGroups[0].themeProjects[0].rotations.find((rotation) => rotation.angle === 180);
+    if (!r90 || !r180) throw new Error("scaffold missing R90/R180");
+
+    const result = editor.copySceneToRotations(sceneId, [r90.id, r180.id, r0.id]);
+    expect(result.changed).toBe(true);
+    expect(result.createdIds).toHaveLength(2);
+    expect(store.getSnapshot().history.undoCount).toBe(1);
+
+    const theme = store.getCurrent()?.themeProjectGroups[0].themeProjects[0];
+    const copied90 = theme?.rotations.find((rotation) => rotation.angle === 90)?.scenes[0];
+    const copied180 = theme?.rotations.find((rotation) => rotation.angle === 180)?.scenes[0];
+    const source = theme?.rotations.find((rotation) => rotation.angle === 0)?.scenes[0];
+    expect(copied90?.name).toBe("Idle");
+    expect(copied180?.name).toBe("Idle");
+    expect(copied90?.id).not.toBe(sceneId);
+    expect(copied90?.widgets[0].id).not.toBe("w-floor");
+    expect(copied90?.widgets[0].name).toBe("Floor");
+    expect(copied90?.widgets[0].bindings[0].widgetId).toBe(copied90?.widgets[0].id);
+    expect(source?.widgets).toHaveLength(1);
+    expect(copied90?.widgets[0].geometry).toEqual({ x: 10, y: 520, width: 100, height: 200 });
+    expect(copied180?.widgets[0].geometry).toEqual({ x: 10, y: 1080, width: 100, height: 200 });
+
+    expect(store.undo()).toBe(true);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations.find((rotation) => rotation.angle === 90)?.scenes).toHaveLength(0);
+  });
+
+  it("refuses a missing scene, empty destinations, the source rotation alone, and a rotation from another theme", () => {
+    const { project, sceneId, r0 } = projectWithFourRotations();
+    const other = createEmptyProject("Other", foundationDeviceProfile);
+    const foreignRotation = other.themeProjectGroups[0].themeProjects[0].rotations[1];
+    const { editor } = setup(project);
+    expect(editor.copySceneToRotations("missing", [r0.id]).changed).toBe(false);
+    expect(editor.copySceneToRotations(sceneId, []).changed).toBe(false);
+    expect(editor.copySceneToRotations(sceneId, [r0.id]).changed).toBe(false);
+    expect(editor.copySceneToRotations(sceneId, [foreignRotation.id]).changed).toBe(false);
+  });
+});
+
 /**
  * UI Add Widget placement (S4-01). Core stores the geometry it is given; the
  * cascade that chooses that geometry lives inline in App.tsx so it is

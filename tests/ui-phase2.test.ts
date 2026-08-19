@@ -63,5 +63,10 @@ describe("UI Phase 2 foundations", () => {
     expect(app).toContain("enterPlaceMode");
     expect(app).toContain("assetPreviews");
     expect(app).toContain("activatePanel(\"simulator\")");
+    expect(app).toContain("assignAssetToSelectedWidget");
+    expect(app).toContain("assetTypeFilter");
+    expect(app).toContain("openAssetsForAssign");
+    expect(app).toContain("copySceneToRotations");
+    expect(app).toContain("context-action-select");
   });
 });

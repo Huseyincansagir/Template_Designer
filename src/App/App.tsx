@@ -30,6 +30,7 @@ type ViewMode = "design" | "preview";
 type CanvasTool = "select" | "pan";
 type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Asset" | "Tools";
 type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
+type AssetTypeFilter = "all" | MediaType;
 type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Audio" | "Simulator" | "Validation" | "Export" | "Shortcuts";
 type BindingModalState = { widgetId: string } | null;
 
@@ -627,6 +628,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>(() => Object.fromEntries((bootSession?.expandedNodeIds ?? []).map((id) => [id, true])));
   const [assetCategory, setAssetCategory] = useState<AssetCategory>("depot");
   const [assetSearch, setAssetSearch] = useState("");
+  const [assetTypeFilter, setAssetTypeFilter] = useState<AssetTypeFilter>("all");
+  const [mediaAssignTargetId, setMediaAssignTargetId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>("General");
   const [bindingModal, setBindingModal] = useState<BindingModalState>(null);
@@ -1328,6 +1331,62 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const setWidgetAssetIds = (assetIds: readonly string[]): boolean => configureWidget({ assetIds }, "Set asset references");
 
+  /**
+   * Depot → selected media widget. Digit/direction/text/warning ignore with
+   * WARN (they are not file-backed). Visual files become the primary asset
+   * reference; audio files become attached audio. Sequence first entry is
+   * updated in place when a sequence already exists.
+   */
+  const assignAssetToSelectedWidget = (assetId: string): boolean => {
+    if (blockedInPreview("Assign asset")) return false;
+    const asset = project.assets.find((candidate) => candidate.id === assetId);
+    if (!asset) {
+      logAction("Assign blocked: asset is gone", "WARN");
+      return false;
+    }
+    const widgetId = resolvedSelection?.widget?.widgetType === "media" ? resolvedSelection.widget.id : mediaAssignTargetId;
+    const resolved = widgetId ? resolveCanonicalNode(project, widgetId) : undefined;
+    const widget = resolved?.widget;
+    const sceneId = resolved?.scene?.id;
+    if (!widget || !sceneId) {
+      logAction("Assign blocked: select a media widget, then Assign", "WARN");
+      return false;
+    }
+    if (widget.widgetType !== "media") {
+      logAction(`Assign blocked: ${widget.name} is a ${widget.widgetType} widget — only media widgets take depot files`, "WARN");
+      return false;
+    }
+    if (!asset.mediaType) {
+      logAction(`Assign blocked: ${asset.name} has no media type yet`, "WARN");
+      return false;
+    }
+    if (asset.mediaType === "audio") {
+      return configureWidget({ audioAssetId: asset.id }, `Assign ${asset.name}`, { sceneId, widgetId: widget.id });
+    }
+    const visualTypes = (activeProfile?.supportedMediaTypes ?? []).filter((mediaType): mediaType is VisualMediaType => mediaType !== "audio");
+    if (!visualTypes.includes(asset.mediaType as VisualMediaType)) {
+      logAction(`Assign blocked: ${asset.mediaType} is not supported by the active DeviceProfile`, "WARN");
+      return false;
+    }
+    const assetIds = [asset.id, ...(widget.assetIds ?? []).filter((id) => id !== asset.id)];
+    const patch: Parameters<typeof editorApplication.setWidgetConfiguration>[2] = { mediaType: asset.mediaType, assetIds };
+    if (widget.mediaSlide?.items.length) {
+      const items = widget.mediaSlide.items.map((item, index) => (
+        index === 0 ? { ...item, assetId: asset.id, mediaType: asset.mediaType as VisualMediaType } : item
+      ));
+      patch.mediaSlide = { ...widget.mediaSlide, items };
+    }
+    return configureWidget(patch, `Assign ${asset.name}`, { sceneId, widgetId: widget.id });
+  };
+
+  const openAssetsForAssign = (widget: Widget): boolean => {
+    if (blockedInPreview("Assign asset")) return false;
+    setMediaAssignTargetId(widget.id);
+    activatePanel("assets");
+    logAction("Pick an asset and choose Assign", "EVENT");
+    return true;
+  };
+
   // ---- Media sequence (ordered) --------------------------------------------
   // Each edit replaces the whole sequence in ONE undoable command, so a reorder
   // is a single history step rather than a remove followed by an insert.
@@ -1385,6 +1444,22 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       setSelection({ id: createdId, label: `${resolveCanonicalNode(project, sceneId)?.scene?.name ?? "Scene"} Copy`, kind: "scene" });
     }
     logAction("Scene duplicated", "EVENT");
+    return true;
+  };
+
+  const copyActiveSceneToRotations = (rotationIds: readonly string[]): boolean => {
+    if (blockedInPreview("Copy Scene")) return false;
+    const sceneId = activeSceneNode?.id ?? resolvedSelection?.scene?.id;
+    if (!sceneId) {
+      logAction("Copy Scene blocked: no active Scene", "WARN");
+      return false;
+    }
+    const result = editorApplication.copySceneToRotations(sceneId, rotationIds);
+    if (!result.changed) {
+      logAction("Copy Scene to other rotations refused — destinations must be sibling Rotation / Forms of the same Theme Project", "WARN");
+      return false;
+    }
+    logAction(`Scene copied to ${result.createdIds?.length ?? rotationIds.length} Rotation / Form(s)`, "EVENT");
     return true;
   };
 
@@ -1968,6 +2043,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     else if (commandId === "theme.duplicate") changed = duplicateThemeCommand(resolvedSelection?.theme?.id ?? activeTheme?.id);
     else if (commandId === "theme.delete") changed = deleteNodeCommand(resolvedSelection?.theme?.id ?? activeTheme?.id, "Theme Project");
     else if (commandId === "scene.duplicate") changed = duplicateSceneCommand(resolvedSelection?.scene?.id ?? activeSceneNode?.id);
+    else if (commandId === "scene.copy-to-other-rotations") changed = copyActiveSceneToRotations((activeTheme?.rotations ?? []).filter((rotation) => rotation.id !== (activeRotationNode?.id ?? resolvedSelection?.rotation?.id)).map((rotation) => rotation.id));
     else if (commandId === "scene.delete") changed = deleteNodeCommand(resolvedSelection?.scene?.id ?? activeSceneNode?.id, "Scene");
     else if (commandId === "scene.move-earlier") changed = moveActiveScene(-1);
     else if (commandId === "scene.move-later") changed = moveActiveScene(1);
@@ -2186,6 +2262,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     // selecting a container node reveals its children, so every surface
     // shows the same selection without dead-end collapsed nodes.
     if (canonical?.widget) {
+      if (canonical.widget.widgetType === "media") setMediaAssignTargetId(canonical.widget.id);
       setExpandedNodes((current) => ({
         ...current,
         ...(canonical.scene ? { [canonical.scene.id]: true } : {}),
@@ -3124,6 +3201,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {face ? <img className="media-face" src={face} alt="" /> : <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>}
           <strong>{asset?.name ?? (assetId ? `${assetId} (unresolved)` : "No asset")}</strong>
           <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"}${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
+          {!previewActive && !assetId ? <button type="button" className="media-assign-cta" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); openAssetsForAssign(widget); }}>Assign asset…</button> : null}
         </span>
       );
     }
@@ -3199,6 +3277,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     Scene: [
       { label: "Add Scene", disabled: !activeRotationNode, title: activeRotationNode ? `Add a Scene to R${activeRotationNode.angle}` : "No Rotation / Form is active", onClick: addScene },
       { label: "Duplicate Scene", disabled: !activeSceneNode, title: activeSceneNode ? `Duplicate ${activeSceneNode.name}` : "No active Scene", onClick: () => duplicateSceneCommand(activeSceneNode?.id) },
+      ...((activeTheme?.rotations ?? []).filter((rotation) => rotation.id !== activeRotationNode?.id).map((rotation) => ({
+        label: `Copy Scene to R${rotation.angle}`,
+        disabled: !activeSceneNode,
+        title: activeSceneNode ? `Copy ${activeSceneNode.name} onto R${rotation.angle} of this Theme Project` : "No active Scene",
+        onClick: () => copyActiveSceneToRotations([rotation.id]),
+      }))),
+      { label: "Copy Scene to other rotations", disabled: !activeSceneNode || (activeTheme?.rotations.length ?? 0) < 2, title: activeSceneNode ? "Copy this Scene onto every other Rotation / Form of this Theme Project (one undo step)" : "No active Scene", onClick: () => copyActiveSceneToRotations((activeTheme?.rotations ?? []).filter((rotation) => rotation.id !== activeRotationNode?.id).map((rotation) => rotation.id)) },
       { label: "Move Scene Earlier", disabled: !activeSceneNode || (activeRotationNode?.scenes.findIndex((scene) => scene.id === activeSceneNode?.id) ?? 0) <= 0, onClick: () => moveActiveScene(-1) },
       { label: "Move Scene Later", disabled: !activeSceneNode || (activeRotationNode?.scenes.findIndex((scene) => scene.id === activeSceneNode?.id) ?? -1) >= (activeRotationNode?.scenes.length ?? 0) - 1, onClick: () => moveActiveScene(1) },
       { label: "Edit Scene Activation", disabled: !activeSceneNode, title: activeSceneNode ? "Select the Scene and open its activation rule in Properties" : "No active Scene", onClick: () => { if (activeSceneNode) selectNode({ id: activeSceneNode.id, label: activeSceneNode.name, kind: "Scene", detail: `Priority ${activeSceneNode.priority}` }); activatePanel("properties"); } },
@@ -3231,6 +3316,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     Asset: [
       { label: "Import Asset…", disabled: !assetImportSource, title: assetImportSource ? "Register image, video or audio files in the project" : "Asset import is unavailable in this build", onClick: () => { void importAssets(); } },
       { label: "Open Asset Browser", onClick: () => activatePanel("assets") },
+      { label: "Assign to selected widget", disabled: !selectedAssetIds.length, title: selectedAssetIds.length ? "Assign the selected asset to the media widget" : "Select an asset first", onClick: () => selectedAssetIds[0] && assignAssetToSelectedWidget(selectedAssetIds[0]) },
       { label: "Delete Selected Asset", disabled: !selectedAssetIds.length, title: selectedAssetIds.length ? "Delete the asset and clear every reference to it" : "Select an asset in the Asset Browser", onClick: () => deleteAssetsCommand(selectedAssetIds) },
       { label: "Theme Resources", disabled: !activeTheme, title: activeTheme ? "Select the Theme Project and edit which assets ship with it" : "No Theme Project", onClick: () => { if (activeTheme) selectNode({ id: activeTheme.id, label: activeTheme.name, kind: "Theme Project" }); activatePanel("properties"); } },
     ],
@@ -3389,7 +3475,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       : assetCategory === "scene"
         ? project.assets.filter((asset) => sceneAssetIds.has(asset.id))
         : project.assets.filter((asset) => unsupportedAssetIds.has(asset.id));
-  const filteredAssets = assetsForCategory.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || assetTypeLabel(asset.mediaType).toLowerCase().includes(assetSearch.toLowerCase()) || asset.sourcePath.toLowerCase().includes(assetSearch.toLowerCase()));
+  const typeFilteredAssets = assetTypeFilter === "all" ? assetsForCategory : assetsForCategory.filter((asset) => asset.mediaType === assetTypeFilter);
+  const filteredAssets = typeFilteredAssets.filter((asset) => asset.name.toLowerCase().includes(assetSearch.toLowerCase()) || assetTypeLabel(asset.mediaType).toLowerCase().includes(assetSearch.toLowerCase()) || asset.sourcePath.toLowerCase().includes(assetSearch.toLowerCase()));
+  const assetTypeFilters: { id: AssetTypeFilter; label: string }[] = [
+    { id: "all", label: "All" },
+    { id: "image", label: "Images" },
+    { id: "video", label: "Videos" },
+    { id: "audio", label: "Audio" },
+  ];
+  const assetTypeCount = (filter: AssetTypeFilter): number => filter === "all"
+    ? assetsForCategory.length
+    : assetsForCategory.filter((asset) => asset.mediaType === filter).length;
   const renderAssets = () => (
     <>
       {renderPanelHeader("assets", "LIBRARY", "Asset Browser")}
@@ -3400,18 +3496,22 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         <span className="asset-toolbar-note">{project.assets.length} asset{project.assets.length === 1 ? "" : "s"}</span>
       </div>
       <div className="asset-search"><input aria-label="Search assets" placeholder="Search name, type or path" value={assetSearch} onChange={(event) => setAssetSearch(event.target.value)} /></div>
+      <div className="asset-type-filter" role="tablist" aria-label="Filter assets by media type">{assetTypeFilters.map((filter) => <button key={filter.id} type="button" role="tab" aria-selected={assetTypeFilter === filter.id} className={assetTypeFilter === filter.id ? "active" : ""} onClick={() => setAssetTypeFilter(filter.id)}>{filter.label}<small>{assetTypeCount(filter.id)}</small></button>)}</div>
       <div className="asset-category-list">{assetCategories.map((category) => <button key={category.id} type="button" className={assetCategory === category.id ? "active" : ""} onClick={() => setAssetCategory(category.id)}><span>{category.id === "depot" ? "▱" : category.id === "resources" ? "▤" : category.id === "scene" ? "◈" : "⊘"}</span>{category.label}<small>{assetCountFor(category.id)}</small></button>)}</div>
       <div className="asset-list">
         {filteredAssets.length > 0 ? filteredAssets.map((asset) => {
           const uses = countAssetReferences(project, asset.id);
           return (
-            <button type="button" className={`asset-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`} key={asset.id} aria-current={selectedIds.includes(asset.id) ? "true" : undefined} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: `${assetTypeLabel(asset.mediaType)} · ${uses > 0 ? `${uses} reference(s)` : "unused"}` })}>
-              <span className="asset-thumb">{displaySrcForPreview(assetPreviews[asset.id]) ? <img src={displaySrcForPreview(assetPreviews[asset.id])} alt="" /> : assetGlyph(asset.mediaType)}</span>
-              <span><strong>{asset.name}</strong><small>{assetTypeLabel(asset.mediaType)} · {asset.sourcePath}</small></span>
-              <span className={`asset-usage ${uses > 0 ? "is-used" : ""}`} title={uses > 0 ? `${uses} canonical reference(s)` : "Not referenced by any Theme resource, Widget or Binding"}>{uses > 0 ? `×${uses}` : "unused"}</span>
-            </button>
+            <div className={`asset-row ${selectedIds.includes(asset.id) ? "is-selected" : ""}`} key={asset.id}>
+              <button type="button" className="asset-row-main" aria-current={selectedIds.includes(asset.id) ? "true" : undefined} onClick={() => selectNode({ id: asset.id, label: asset.name, kind: "Asset", detail: `${assetTypeLabel(asset.mediaType)} · ${uses > 0 ? `${uses} reference(s)` : "unused"}` })}>
+                <span className="asset-thumb">{displaySrcForPreview(assetPreviews[asset.id]) ? <img src={displaySrcForPreview(assetPreviews[asset.id])} alt="" /> : assetGlyph(asset.mediaType)}</span>
+                <span><strong>{asset.name}</strong><small>{assetTypeLabel(asset.mediaType)} · {asset.sourcePath}</small></span>
+                <span className={`asset-usage ${uses > 0 ? "is-used" : ""}`} title={uses > 0 ? `${uses} canonical reference(s)` : "Not referenced by any Theme resource, Widget or Binding"}>{uses > 0 ? `×${uses}` : "unused"}</span>
+              </button>
+              <button type="button" className="small-action asset-assign" title="Assign this file to the selected media widget" onClick={() => assignAssetToSelectedWidget(asset.id)}>Assign</button>
+            </div>
           );
-        }) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{project.assets.length === 0 ? "No assets in this project yet" : assetSearch ? "No asset matches the search" : assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Every asset format is supported by the active DeviceProfile" : assetCategory === "resources" ? "No asset is declared as a Theme resource" : "No asset is referenced by a Scene widget"}</strong><span>{project.assets.length === 0 ? "Use Import… to register image, video or audio files. The package carries logical asset records; binary media is materialized by the deployment adapter." : assetCategory === "resources" ? "Select a Theme Project and tick assets in Theme Resources to ship them with the theme." : assetCategory === "scene" ? "Assign an asset to a widget in Properties → Media to make it Scene Content." : "Assets appear in the Depot as soon as they are imported."}</span>{project.assets.length === 0 && assetImportSource ? <button type="button" className="context-action" onClick={() => { void importAssets(); }}>Import Asset</button> : null}</div>}
+        }) : <div className="asset-empty"><span className="empty-panel-icon">{assetCategory === "unsupported" ? "⊘" : "▱"}</span><strong>{project.assets.length === 0 ? "No assets in this project yet" : assetSearch || assetTypeFilter !== "all" ? "No asset matches the filter" : assetCategory === "depot" ? "Asset Depot is empty" : assetCategory === "unsupported" ? "Every asset format is supported by the active DeviceProfile" : assetCategory === "resources" ? "No asset is declared as a Theme resource" : "No asset is referenced by a Scene widget"}</strong><span>{project.assets.length === 0 ? "Use Import… to register image, video or audio files. The package carries logical asset records; binary media is materialized by the deployment adapter." : assetCategory === "resources" ? "Select a Theme Project and tick assets in Theme Resources to ship them with the theme." : assetCategory === "scene" ? "Assign an asset to a media widget to make it Scene Content." : "Assets appear in the Depot as soon as they are imported."}</span>{project.assets.length === 0 && assetImportSource ? <button type="button" className="context-action" onClick={() => { void importAssets(); }}>Import Asset</button> : null}</div>}
       </div>
       <div className="panel-footnote"><span className="footnote-mark">i</span><span>Depot lists every imported asset. Resources, Scene Content and Unsupported are derived from canonical references.</span></div>
     </>
@@ -3873,10 +3973,10 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             {!multi && renderWidgetContentSection(widget)}
             {!multi && renderWidgetMediaSection(widget)}
           </>}
-          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" disabled={viewMode === "preview"} checked={node.scene.enabled !== false} onChange={(event) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
+          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" disabled={viewMode === "preview"} checked={node.scene.enabled !== false} onChange={(event) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} />{(activeTheme?.rotations ?? []).filter((rotation) => rotation.id !== (resolvedSelection?.rotation?.id ?? activeRotationNode?.id)).map((rotation) => <button type="button" key={rotation.id} className="property-inline-action" disabled={viewMode === "preview"} title={`Copy this Scene onto R${rotation.angle}`} onClick={() => copyActiveSceneToRotations([rotation.id])}>Copy to R{rotation.angle}</button>)}</section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="Used By" value={listAssetReferenceLabels(project, node.asset.id).join("; ") || "unused"} /><button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><button type="button" className="property-inline-action" disabled={viewMode === "preview"} title="Assign this file to the selected media widget" onClick={() => assignAssetToSelectedWidget(node.asset!.id)}>Assign to selected widget</button><div className="property-section-title">Used By</div>{listAssetReferenceLabels(project, node.asset.id).length ? <ul className="reference-list">{listAssetReferenceLabels(project, node.asset.id).map((label) => <li key={label}><span>{label}</span></li>)}</ul> : <p className="property-note">unused</p>}<button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter. Editor snapshots are session-only.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
         </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={viewMode === "preview"} ariaLabel="Project name" onCommit={(value) => renameNodeById(project.id, value)} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} disabled={viewMode === "preview"} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
@@ -4072,7 +4172,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
         setContextMenu(null);
       }
     }}><div className="canvas-widget-layer" style={canvasLayerStyle}>{canvasAvailable && snapGuides.map(renderSnapGuide)}{canvasAvailable && selectionBounds && <div className="selection-bounds" style={{ left: `${(selectionBounds.x / canvasWidth) * 100}%`, top: `${(selectionBounds.y / canvasHeight) * 100}%`, width: `${(selectionBounds.width / canvasWidth) * 100}%`, height: `${(selectionBounds.height / canvasHeight) * 100}%` }}>{selectedWidgetIds.length > 1 && selectedEditableWidgets.length > 0 && (["n", "e", "s", "w", "nw", "ne", "sw", "se"] as ResizeHandle[]).map((handle) => <button type="button" key={handle} className={`resize-handle handle-${handle}`} aria-label={`Resize selection ${handle}`} onPointerDown={(event) => beginSelectionResize(handle, event)} />)}</div>}{canvasAvailable && displayedWidgets.map(renderCanvasWidget)}{canvasPointer.mode === "marquee" && <div className="selection-marquee" style={{ left: `${(canvasPointer.rect.x / canvasWidth) * 100}%`, top: `${(canvasPointer.rect.y / canvasHeight) * 100}%`, width: `${(canvasPointer.rect.width / canvasWidth) * 100}%`, height: `${(canvasPointer.rect.height / canvasHeight) * 100}%` }} />}{(!canvasAvailable || displayedWidgets.length === 0) && <div className="canvas-empty-state"><span className="empty-glyph">◇</span><strong>{!activeProfile ? "DeviceProfile unavailable" : activeScene?.name ?? (hasThemeProject ? "Select a Scene or Widget" : "No Theme Project")}</strong><span>{!activeProfile ? "The saved DeviceProfile is not registered in this build. Choose a registered profile to continue." : activeScene ? "Place a widget from the palette, or drop a display kit." : "Add a Scene to this rotation to start placing widgets."}</span>{!activeProfile ? availableProfiles.map((profile) => <button type="button" key={profile.id} className="context-action" onClick={(event) => { event.stopPropagation(); setDeviceProfile(profile.id); }}>Use {profile.name}</button>) : activeScene?.id && activeProfile?.supportedWidgetTypes.length ? <>{(activeProfile.supportedWidgetTypes).map((widgetType) => <button type="button" key={widgetType} className="context-action" onClick={(event) => { event.stopPropagation(); enterPlaceMode(widgetType); }}>Place {defaultWidgetName(widgetType)}</button>)}<button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addDisplayKit(); }}>Display kit</button></> : activeRotation && !activeScene ? <>{["Idle", "Travel Up", "Travel Down", "Fire", "Overload"].map((preset) => <button type="button" key={preset} className="context-action" onClick={(event) => { event.stopPropagation(); addScene(preset); }}>{preset}</button>)}<button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addScene(); }}>Add Scene</button></> : !hasThemeProject ? <button type="button" className="context-action" onClick={(event) => { event.stopPropagation(); addThemeProject(); }}>Add Theme Project</button> : null}</div>}</div></div><div className="device-frame-footer"><span>{activeRotation ? `R${activeRotation.angle}` : ""}</span><span>{canvasWidth} × {canvasHeight}</span></div></div></div></div>
-            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><button type="button" className="context-action" disabled={viewMode === "preview" || selectedEditableWidgets.length < 2} onClick={() => alignSelection("left", "align")} title="Align left">Align</button><button type="button" className="context-action" disabled={viewMode === "preview" || selectedEditableWidgets.length < 3} onClick={() => alignSelection("horizontal", "distribute")} title="Distribute horizontally">Distribute</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={deleteSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
+            <div className="canvas-context-bar"><div className="context-selection"><span className="selection-dot" />{activeSelectionLabel}{viewMode === "design" && runtime.activeScene && resolvedSelection?.scene?.id !== runtime.activeScene.id && <span className="context-runtime-note">Runtime would activate: {runtime.activeScene.name}</span>}</div><div className="context-actions"><select aria-label="Align or distribute selection" className="context-action-select" disabled={viewMode === "preview" || selectedEditableWidgets.length < 2} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedEditableWidgets.length < 2 ? "Requires at least 2 unlocked widgets" : "Align or distribute the selected widgets"} defaultValue="" onChange={(event) => { const value = event.target.value; event.currentTarget.value = ""; if (value === "horizontal" || value === "vertical") alignSelection(value, "distribute"); else if (value) alignSelection(value as AlignOperation, "align"); }}><option value="">Align…</option><option value="left">Align left</option><option value="horizontal-center">Align horizontal centres</option><option value="right">Align right</option><option value="top">Align top</option><option value="vertical-middle">Align vertical middles</option><option value="bottom">Align bottom</option><option value="horizontal" disabled={selectedEditableWidgets.length < 3}>Distribute horizontally</option><option value="vertical" disabled={selectedEditableWidgets.length < 3}>Distribute vertically</option></select><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={duplicateSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Duplicate selected widget" : "Requires a selected widget"}>Duplicate</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("locked")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllLocked ? "Unlock selected widget(s)" : "Lock selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllLocked ? "Unlock" : "Lock"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={() => toggleWidgetProperty("visible")} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? (selectedWidgetsAllVisible ? "Hide selected widget(s)" : "Show selected widget(s)") : "Requires a selected widget"}>{selectedWidgetsAllVisible ? "Hide" : "Show"}</button><button type="button" className="context-action" disabled={viewMode === "preview" || !selectedWidgetIds.length} onClick={deleteSelectionCommand} title={viewMode === "preview" ? "Preview Mode is inspection-only" : selectedWidgetIds.length ? "Delete selected widget" : "Requires a selected widget"}>Delete</button></div></div>
           </section>
           {rightVisible && <div className="splitter" role="separator" aria-label="Resize right panel" aria-orientation="vertical" aria-valuenow={rightWidth} aria-valuemin={220} aria-valuemax={420} tabIndex={0} onKeyDown={(event) => { if (event.key === "ArrowLeft") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current - 8))); } if (event.key === "ArrowRight") { event.preventDefault(); setRightWidth((current) => Math.min(420, Math.max(220, current + 8))); } }} onPointerDown={(event) => beginResize("right", event)} />}
           {activeRightPanel && renderPanelContainer(activeRightPanel, activeRightPanel === "properties" ? renderProperties() : renderSimulator())}
