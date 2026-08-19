@@ -23,6 +23,14 @@ describe("architecture boundaries", () => {
     expect(domain).not.toMatch(/from\s+["']@tauri-apps\/api["']/);
   });
 
+  it("does not put editor snapshot bytes in the deployment package", () => {
+    const exported = readFileSync(join(process.cwd(), "src/Core/export.ts"), "utf8");
+    expect(exported).toMatch(/binary:\s*false/);
+    expect(exported).not.toMatch(/editorPreview|IndexedDB|createObjectURL/);
+    const core = sourceFiles(join(process.cwd(), "src/Core")).map((file) => readFileSync(file, "utf8")).join("\n");
+    expect(core).not.toMatch(/editor-preview-store/);
+  });
+
   it("keeps Core independent of React and Tauri", () => {
     const core = sourceFiles(join(process.cwd(), "src/Core"))
       .map((file) => readFileSync(file, "utf8"))

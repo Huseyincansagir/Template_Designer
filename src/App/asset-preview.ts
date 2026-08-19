@@ -1,6 +1,10 @@
 import type { MediaType } from "../Domain/models";
+import type { StoredEditorPreview } from "../Infrastructure/editor-preview-store";
 
-/** Session-only editor preview. Never stored in the project or the package. */
+/**
+ * In-memory editor preview. Object URLs are session handles; durable bytes
+ * live in `EditorPreviewStore`, never in the Project or the package.
+ */
 export type AssetPreview = {
   readonly src: string;
   readonly poster?: string;
@@ -81,4 +85,48 @@ export async function editorPreviewFromBlob(blob: Blob, mediaType?: MediaType): 
 export function displaySrcForPreview(preview: AssetPreview | undefined): string | undefined {
   if (!preview || preview.kind === "audio") return undefined;
   return preview.poster ?? preview.src;
+}
+
+export function dataUrlToBlob(dataUrl: string): Blob | undefined {
+  const match = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(dataUrl);
+  if (!match) return undefined;
+  const mime = match[1] || "application/octet-stream";
+  const payload = match[3] ?? "";
+  try {
+    if (match[2]) {
+      const binary = atob(payload);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+      return new Blob([bytes], { type: mime });
+    }
+    return new Blob([decodeURIComponent(payload)], { type: mime });
+  } catch {
+    return undefined;
+  }
+}
+
+/** Durable cache record from a live preview. Audio and failed video posters are skipped. */
+export function storedPreviewRecord(
+  projectId: string,
+  assetId: string,
+  preview: AssetPreview,
+  originalBlob: Blob,
+): StoredEditorPreview | undefined {
+  if (preview.kind === "image") {
+    return { projectId, assetId, kind: "image", mime: originalBlob.type || "image/png", blob: originalBlob };
+  }
+  if (preview.kind === "video") {
+    if (!preview.poster?.startsWith("data:")) return undefined;
+    const poster = dataUrlToBlob(preview.poster);
+    if (!poster) return undefined;
+    return { projectId, assetId, kind: "video", mime: poster.type || "image/jpeg", blob: poster };
+  }
+  return undefined;
+}
+
+export function assetPreviewFromStored(record: StoredEditorPreview): AssetPreview | undefined {
+  if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return undefined;
+  const src = URL.createObjectURL(record.blob);
+  if (record.kind === "image") return { src, kind: "image" };
+  return { src, poster: src, kind: "video" };
 }

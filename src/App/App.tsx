@@ -14,7 +14,8 @@ import { stableSerialize } from "../Core/serialize";
 import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource, extensionOf, isFileDrag, pickedFromFiles } from "../Infrastructure/asset-import";
-import { displaySrcForPreview, editorPreviewFromBlob, revokeAssetPreview, type AssetPreview } from "./asset-preview";
+import { assetPreviewFromStored, displaySrcForPreview, editorPreviewFromBlob, revokeAssetPreview, storedPreviewRecord, type AssetPreview } from "./asset-preview";
+import { createEditorPreviewStore } from "../Infrastructure/editor-preview-store";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
@@ -583,6 +584,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const assetImportSource = useMemo(() => typeof document === "undefined" ? undefined : createAssetImportSource(document), []);
   const projectFileGateway = useMemo(() => typeof document === "undefined" ? undefined : createProjectFileGateway(document), []);
   const workspaceSessionStorage = useMemo(() => typeof window === "undefined" ? undefined : new LocalStorageWorkspaceSession(window.localStorage), []);
+  const editorPreviewStore = useMemo(() => createEditorPreviewStore(), []);
   // Boot outcome is captured, not swallowed: a stored project that failed the
   // load gate must be REPORTED, with its raw payload preserved, instead of
   // silently becoming a blank scaffold (D3-10).
@@ -639,6 +641,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [duplicateMode, setDuplicateMode] = useState(false);
   const [placeWidgetType, setPlaceWidgetType] = useState<string | null>(null);
   const [assetPreviews, setAssetPreviews] = useState<Record<string, AssetPreview>>({});
+  const assetPreviewsRef = useRef<Record<string, AssetPreview>>({});
+  const previewGenerationRef = useRef(0);
+  assetPreviewsRef.current = assetPreviews;
   const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string; priority: number }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "", priority: MIN_BINDING_PRIORITY });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
@@ -798,6 +803,62 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     });
   }, [project]);
 
+  /**
+   * Restore editor snapshots from the IndexedDB cache. Bytes stay out of the
+   * Project and the package. Cache rows are kept on Delete so Undo can restore
+   * the face. Generation only advances on a different Project so in-flight
+   * import snapshots are not discarded.
+   */
+  const previousPreviewProjectIdRef = useRef("");
+  useEffect(() => {
+    const projectChanged = previousPreviewProjectIdRef.current !== project.id;
+    previousPreviewProjectIdRef.current = project.id;
+    if (projectChanged) previewGenerationRef.current += 1;
+    const generation = previewGenerationRef.current;
+    const projectId = project.id;
+    const liveIds = project.assets.map((asset) => asset.id);
+    const liveSet = new Set(liveIds);
+    let cancelled = false;
+    void (async () => {
+      let records: Awaited<ReturnType<typeof editorPreviewStore.getForProject>> = [];
+      try {
+        records = liveIds.length ? await editorPreviewStore.getForProject(projectId, liveIds) : [];
+      } catch {
+        if (!cancelled && generation === previewGenerationRef.current) {
+          logAction("Editor snapshots could not be restored from the local cache", "WARN");
+        }
+        return;
+      }
+      if (cancelled || generation !== previewGenerationRef.current) return;
+      const incoming: Record<string, AssetPreview> = {};
+      for (const record of records) {
+        if (assetPreviewsRef.current[record.assetId]) continue;
+        const preview = assetPreviewFromStored(record);
+        if (preview) incoming[record.assetId] = preview;
+      }
+      setAssetPreviews((current) => {
+        if (generation !== previewGenerationRef.current) {
+          Object.values(incoming).forEach(revokeAssetPreview);
+          return current;
+        }
+        const merged: Record<string, AssetPreview> = {};
+        for (const [assetId, preview] of Object.entries(current)) {
+          if (liveSet.has(assetId)) merged[assetId] = preview;
+          else revokeAssetPreview(preview);
+        }
+        for (const [assetId, preview] of Object.entries(incoming)) {
+          if (!liveSet.has(assetId) || merged[assetId]) {
+            revokeAssetPreview(preview);
+            continue;
+          }
+          merged[assetId] = preview;
+        }
+        return merged;
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [project.id, project.assets.map((asset) => asset.id).join("|")]);
+
   const createProject = (name = "Untitled Project", profileId = project.deviceProfileId) => {
     cancelCanvasInteraction();
     const profile = profileRegistry.get(profileId) ?? availableProfiles[0];
@@ -899,16 +960,38 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const attachEditorPreviews = (createdIds: readonly string[], picked: readonly { draft: AssetDraft; blob?: Blob }[]) => {
+    const projectId = project.id;
+    const generation = previewGenerationRef.current;
     void (async () => {
       const next: Record<string, AssetPreview> = {};
       for (let index = 0; index < createdIds.length; index += 1) {
         const blob = picked[index]?.blob;
-        if (!blob) continue;
+        const assetId = createdIds[index];
+        if (!blob || !assetId) continue;
         const preview = await editorPreviewFromBlob(blob, picked[index]?.draft.mediaType);
-        if (preview) next[createdIds[index]] = preview;
+        if (!preview) continue;
+        next[assetId] = preview;
+        const record = storedPreviewRecord(projectId, assetId, preview, blob);
+        if (!record) continue;
+        try {
+          await editorPreviewStore.put(record);
+        } catch {
+          logAction(`Editor snapshot for '${picked[index]?.draft.name ?? assetId}' could not be cached`, "WARN");
+        }
       }
       if (!Object.keys(next).length) return;
-      setAssetPreviews((current) => ({ ...current, ...next }));
+      if (generation !== previewGenerationRef.current) {
+        Object.values(next).forEach(revokeAssetPreview);
+        return;
+      }
+      setAssetPreviews((current) => {
+        const merged = { ...current };
+        for (const [assetId, preview] of Object.entries(next)) {
+          if (merged[assetId] && merged[assetId] !== preview) revokeAssetPreview(merged[assetId]);
+          merged[assetId] = preview;
+        }
+        return merged;
+      });
     })();
   };
 
@@ -3151,6 +3234,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   useEffect(() => () => {
     geometryOverridesRef.current = {};
     if (activePointerIdRef.current !== null) releaseCanvasPointer(activePointerIdRef.current);
+    Object.values(assetPreviewsRef.current).forEach(revokeAssetPreview);
   }, []);
 
   const selectionGeometryWidgets = canvasWidgets.filter((widget) => selectedWidgetIds.includes(widget.id));
@@ -3976,7 +4060,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" disabled={viewMode === "preview"} checked={node.scene.enabled !== false} onChange={(event) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} />{(activeTheme?.rotations ?? []).filter((rotation) => rotation.id !== (resolvedSelection?.rotation?.id ?? activeRotationNode?.id)).map((rotation) => <button type="button" key={rotation.id} className="property-inline-action" disabled={viewMode === "preview"} title={`Copy this Scene onto R${rotation.angle}`} onClick={() => copyActiveSceneToRotations([rotation.id])}>Copy to R{rotation.angle}</button>)}</section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><button type="button" className="property-inline-action" disabled={viewMode === "preview"} title="Assign this file to the selected media widget" onClick={() => assignAssetToSelectedWidget(node.asset!.id)}>Assign to selected widget</button><div className="property-section-title">Used By</div>{listAssetReferenceLabels(project, node.asset.id).length ? <ul className="reference-list">{listAssetReferenceLabels(project, node.asset.id).map((label) => <li key={label}><span>{label}</span></li>)}</ul> : <p className="property-note">unused</p>}<button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter. Editor snapshots are session-only.</p></section>}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} disabled={viewMode === "preview"} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={viewMode === "preview"} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><button type="button" className="property-inline-action" disabled={viewMode === "preview"} title="Assign this file to the selected media widget" onClick={() => assignAssetToSelectedWidget(node.asset!.id)}>Assign to selected widget</button><div className="property-section-title">Used By</div>{listAssetReferenceLabels(project, node.asset.id).length ? <ul className="reference-list">{listAssetReferenceLabels(project, node.asset.id).map((label) => <li key={label}><span>{label}</span></li>)}</ul> : <p className="property-note">unused</p>}<button type="button" className="property-inline-action" disabled={viewMode === "preview"} onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter. Editor snapshots stay in this browser&apos;s cache, not in the package.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
         </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={viewMode === "preview"} ariaLabel="Project name" onCommit={(value) => renameNodeById(project.id, value)} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} disabled={viewMode === "preview"} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>

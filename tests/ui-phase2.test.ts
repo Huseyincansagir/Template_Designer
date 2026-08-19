@@ -68,5 +68,8 @@ describe("UI Phase 2 foundations", () => {
     expect(app).toContain("openAssetsForAssign");
     expect(app).toContain("copySceneToRotations");
     expect(app).toContain("context-action-select");
+    expect(app).toContain("editorPreviewStore");
+    expect(app).toContain("storedPreviewRecord");
+    expect(app).toContain("getForProject");
   });
 });

@@ -275,7 +275,7 @@ These decisions are canonical and live in their source documents. They are liste
 ### UI-D-0021 — Asset assign is widget-targeted, type filter is not folders
 - **Topic:** Connecting imported files to media widgets without a folder model.
 - **Context:** Import registered logical records but the designer still had to hunt Properties → Media. Elevator ref 04 shows Images/Videos/Audio as a filter, not a depot-folder product.
-- **Decision:** (1) Asset Browser rows and the asset inspector expose **Assign to selected widget**. Image/video become the media widget’s primary `assetIds` (and replace sequence item 0 when a sequence exists); audio becomes `audioAssetId`. Digit/direction/text/warning refuse with WARN. (2) Empty media widgets offer **Assign asset…**, which opens the Asset Browser and remembers that widget. (3) Used By is the same reference list as delete-confirm. (4) All/Images/Videos/Audio is a list filter over the existing Depot/Resources/Scene/Unsupported categories. No `Images/Lobby` folders. Snapshots stay session-only.
+- **Decision:** (1) Asset Browser rows and the asset inspector expose **Assign to selected widget**. Image/video become the media widget’s primary `assetIds` (and replace sequence item 0 when a sequence exists); audio becomes `audioAssetId`. Digit/direction/text/warning refuse with WARN. (2) Empty media widgets offer **Assign asset…**, which opens the Asset Browser and remembers that widget. (3) Used By is the same reference list as delete-confirm. (4) All/Images/Videos/Audio is a list filter over the existing Depot/Resources/Scene/Unsupported categories. No `Images/Lobby` folders. Snapshot persistence is UI-D-0023.
 - **Reason:** The golden path is Import → assign → canvas face. Folders would invent a package layout the V1 logical records do not have.
 - **Alternatives:** (a) persist thumbnails in `*.asset.json` — rejected (binary:false); (b) drop-on-canvas import — already refused; (c) auto-assign on row click — rejected: row click inspects the asset.
 - **Status:** CONFIRMED
@@ -290,5 +290,15 @@ These decisions are canonical and live in their source documents. They are liste
 - **Alternatives:** (a) one widget geometry on all 4 forms — DOMAIN CONTRADICTION; (b) duplicate-in-place only — rejected: that is a sibling on the same rotation.
 - **Status:** CONFIRMED
 - **Canonical source:** This log; DeviceProfile four rotations; workflow W6
+- **Date:** 2026-08-19
+
+### UI-D-0023 — Editor snapshots persist outside the package
+- **Topic:** Seeing imported PNG alpha and video first frames after reload.
+- **Context:** Session blob URLs vanished on refresh. Putting bytes in `Asset.metadata` or `*.asset.json` would break the V1 logical-package boundary (`binary: false`). The designer still needs the actual picture, not a glyph.
+- **Decision:** An editor preview cache (`EditorPreviewStore`) keyed by `projectId` + `assetId` holds image file bytes as-is (PNG alpha preserved) and video first-frame posters only. Audio has no visual snapshot. The cache is IndexedDB in the browser, memory when IndexedDB is absent. It is not written into the Project document, `.tdproj.json`, or the deployment package. Reload and Undo-of-delete restore faces from the cache. Clearing site data loses them — that is honest. A `.tdproj.json` opened in another browser has no snapshots until the files are imported again.
+- **Reason:** Snapshots are an editor viewing aid, not firmware payload.
+- **Alternatives:** (a) data URLs in `Asset.metadata` — rejected: `export.ts` copies metadata into `*.asset.json`; (b) store full video files — rejected: the product asked for snapshots; (c) session-only blob URLs — rejected: reload made the depot look empty.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; AGENTS.md package boundary; supersedes session-only wording in UI-D-0021
 - **Date:** 2026-08-19
 
