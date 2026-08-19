@@ -10,7 +10,8 @@ Kaynak repo: MyApplication_6 `docs/` (baseline `feb5f56` / sözleşme commit `2c
 | [STM32_V2_GEREKEN_DEGISIKLIKLER.md](STM32_V2_GEREKEN_DEGISIKLIKLER.md) | STM32 C: V1’de yok; P1+ sonra |
 | [UC_TARAF_GOZDEN_GECIRME_20260819.md](UC_TARAF_GOZDEN_GECIRME_20260819.md) | Designer · SD · STM32 yeniden tarama |
 | [v2_firmware_uyumluluk_20260819.md](v2_firmware_uyumluluk_20260819.md) | Paket ağacı uyumsuzluk |
-| [binding_yapisi_20260819.md](binding_yapisi_20260819.md) | Binding → `sahne=` |
+| [binding_yapisi_20260819.md](binding_yapisi_20260819.md) | Binding → `sahne=` (derleme) |
+| [stm32_binding_motoru_20260819.md](stm32_binding_motoru_20260819.md) | STM32 Binding motoru (RAM, 0–15, üyelik AND) |
 | [template_designer_v2_stm32_paket_sozlesmesi_plani_20260819.md](template_designer_v2_stm32_paket_sozlesmesi_plani_20260819.md) | Uzun plan / errata |
 
 **Başlangıç işi bu depoda:** DeviceProfile MJPG + `0:/tN` `tema.cfg` derleyici. Firmware dumanından önce CM7 patch yok.
