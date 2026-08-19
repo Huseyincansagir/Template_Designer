@@ -8,6 +8,12 @@ export const defaultPanelLayout: PanelLayoutState = {
   console: "docked",
 };
 
+/** At 1280×720 the console band steals the height the device frame needs. */
+export function defaultPanelLayoutForViewport(width: number, height: number): PanelLayoutState {
+  const compact = width < 1360 || height < 800;
+  return { ...defaultPanelLayout, console: compact ? "collapsed" : "docked" };
+}
+
 export function setPanelLayoutMode(layout: PanelLayoutState, panel: PanelId, mode: PanelMode): PanelLayoutState {
   return { ...layout, [panel]: mode };
 }

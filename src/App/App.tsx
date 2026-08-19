@@ -22,7 +22,7 @@ import type { Asset, Binding, Condition, ConditionMode, ConditionOperator, Deplo
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateAlignUpdates, calculateDistributeUpdates, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type AlignOperation, type DistributeOperation, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, describeSelectionRefusal, type EditorCommandId, type SelectionOperation } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
-import { activateDockedPanel, defaultPanelLayout, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
+import { activateDockedPanel, defaultPanelLayoutForViewport, floatingPanels as getFloatingPanels, setPanelLayoutMode } from "./panel-manager";
 import { canonicalShortcuts, matchShortcut, shortcutDisplay, shortcutRegistry } from "./shortcut-registry";
 import type { DeviceProfileRegistry } from "./profile-registry";
 
@@ -575,15 +575,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const project = documentSnapshot.project ?? createEmptyProject();
   const bootSession = workspaceSessionStorage?.load(project.id);
   const restoredSessionZoom = bootSession && bootSession.zoom >= 50 && bootSession.zoom <= 200 ? bootSession.zoom : 100;
-  const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => ({ ...defaultPanelLayout }));
+  const [panelModes, setPanelModes] = useState<Record<PanelId, PanelMode>>(() => (
+    defaultPanelLayoutForViewport(typeof window === "undefined" ? 1440 : window.innerWidth, typeof window === "undefined" ? 900 : window.innerHeight)
+  ));
   const [leftDockTab, setLeftDockTab] = useState<"explorer" | "assets">(bootSession?.leftDockTab ?? "explorer");
   const [rightDockTab, setRightDockTab] = useState<"properties" | "simulator">(bootSession?.rightDockTab ?? "properties");
   const clampPanelWidth = (preferred: number) => {
     const viewportWidth = typeof window === "undefined" ? 1440 : window.innerWidth;
     return Math.round(Math.min(preferred, Math.max(220, viewportWidth * 0.18)));
   };
-  const [leftWidth, setLeftWidth] = useState(() => clampPanelWidth(286));
-  const [rightWidth, setRightWidth] = useState(() => clampPanelWidth(298));
+  const [leftWidth, setLeftWidth] = useState(() => clampPanelWidth((typeof window === "undefined" ? 1440 : window.innerWidth) < 1360 ? 240 : 286));
+  const [rightWidth, setRightWidth] = useState(() => clampPanelWidth((typeof window === "undefined" ? 1440 : window.innerWidth) < 1360 ? 240 : 298));
   const [menuOpen, setMenuOpen] = useState<MenuKey | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -1903,8 +1905,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       });
       setSdResult(result);
       if (result.status === "verified") {
-        setDeploymentStatus(`Deployed · ${volume.mountPath} · ${result.writtenFiles} file(s) verified`);
-        logAction(`Deployment verified on ${volume.mountPath}: ${result.writtenFiles} file(s), ${result.writtenBytes} byte(s) read back and compared`, "INFO");
+        const binaryNote = result.copiedBinaries.length ? ` · ${result.copiedBinaries.length} media file(s) copied` : " · logical records only";
+        setDeploymentStatus(`Deployed · ${volume.mountPath} · ${result.writtenFiles} file(s) verified${binaryNote}`);
+        logAction(`Deployment verified on ${volume.mountPath}: ${result.writtenFiles} file(s), ${result.writtenBytes} byte(s) read back${result.copiedBinaries.length ? `; ${result.copiedBinaries.length} media file(s) copied from resolved paths` : "; no resolvable media paths so only logical records were written"}`, "INFO");
         return true;
       }
       // A failed deployment never reads as done, and always says which stage.
@@ -1982,9 +1985,11 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const collapsePanel = (panel: PanelId) => setPanelMode(panel, "collapsed");
 
   const resetLayout = () => {
-    setPanelModes({ ...defaultPanelLayout });
-    setLeftWidth(clampPanelWidth(286));
-    setRightWidth(clampPanelWidth(298));
+    const width = typeof window === "undefined" ? 1440 : window.innerWidth;
+    const height = typeof window === "undefined" ? 900 : window.innerHeight;
+    setPanelModes(defaultPanelLayoutForViewport(width, height));
+    setLeftWidth(clampPanelWidth(width < 1360 ? 240 : 286));
+    setRightWidth(clampPanelWidth(width < 1360 ? 240 : 298));
     logAction("Workspace layout reset");
   };
 
@@ -3782,7 +3787,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             {sdResult.status === "verified" ? (
               <>
                 <strong>Deployed and verified</strong>
-                <span>{sdResult.writtenFiles} file(s), {sdResult.writtenBytes} byte(s) written to {sdResult.rootPath} and read back byte-for-byte.</span>
+                <span>{sdResult.writtenFiles} file(s), {sdResult.writtenBytes} byte(s) written to {sdResult.rootPath} and read back byte-for-byte.{sdResult.copiedBinaries.length ? ` ${sdResult.copiedBinaries.length} media file(s) copied from resolved source paths.` : " No resolvable media paths — the card holds logical asset records only."}</span>
               </>
             ) : (
               <>

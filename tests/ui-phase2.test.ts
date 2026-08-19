@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createDeviceProfileRegistry } from "../src/App/profile-registry";
-import { activateDockedPanel, defaultPanelLayout, floatingPanels } from "../src/App/panel-manager";
+import { activateDockedPanel, defaultPanelLayout, defaultPanelLayoutForViewport, floatingPanels } from "../src/App/panel-manager";
 import { intersects, normalizeRect, snapGeometry } from "../src/App/canvas-interaction";
 import { foundationDeviceProfile } from "../src/Domain/factories";
 
@@ -31,6 +31,11 @@ describe("UI Phase 2 foundations", () => {
   it("ships a profile with real runtime registries for the Simulator surfaces", () => {
     expect(foundationDeviceProfile.runtimeStates.length).toBeGreaterThan(0);
     expect(foundationDeviceProfile.runtimeSettings.length).toBeGreaterThan(0);
+  });
+
+  it("collapses the console at 1280×720 so the device frame keeps height", () => {
+    expect(defaultPanelLayoutForViewport(1280, 720).console).toBe("collapsed");
+    expect(defaultPanelLayoutForViewport(1920, 1080).console).toBe("docked");
   });
 
   it("assigns the flexible row of the canvas workspace to the device stage", () => {
