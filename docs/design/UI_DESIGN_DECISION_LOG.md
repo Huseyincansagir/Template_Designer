@@ -181,3 +181,34 @@ These decisions are canonical and live in their source documents. They are liste
 - **Status:** CONFIRMED
 - **Canonical source:** UI §3; this log
 - **Date:** 2026-08-18
+
+### UI-D-0012 — The canvas workspace flexible row belongs to the device stage
+- **Topic:** CSS grid assignment of the Design Studio center column.
+- **Context:** Live measurement at 1920×1080 showed `.canvas-navigator` occupying 719px (`1fr`) while `.canvas-stage` was 32px. The navigator had been inserted as a fourth child of a three-row `grid-template-rows: 40px minmax(0, 1fr) 32px` template.
+- **Decision:** `.canvas-workspace` has exactly three children — fused editor chrome, device stage, context bar — with `grid-template-rows: auto minmax(0, 1fr) auto`. A unit test forbids `renderCanvasNavigator()` and requires the `1fr` row to sit on the stage.
+- **Reason:** Canvas dominance (UI spec §6; ui-ux-system skill). A 32px stage fails the primary workflow regardless of token polish.
+- **Alternatives:** (a) four-row template keeping a separate navigator — rejected: two chrome bands still steal vertical space; (b) stretching the navigator as a “workspace” — rejected: the measured P0.
+- **Status:** CONFIRMED
+- **Canonical source:** UI spec §6; this log
+- **Date:** 2026-08-19
+
+### UI-D-0013 — One compact editor chrome strip
+- **Topic:** Fusion of studio toolbar, rotation switcher and scene tabs.
+- **Context:** Separate 40px toolbar + two-row navigator consumed ~100px before the device, with Design/Preview duplicated as app-bar chips.
+- **Decision:** One `.editor-chrome` row (≈32px, wrapping at 1280) holds Select/Pan/Grid/Snap, Theme (when present), R0–R270, scene tabs + add/reorder, Design/Preview and zoom. App bar is 32px with Save/Undo/Redo/Deploy/Settings. Panel headings are 28px with no kickers; panel footnotes are hidden.
+- **Reason:** Compact CAD density; scene/rotation navigation must be obvious without a second band.
+- **Alternatives:** (a) keep two navigator rows — rejected (measured waste); (b) icon rail copied from the visual mockup — rejected: mockup is style reference only, Explorer remains the hierarchy.
+- **Status:** CONFIRMED
+- **Canonical source:** UI spec §5–§6; this log
+- **Date:** 2026-08-19
+
+### UI-D-0014 — SD deployment is a dedicated dialog, not Console chrome
+- **Topic:** Surface for the SD-card pipeline.
+- **Context:** Deploy lived in a 156px Console tab. The pipeline is a destructive, staged operation (detect → select → preflight → write → verify → eject).
+- **Decision:** `Project ▸ Deploy to SD Card…` and the toolbar Deploy button open a blocking `.deploy-dialog`. Console still logs traces and keeps a Deployment tab as a secondary inspector. Detection is not attempted in the browser build; the dialog states that the transport is absent rather than reporting a failed detection.
+- **Reason:** UI spec §26 and the Settings dialog pattern; never claim a write the build cannot perform.
+- **Alternatives:** (a) keep Console-only — rejected (undiscoverable, cramped); (b) a permanent Deploy panel — rejected (not a continuous editor surface).
+- **Status:** CONFIRMED
+- **Canonical source:** UI spec §26; media-publish skill; this log
+- **Date:** 2026-08-19
+

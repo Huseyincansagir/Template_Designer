@@ -264,3 +264,24 @@ Neither could be settled by running anything, because `cargo` is absent. Both we
 | `ThemeProject.themeDefaults`, `Project.projectSettings`, `Project.metadata` | Domain-only. Nothing in `runtime.ts` or `export.ts` requires user-authored values. |
 | Audio channel / priority authoring | Blocked upstream: the specification contradicts itself on runtime-setting defaults and channel counts (D6 C10d/C10f). Deciding it here would be invention. |
 | Multi-document editing | The shell is single-document by design and says so. |
+
+---
+
+## Final closure pass (HEAD `dc33b10` + this work)
+
+Independent live measurement on 2026-08-19 against the running Vite app at `127.0.0.1:1420`. Previous P0/P1 design-scope items remain **FIXED**. New findings from this pass:
+
+| ID | Sev | Class | Expected | Observed | Root cause | Decision | Fix | Test | Status |
+|----|-----|-------|----------|----------|------------|----------|-----|------|--------|
+| FC-01 | P0 | BUG | Canvas is the dominant surface | At 1920×1080 `.canvas-stage` was **32px**; navigator was **719px**. Device frame 148×263, clipped. | Navigator inserted as a 4th grid child of a 3-row template; `1fr` landed on chrome. | Three children; `auto minmax(0,1fr) auto`. | `app.css` `.canvas-workspace`; fused `.editor-chrome`. | `tests/ui-phase2.test.ts`; live 821px stage / 453×805 frame. | **FIXED** |
+| FC-02 | P0 | BUG | New Theme Project always has R0–R270 | `addThemeProject` without display created `rotations: []`. Profile switch mapped existing angles only. | Optional display path; no Add Rotation command. | Infer display from a sibling R0, else refuse. Profile switch seeds missing angles. | `editor-application.ts` | `product-completion.test.ts` (3 cases); `editor-pipeline.test.ts` | **FIXED** |
+| FC-03 | P1 | STATE BUG | Theme/rotation/Alt+Arrow navigation selects the node the canvas shows | Switchers updated nav state only; Properties could still edit the previous scene. | `navigateTo*` did not `setSelection`. | Navigation sets selection to the landing Theme/Rotation/Scene. | `App.tsx` | Live: scene tabs + rotation cycle. | **FIXED** |
+| FC-04 | P1 | STATE BUG | Preview is read-only | Hide All, z-order, multi-resize, widget toggles, undo/redo still mutated. | `blockedInPreview` not applied to every mutating helper. | Guard those helpers; multi-resize ignored in Preview. | `App.tsx` | Unit suite green; Preview path live-exercised for Design/Preview toggle. | **FIXED** |
+| FC-05 | P1 | UX DISCOVERABILITY | Duplicate on a Theme Project Group is either real or refused | Menu enabled; Core no-op with no log. | Policy permitted group duplicate; Core never copied groups. | Policy refuses with a reason. | `editor-commands.ts` | `product-completion.test.ts` | **FIXED** |
+| FC-06 | P2 | UX DISCOVERABILITY | SD deploy is a dedicated workflow | Buried in Console tab; opening it in the browser also showed a red "Detection failed". | Console was the only surface; detect always ran. | Blocking Deploy dialog; no detect unless `native-tauri`. | `App.tsx` + `.deploy-dialog` | Live screenshot `docs/visual-qa/deploy-dialog.png` | **FIXED** |
+| FC-07 | P2 | UX | New widgets are separately selectable | Cascade of 10px on 120×80 widgets stacked into one blob. | `cascade * snapGridSize`. | Cascade step `max(grid*4, 40)`. | `App.tsx` | Placement formula; live 3-widget create. | **FIXED** |
+| FC-08 | P3 | UX | Chrome is CAD-dense | 48px app bar, 52–79px panel headings, kickers, footnotes, "ASPECT LOCKED". | Token defaults + AI chrome copy. | 32/26/28/22 shell; kickers hidden; Save in toolbar. | `app.css`, `App.tsx` | Live: heading 28px, chrome strip 33px. | **FIXED** |
+
+**Still CODE COMPLETE, HARDWARE/TAURI UNVERIFIED:** SD write/flush/verify/eject (`cargo` absent; no physical card). Binary media copy via `sd_copy_file` is implemented in Rust and unused from TS because browser import has no real path — recorded, not faked.
+
+**Stale ledger note:** Floor Mapping authoring **was** added in PD-04; the "Out of scope" row above is historical.
