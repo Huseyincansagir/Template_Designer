@@ -302,3 +302,13 @@ These decisions are canonical and live in their source documents. They are liste
 - **Canonical source:** This log; AGENTS.md package boundary; supersedes session-only wording in UI-D-0021
 - **Date:** 2026-08-19
 
+### UI-D-0024 — Device frame is contained; canvas must not cover docks
+- **Topic:** Canvas painting over the Properties dock.
+- **Context:** Live measurement at 1280×720 on R90: `.device-frame` used a definite `height: calc(100% - 16px)` with landscape `aspect-ratio`. Preferred width (~954px) beat the canvas column (810px). Descendants overlapped Properties by 128px. Grid `min-width: auto` let that min-content leak. Source-only tests never measured intersection.
+- **Decision:** The device frame sizes with `width/height: auto` and `max-width` / `max-height` of the stage so both portrait and landscape fit. `.canvas-workspace` and `.device-canvas-wrap` clip (`overflow: hidden`, `min-width: 0`). Docked `.tool-panel` is `z-index: 2` + `isolation` so a leak cannot steal hits. Layout tests must measure bounding boxes at R0 and R90, not only read CSS.
+- **Reason:** Properties is a primary editor surface. A landscape form cannot cover it.
+- **Alternatives:** (a) keep `overflow: auto` on the stage and let the designer scroll — rejected: the frame still painted over the dock; (b) shrink docks — rejected: the frame must fit the canvas column.
+- **Status:** CONFIRMED
+- **Canonical source:** This log; UI spec §3 / §6; live overlap probe
+- **Date:** 2026-08-19
+

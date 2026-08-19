@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:layout": "vitest run tests/shell-layout.test.ts tests/shell-overlap.test.ts",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:check": "cargo check --manifest-path src-tauri/Cargo.toml"
@@ -20,10 +21,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.8.0",
-    "@types/react": "^19.1.10",
     "@types/node": "^22.15.0",
+    "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "^1.62.1",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
     "vitest": "^3.2.4"
