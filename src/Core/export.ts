@@ -146,6 +146,9 @@ export async function buildDeploymentPackage(
     projectId: project.id,
     projectName: project.name,
     deviceProfileId: profile.id,
+    // Recorded so the firmware can detect that the registry changed under a
+    // template (TEMPLATE_SCHEMA_V1:58, RUNTIME_STATE_REGISTRY:371).
+    deviceProfileVersion: profile.version,
     themeProjectIds: themes.map((theme) => theme.id).sort(),
     resourceAssetIds: [...resources].sort(),
     usedAssetIds: [...used].sort(),

@@ -462,6 +462,29 @@ export function validateProject(project: Project, profile?: DeviceProfile): Vali
     return { valid: issues.every((current) => current.severity !== "error"), issues };
   }
 
+  // A removed or retyped runtime state is caught per-reference elsewhere, but
+  // only the recorded version reveals that the registry moved at all, which is
+  // what RUNTIME_STATE_REGISTRY:371,381 asks the Designer to detect.
+  if (project.deviceProfileVersion === undefined) {
+    issue(
+      issues,
+      "DEVICE_PROFILE_VERSION_UNRECORDED",
+      "This template does not record which DeviceProfile version it was authored against.",
+      "deviceProfileVersion",
+      `Use Project ▸ Adopt Active Profile Version to record ${profile.version}; firmware drift cannot be detected without it.`,
+      "warning",
+    );
+  } else if (project.deviceProfileVersion !== profile.version) {
+    issue(
+      issues,
+      "DEVICE_PROFILE_VERSION_DRIFT",
+      `This template was authored against DeviceProfile '${profile.id}' version ${project.deviceProfileVersion}, but version ${profile.version} is active.`,
+      "deviceProfileVersion",
+      "Review every binding and Scene activation condition, then adopt the active version. A state that was removed or retyped is reported separately.",
+      "warning",
+    );
+  }
+
   if (project.deviceProfileId !== profile.id) {
     issue(issues, "DEVICE_PROFILE_MISMATCH", `Project profile '${project.deviceProfileId}' does not match '${profile.id}'.`, "deviceProfileId", "Resolve the active DeviceProfile before validation.");
   }

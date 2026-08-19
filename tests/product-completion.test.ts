@@ -745,3 +745,67 @@ describe("Unsupported formats block only when referenced (F7c follow-on)", () =>
     expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(true);
   });
 });
+describe("DeviceProfile version drift is detectable (F9b)", () => {
+  it("records the authored version and reports drift as a repairable warning", async () => {
+    const created = createEmptyProject("Versioned", foundationDeviceProfile);
+    expect(created.deviceProfileVersion).toBe(foundationDeviceProfile.version);
+    // No drift while the versions agree.
+    expect(validateProject(created, foundationDeviceProfile).issues.some((issue) => issue.code.startsWith("DEVICE_PROFILE_VERSION"))).toBe(false);
+
+    // The firmware ships a new capability set under the same profile id.
+    const moved = { ...foundationDeviceProfile, version: "2.0" };
+    const drift = validateProject(created, moved).issues.find((issue) => issue.code === "DEVICE_PROFILE_VERSION_DRIFT");
+    expect(drift?.severity).toBe("warning");
+    expect(drift?.message).toContain("1.0");
+    expect(drift?.message).toContain("2.0");
+    // A warning, so an existing template still builds while it is reviewed.
+    expect(validateProject(created, moved).valid).toBe(true);
+
+    // Adopting is an explicit, undoable command - it asserts the bindings were reviewed.
+    const { store, editor } = setup(created);
+    expect(editor.adoptDeviceProfileVersion("  ").changed).toBe(false);
+    expect(editor.adoptDeviceProfileVersion("2.0").changed).toBe(true);
+    expect(current(store).deviceProfileVersion).toBe("2.0");
+    expect(validateProject(current(store), moved).issues.some((issue) => issue.code.startsWith("DEVICE_PROFILE_VERSION"))).toBe(false);
+    expect(store.undo()).toBe(true);
+    expect(current(store).deviceProfileVersion).toBe("1.0");
+  });
+
+  it("reports a template that records no version at all", () => {
+    const legacy: Project = { ...createEmptyProject("Legacy"), deviceProfileVersion: undefined };
+    const issue = validateProject(legacy, foundationDeviceProfile).issues.find((candidate) => candidate.code === "DEVICE_PROFILE_VERSION_UNRECORDED");
+    expect(issue?.severity).toBe("warning");
+    expect(issue?.remediation).toMatch(/Adopt Active Profile Version/);
+  });
+
+  it("carries the version into the deployment manifest and switches it with the profile", async () => {
+    const { project } = fixture();
+    const { store, editor } = setup(project);
+    const service = createDeploymentService([]);
+    const built = await service.buildVerified(current(store), foundationDeviceProfile);
+    if (built.status !== "built") throw new Error("expected a built package");
+    // The firmware needs the version to detect drift on its side.
+    expect(built.package.manifest.deviceProfileVersion).toBe(foundationDeviceProfile.version);
+
+    expect(editor.setProjectDeviceProfile(compactDeviceProfile.id, compactDeviceProfile.display, compactDeviceProfile.version).changed).toBe(true);
+    expect(current(store).deviceProfileVersion).toBe(compactDeviceProfile.version);
+  });
+});
+
+describe("Shipped profiles use documented values only", () => {
+  it("declares no runtime enum value that appears in no specification", () => {
+    // `opening-completed` was an implementation invention present in no document.
+    // The registry's canonical door names are door_opening/door_open/
+    // door_closing/door_closed (RUNTIME_STATE_REGISTRY:82-85).
+    for (const profile of [foundationDeviceProfile, compactDeviceProfile]) {
+      const door = profile.runtimeStates.find((state) => state.id === "door_state");
+      expect(door?.enumValues).not.toContain("opening-completed");
+      for (const value of door?.enumValues ?? []) {
+        expect(["closed", "opening", "open", "closing"]).toContain(value);
+      }
+      // Registry field names are part of the firmware contract.
+      expect(profile.runtimeStates.every((state) => typeof state.simulatorSupport === "boolean")).toBe(true);
+      expect(profile.version.length).toBeGreaterThan(0);
+    }
+  });
+});

@@ -8,14 +8,15 @@ import type { DeviceProfile, Project, Scene, Widget } from "../src/Domain/models
 const profile: DeviceProfile = {
   id: "profile-test",
   name: "Test Display",
+  version: "1.0",
   display: { width: 720, height: 1280 },
   supportedRotations: [0, 90, 180, 270],
   supportedWidgetTypes: ["media", "digit", "direction", "warning", "text"],
   supportedMediaTypes: ["image", "video", "audio"],
   supportedFormats: ["png", "mp4", "wav"],
   runtimeStates: [
-    { id: "floor", displayName: "Floor", type: "integer", category: "floor", operators: ["equals", "greater-than", "less-than"], simulator: true },
-    { id: "fire", displayName: "Fire", type: "boolean", category: "warning", operators: ["equals"], simulator: true },
+    { id: "floor", displayName: "Floor", type: "integer", category: "floor", operators: ["equals", "greater-than", "less-than"], simulatorSupport: true },
+    { id: "fire", displayName: "Fire", type: "boolean", category: "warning", operators: ["equals"], simulatorSupport: true },
   ],
   runtimeSettings: [
     { id: "language", displayName: "Language", type: "enum", options: ["TR", "EN"], enumValues: ["TR", "EN"], operators: ["equals"], defaultValue: "TR", persistence: "persistent" },

@@ -5,18 +5,14 @@ import { createEmptyProject } from "../src/Domain/factories";
 import type { Project } from "../src/Domain/models";
 
 function reordered(project: Project): Project {
-  // Same content, different key insertion order — the shape JSON.stringify's
+  // Same content, different key insertion order - the shape JSON.stringify's
   // dirty comparison used to be sensitive to.
-  const group = project.themeProjectGroups[0];
-  return {
-    metadata: project.metadata,
-    assets: project.assets,
-    themeProjectGroups: project.themeProjectGroups,
-    deviceProfileId: project.deviceProfileId,
-    schemaVersion: project.schemaVersion,
-    name: project.name,
-    id: project.id,
-  } as unknown as Project & { themeProjectGroups: [typeof group] };
+  //
+  // Built by REVERSING the real entries rather than listing keys by hand: the
+  // hand-written version silently dropped a field added to Project later, so
+  // the "reordered" copy differed in content and the test failed for the wrong
+  // reason. Deriving the copy keeps it honest as the domain grows.
+  return Object.fromEntries(Object.entries(project).reverse()) as Project;
 }
 
 describe("Core integrity", () => {

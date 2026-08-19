@@ -674,8 +674,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const profileStates = activeProfile?.runtimeStates ?? [];
   const profileSettings = activeProfile?.runtimeSettings ?? [];
   // The registry decides what the Simulator exposes and how it is grouped:
-  // `simulator: false` means the device supplies that state, not the designer.
-  const simulatorStates = profileStates.filter((state) => state.simulator);
+  // `simulatorSupport: false` means the device supplies that state, not the designer.
+  const simulatorStates = profileStates.filter((state) => state.simulatorSupport);
   const hiddenStateCount = profileStates.length - simulatorStates.length;
   const simulatorStateGroups = useMemo(() => {
     const groups = new Map<string, RuntimeStateDefinition[]>();
@@ -1290,6 +1290,15 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setMenuOpen(null);
   };
 
+  /** Records the active DeviceProfile version, clearing a drift warning. */
+  const adoptProfileVersion = (): boolean => {
+    if (!activeProfile) return false;
+    const result = editorApplication.adoptDeviceProfileVersion(activeProfile.version);
+    if (result.changed) logAction(`DeviceProfile version recorded as ${activeProfile.version}`, "EVENT");
+    setMenuOpen(null);
+    return result.changed;
+  };
+
   const resetZoom = () => {
     setZoom(100);
     setPan({ x: 0, y: 0 });
@@ -1482,7 +1491,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     const run = () => {
       // The display geometry travels with the switch: leaving stale Rotation
       // dimensions behind silently corrupts every scene-unit coordinate (L-18).
-      const result = editorApplication.setProjectDeviceProfile(target.id, target.display);
+      const result = editorApplication.setProjectDeviceProfile(target.id, target.display, target.version);
       if (result.changed) logAction(`Device Profile switched to ${target.name} · rotations re-dimensioned to ${target.display.width} × ${target.display.height}`, "EVENT");
       return result.changed;
     };
@@ -2812,6 +2821,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     Project: [
       { label: "Validate Project", onClick: () => { activatePanel("console"); setConsoleTab("validation"); if (validation.valid) logAction("Project validation passed"); else validation.issues.forEach((issue) => logAction(`${issue.code}: ${issue.message}`, issue.severity === "error" ? "ERROR" : "WARN")); } },
       { label: "Add Theme Project Group", onClick: addThemeProjectGroupCommand },
+      { label: "Adopt Active Profile Version", disabled: !activeProfile || project.deviceProfileVersion === activeProfile.version, title: activeProfile ? (project.deviceProfileVersion === activeProfile.version ? `Already recorded as version ${activeProfile.version}` : `Record ${activeProfile.name} version ${activeProfile.version} after reviewing bindings and activation conditions`) : "No DeviceProfile is active", onClick: adoptProfileVersion },
       ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name} (${profile.display.width}×${profile.display.height})`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : "Switch profile and re-dimension every Rotation / Form", onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
       { label: "Write Package to Target…", disabled: !lastPackage, title: lastPackage ? `Hand the verified package to ${deploymentService.targets()[0]?.displayName ?? "the configured transport"}` : "Run Build & Verify Package first", onClick: () => { void writePackage(); } },

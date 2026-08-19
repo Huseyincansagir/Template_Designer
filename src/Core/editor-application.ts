@@ -471,6 +471,16 @@ export class EditorApplication {
     }));
   }
 
+  /**
+   * Adopts the active DeviceProfile version, clearing a recorded drift. It is a
+   * deliberate command rather than an automatic write: adopting means the
+   * designer has reviewed the bindings the registry change may have affected.
+   */
+  adoptDeviceProfileVersion(version: string): MutationResult {
+    if (version.trim().length === 0) return { changed: false };
+    return this.execute(`Adopt DeviceProfile version ${version}`, (project) => ({ ...project, deviceProfileVersion: version }));
+  }
+
   moveScene(rotationId: string, sceneId: string, toIndex: number): MutationResult {
     return this.execute("Move Scene", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => {
       if (rotation.id !== rotationId || toIndex < 0 || toIndex >= rotation.scenes.length) return rotation;
@@ -590,11 +600,11 @@ export class EditorApplication {
    * switch can never leave stale dimensions or stranded widgets behind. The
    * whole re-shape is one undoable command.
    */
-  setProjectDeviceProfile(profileId: string, display?: DeviceProfile["display"]): MutationResult {
+  setProjectDeviceProfile(profileId: string, display?: DeviceProfile["display"], version?: string): MutationResult {
     if (profileId.trim().length === 0) return { changed: false };
     const usableDisplay = display && Number.isFinite(display.width) && Number.isFinite(display.height) && display.width > 0 && display.height > 0 ? display : undefined;
     return this.execute("Switch Device Profile", (project) => {
-      const withProfile: Project = { ...project, deviceProfileId: profileId };
+      const withProfile: Project = { ...project, deviceProfileId: profileId, ...(version !== undefined ? { deviceProfileVersion: version } : {}) };
       if (!usableDisplay) return withProfile;
       return {
         ...withProfile,

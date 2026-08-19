@@ -124,7 +124,7 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 143/143 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
+| `npm test` | **PASS** — 147/147 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
 | Live browser acceptance | **PASS** — 159 checks across 6 scripted runs, **0 console errors** |
@@ -183,7 +183,7 @@ Honest, and measured against what a designer needs — not against the test suit
 | Bindings | **8 / 10** | Multi-condition, all/any, every operator constrained by the profile, every action, negation, content selection, state **and** setting sources, live TRUE/FALSE, re-parented on duplicate/paste. No visual rule graph. |
 | Simulator / Preview | **7 / 10** | Honest, explanatory, type-faithful, and states its own boundary. No timed playback — that is device-runtime behaviour, and the report says so rather than faking it. |
 | Persistence | **9 / 10** | Adapter-mediated, honest dirty state, structural load gate with reasons and payload preservation, portable files, session state. Recovery still means "blank scaffold + notice", not partial repair. |
-| Validation | **8 / 10** | 49 rules, each with code, path, message and remediation, and now navigable. Rule severities are not user-configurable and there is no "fix it for me". |
+| Validation | **9 / 10** | 58 rules including profile-version drift and reference-scoped asset severity, each with code, path, message and remediation, and now navigable. Rule severities are not user-configurable and there is no "fix it for me". |
 | Build | **9 / 10** | Deterministic manifest, coherent asset sets, sha-256 checksum, separate verify step, never pre-declared verified, blocked states explained, and the verified claim is withdrawn the moment the document changes. |
 | Deployment | **3 / 10** | The package boundary, the application service and the adapter registry are now a real, used chain: the UI asks the service, the service hands a verified package to the transport, and the SD-card adapter refuses with its own reason. Nothing writes to an SD card. This is the V1 acceptance gap and it is environmental. |
 | Discoverability | **8 / 10** | 9 menus whose disabled entries state their reason from a single shared policy, per-node context menus, persistent switchers, empty-state CTAs, navigable validation, document properties, 17 shortcuts. No command palette, no onboarding. |

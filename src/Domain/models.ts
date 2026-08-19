@@ -40,7 +40,8 @@ export interface RuntimeStateDefinition {
   description?: string;
   enumValues?: readonly string[];
   operators?: readonly ConditionOperator[];
-  simulator: boolean;
+  /** Registry name (`RUNTIME_STATE_REGISTRY:123`): whether the Designer may drive this state. */
+  simulatorSupport: boolean;
 }
 
 export interface RuntimeSettingDefinition {
@@ -52,7 +53,8 @@ export interface RuntimeSettingDefinition {
   options?: readonly string[];
   defaultValue?: PrimitiveValue;
   persistence?: "volatile" | "persistent";
-  affectedCapabilities?: readonly string[];
+  /** Registry name (`RUNTIME_STATE_REGISTRY:124`). */
+  bindingCapabilities?: readonly string[];
 }
 
 export interface AudioCapabilities {
@@ -75,6 +77,13 @@ export interface VideoCapabilities {
 export interface DeviceProfile {
   id: Id;
   name: string;
+  /**
+   * Capability-set version. A template records the version it was authored
+   * against so validation can report that the firmware registry changed under
+   * it (`TEMPLATE_SCHEMA_V1:58`, `RUNTIME_STATE_REGISTRY:371,381`). Comparing
+   * ids alone can never detect a removed or retyped state.
+   */
+  version: string;
   display: {
     width: number;
     height: number;
@@ -215,6 +224,8 @@ export interface Project {
   schemaVersion: number;
   name: string;
   deviceProfileId: Id;
+  /** DeviceProfile version this template was authored against; absent in documents written before versioning. */
+  deviceProfileVersion?: string;
   themeProjectGroups: readonly ThemeProjectGroup[];
   assets: readonly Asset[];
   defaultAssetIds?: readonly Id[];
@@ -255,6 +266,7 @@ export interface PackageManifest {
   projectId: Id;
   projectName: string;
   deviceProfileId: Id;
+  deviceProfileVersion: string;
   themeProjectIds: readonly Id[];
   resourceAssetIds: readonly Id[];
   usedAssetIds: readonly Id[];
