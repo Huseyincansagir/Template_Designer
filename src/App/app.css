@@ -629,3 +629,40 @@ body.relaxed-density .sim-input-row { min-height: 36px; }
 .floor-entry-list .draft-text-field input { width: 72px; }
 .floor-entry-list select { min-width: 0; flex: 1 1 auto; height: var(--control-height-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: var(--text-sm); }
 .floor-arrow { flex: 0 0 auto; color: var(--text-muted); font-size: var(--micro-label); }
+/* SD-card deployment panel: staged pipeline, explicit targets, verbatim result. */
+.deployment-panel { display: grid; gap: var(--space-2); padding: var(--space-2) 10px; overflow-y: auto; }
+.deployment-stages { display: flex; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
+.deployment-stages li { padding: 1px var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-muted); font-size: var(--micro-label); text-transform: uppercase; letter-spacing: var(--kicker-tracking); }
+.deployment-stages li.active { border-color: var(--accent-hover); background: var(--accent-muted); color: var(--accent-active); font-weight: 700; }
+.deployment-stages li.done { border-color: var(--success); color: var(--success); }
+.deployment-stages li.failed { border-color: var(--error); background: #fbeeee; color: var(--error); font-weight: 700; }
+.deployment-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
+.deployment-meta { color: var(--text-muted); font-size: var(--text-xs); }
+.deployment-notice { display: grid; gap: 2px; padding: var(--space-2); border: 1px solid var(--warning-soft); border-radius: var(--radius-sm); background: var(--surface); }
+.deployment-notice.is-error { border-color: var(--error); }
+.deployment-notice strong { color: var(--warning-text); font-size: var(--text-sm); }
+.deployment-notice.is-error strong { color: var(--error); }
+.deployment-notice span { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.45; }
+.deployment-targets { width: 100%; border-collapse: collapse; font-size: var(--text-xs); }
+.deployment-targets th { padding: 2px var(--space-1); border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: var(--micro-label); text-align: left; text-transform: uppercase; letter-spacing: var(--kicker-tracking); }
+.deployment-targets td { padding: 3px var(--space-1); border-bottom: 1px solid var(--border-subtle); color: var(--text-secondary); }
+.deployment-targets tr.is-selected td { background: var(--accent-muted); color: var(--accent-active); }
+.deployment-target-choice { display: inline-flex; align-items: center; gap: var(--space-1); font-variant-numeric: tabular-nums; }
+.deployment-targets td.is-eligible { color: var(--success); }
+.deployment-targets td.is-refused { color: var(--text-muted); font-style: italic; }
+.deployment-findings { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.deployment-findings li { padding: 2px var(--space-1); border-left: 2px solid var(--border-strong); color: var(--text-secondary); font-size: var(--text-xs); }
+.deployment-findings li.error { border-left-color: var(--error); }
+.deployment-findings li.warning { border-left-color: var(--warning); }
+.deployment-findings strong { color: var(--text-primary); font-family: "Consolas", monospace; font-size: var(--micro-label); }
+.deployment-findings em { color: var(--text-muted); font-style: italic; }
+.deployment-result { display: grid; gap: 2px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.deployment-result.is-ok { border-color: var(--success); background: #f1f8f4; }
+.deployment-result.is-error { border-color: var(--error); background: #fbeeee; }
+.deployment-result strong { font-size: var(--text-sm); }
+.deployment-result.is-ok strong { color: var(--success); }
+.deployment-result.is-error strong { color: var(--error); }
+.deployment-result span { color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.45; }
+.deployment-remediation { font-style: italic; }
+.deployment-partial { color: var(--error); font-weight: 650; }
+.deployment-footnote { margin: 0; color: var(--text-muted); font-size: var(--micro-label); line-height: 1.45; }

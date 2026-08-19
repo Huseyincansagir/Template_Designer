@@ -14,3 +14,13 @@ tauri-build = { version = "2.4.1" }
 
 [dependencies]
 tauri = { version = "2.8.0" }
+# serde and serde_json are declared explicitly because `sd_card` derives
+# Serialize/Deserialize and `native_capabilities` returns a json value. They are
+# already in Tauri's own graph, so this pins nothing new.
+#
+# NOTE: no other crate is added. Removable-volume enumeration uses a small,
+# explicit kernel32 FFI block rather than the `windows`/`windows-sys` crates,
+# because this was written in an environment with no Cargo toolchain and an
+# unverifiable dependency version is a worse risk than 30 lines of audited FFI.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

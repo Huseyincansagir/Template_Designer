@@ -5,6 +5,9 @@ import { InMemoryDocumentStore } from "../Core/document-store";
 import { createEditorApplication, defaultWidgetName, type MutationResult } from "../Core/editor-application";
 import { createDeploymentService } from "../Core/deployment-service";
 import { SDCardTarget } from "../Infrastructure/sd-card-target";
+import { createRemovableStorageAdapter } from "../Infrastructure/tauri-removable-storage";
+import type { RemovableVolume } from "../Core/removable-storage";
+import type { SdDeploymentResult, SdDeploymentStage } from "../Core/deployment-service";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
 import { MAX_BINDING_PRIORITY, MIN_BINDING_PRIORITY } from "../Domain/models";
@@ -593,7 +596,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [gridVisible, setGridVisible] = useState(() => settingsStorage?.load().showGrid ?? true);
   const [zoom, setZoom] = useState(restoredSessionZoom);
   const [pan, setPan] = useState<CanvasPoint>({ x: 0, y: 0 });
-  const [consoleTab, setConsoleTab] = useState<"console" | "validation">("console");
+  const [consoleTab, setConsoleTab] = useState<"console" | "validation" | "deployment">("console");
   const [consoleEntries, setConsoleEntries] = useState<ConsoleEntry[]>([
     { level: "INFO", message: "Foundation shell initialized", time: new Date().toLocaleTimeString([], { hour12: false }) },
   ]);
@@ -617,7 +620,25 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // only describes THAT document (F9).
   const [builtFrom, setBuiltFrom] = useState<string | null>(null);
   const [lastPackage, setLastPackage] = useState<DeploymentPackage | null>(null);
-  const deploymentService = useMemo(() => createDeploymentService([new SDCardTarget()]), []);
+  // Deployment is a destructive operation on someone's card, so its whole state
+  // is explicit: which targets were detected, which one the user chose, what
+  // stage the pipeline reached, and the last result verbatim.
+  const [sdVolumes, setSdVolumes] = useState<readonly RemovableVolume[]>([]);
+  const [sdTransport, setSdTransport] = useState<string>("unknown");
+  const [sdDetectError, setSdDetectError] = useState<string | null>(null);
+  const [sdSelectedId, setSdSelectedId] = useState<string | null>(null);
+  const [sdStage, setSdStage] = useState<SdDeploymentStage | null>(null);
+  const [sdResult, setSdResult] = useState<SdDeploymentResult | null>(null);
+  const [sdBusy, setSdBusy] = useState(false);
+  const [storageAdapterReady, setStorageAdapterReady] = useState(false);
+  // The removable-storage adapter exists only inside the Tauri shell. In a
+  // browser the service reports 'no transport configured' and the UI says so,
+  // rather than offering a deployment that cannot happen.
+  const storageAdapterRef = useRef<Awaited<ReturnType<typeof createRemovableStorageAdapter>>>(undefined);
+  const deploymentService = useMemo(
+    () => createDeploymentService([new SDCardTarget()], storageAdapterRef.current),
+    [storageAdapterReady],
+  );
   const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});
   const [canvasPointer, setCanvasPointer] = useState<CanvasInteractionState>({ mode: "idle" });
   const canvasPointerRef = useRef<CanvasInteractionState>({ mode: "idle" });
@@ -1823,8 +1844,79 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setDeploymentStatus("Built · checksum verified");
     logAction(`Package verified · ${outcome.package.manifest.assetIds.length} asset record(s) · ${outcome.package.files.length} file(s)`, "INFO");
     setLastPackage(outcome.package);
+    setSdResult(null);
     const transports = deploymentService.targets();
     logAction(transports.length ? `Transports available: ${transports.map((target) => target.displayName).join(", ")}` : "No deployment transport is configured in this build", transports.length ? "INFO" : "WARN");
+  };
+
+  // ---- SD-card deployment --------------------------------------------------
+
+  const detectSdTargets = async (): Promise<boolean> => {
+    setSdBusy(true);
+    try {
+      const outcome = await deploymentService.detectTargets();
+      setSdVolumes(outcome.volumes);
+      setSdTransport(outcome.transport);
+      setSdDetectError(outcome.error ?? null);
+      // Only a removable volume may be auto-highlighted, and only when it is the
+      // single candidate. Anything else must be chosen deliberately.
+      const removable = outcome.volumes.filter((volume) => volume.removable && !volume.readOnly);
+      setSdSelectedId(removable.length === 1 ? removable[0].id : null);
+      if (outcome.error) logAction(`Target detection: ${outcome.error}`, "WARN");
+      else logAction(`${outcome.volumes.length} volume(s) detected · ${removable.length} writable removable target(s) · transport ${outcome.transport}`, "EVENT");
+      return removable.length > 0;
+    } finally {
+      setSdBusy(false);
+    }
+  };
+
+  const deployToSdCard = async (): Promise<boolean> => {
+    const volume = sdVolumes.find((candidate) => candidate.id === sdSelectedId);
+    if (!lastPackage) {
+      logAction("Deployment needs a verified package — run Build & Verify Package first", "WARN");
+      return false;
+    }
+    if (!volume) {
+      logAction("Deployment needs an explicitly selected target", "WARN");
+      return false;
+    }
+    setSdBusy(true);
+    setSdResult(null);
+    setDeploymentStatus(`Deploying to ${volume.mountPath}…`);
+    try {
+      const result = await deploymentService.deployToSdCard(lastPackage, volume, {
+        onStage: (stage) => setSdStage(stage),
+        onProgress: (progress) => setDeploymentStatus(`Writing ${progress.writtenFiles}/${progress.totalFiles} file(s) to ${volume.mountPath}…`),
+      });
+      setSdResult(result);
+      if (result.status === "verified") {
+        setDeploymentStatus(`Deployed · ${volume.mountPath} · ${result.writtenFiles} file(s) verified`);
+        logAction(`Deployment verified on ${volume.mountPath}: ${result.writtenFiles} file(s), ${result.writtenBytes} byte(s) read back and compared`, "INFO");
+        return true;
+      }
+      // A failed deployment never reads as done, and always says which stage.
+      setDeploymentStatus(`Deployment failed · ${result.stage} · ${volume.mountPath}`);
+      logAction(`Deployment failed at ${result.stage} (${result.code}): ${result.message} — ${result.remediation}`, "ERROR");
+      if (result.partial) logAction(`${result.partial.writtenFiles} file(s) had already been written; the card is in an incomplete state and must not be used`, "ERROR");
+      return false;
+    } finally {
+      setSdBusy(false);
+      setSdStage(null);
+    }
+  };
+
+  const ejectSdTarget = async (): Promise<boolean> => {
+    if (!sdSelectedId) return false;
+    const report = await deploymentService.ejectTarget(sdSelectedId);
+    if (report.ok) {
+      logAction("Target ejected safely", "EVENT");
+      void detectSdTargets();
+      return true;
+    }
+    // 'Unsupported' is the honest answer where the platform gives no reliable
+    // mechanism; it is reported as a limitation, not as a failed attempt.
+    logAction(`${report.unsupported ? "Safe eject is not available in this build" : "Eject failed"} (${report.code}): ${report.message}`, report.unsupported ? "WARN" : "ERROR");
+    return false;
   };
 
   /** Writes the last verified package through the configured transport. */
@@ -2660,6 +2752,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (stableSerialize(project) === builtFrom) return;
     setBuiltFrom(null);
     setLastPackage(null);
+    setSdResult(null);
     setDeploymentStatus("Not built · project changed since the last package");
     logAction("Package status withdrawn: the project changed after it was built and verified", "WARN");
   }, [project, builtFrom]);
@@ -2670,6 +2763,16 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (activeThemeId && !allThemes.some((theme) => theme.id === activeThemeId)) setActiveThemeId(null);
     if (activeSceneId && !(activeRotationNode?.scenes ?? []).some((scene) => scene.id === activeSceneId)) setActiveSceneId(null);
   }, [project, activeThemeId, activeSceneId, activeRotationNode?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void createRemovableStorageAdapter().then((adapter) => {
+      if (cancelled) return;
+      storageAdapterRef.current = adapter;
+      setStorageAdapterReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
   // Boot recovery notice: reported once, with the preserved backup key so the
   // rejected payload can be inspected rather than assumed lost.
@@ -2887,7 +2990,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "Adopt Active Profile Version", disabled: !activeProfile || project.deviceProfileVersion === activeProfile.version, title: activeProfile ? (project.deviceProfileVersion === activeProfile.version ? `Already recorded as version ${activeProfile.version}` : `Record ${activeProfile.name} version ${activeProfile.version} after reviewing bindings and activation conditions`) : "No DeviceProfile is active", onClick: adoptProfileVersion },
       ...availableProfiles.map((profile) => ({ label: `Device Profile: ${profile.name} (${profile.display.width}×${profile.display.height})`, disabled: profile.id === project.deviceProfileId, title: profile.id === project.deviceProfileId ? "Active DeviceProfile" : "Switch profile and re-dimension every Rotation / Form", onClick: () => setDeviceProfile(profile.id) })),
       { label: "Build & Verify Package", onClick: () => { void buildAndVerifyPackage(); } },
-      { label: "Write Package to Target…", disabled: !lastPackage, title: lastPackage ? `Hand the verified package to ${deploymentService.targets()[0]?.displayName ?? "the configured transport"}` : "Run Build & Verify Package first", onClick: () => { void writePackage(); } },
+      { label: "Deploy to SD Card…", title: "Detect removable targets, then write and verify the package", onClick: () => { activatePanel("console"); setConsoleTab("deployment"); void detectSdTargets(); } },
     ],
     Theme: [
       { label: "Add Theme Project", disabled: groups.length === 0, title: groups.length === 0 ? "Add a Theme Project Group first" : undefined, onClick: addThemeProject },
@@ -3556,10 +3659,105 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     </>
   );
 
+  /**
+   * SD-card deployment panel.
+   *
+   * It never offers a write it cannot perform: with no native transport it says
+   * so, with no removable target it says so, and a non-removable volume is
+   * listed but refused with its reason rather than hidden. The stage line and
+   * the result are shown verbatim, including a partial write.
+   */
+  const renderDeployment = () => {
+    const nativeTransport = deploymentService.storageKind === "native-tauri";
+    const selected = sdVolumes.find((volume) => volume.id === sdSelectedId);
+    const probeless = selected ? deploymentService.preflight(lastPackage ?? { files: [], verified: false } as unknown as DeploymentPackage, selected, undefined) : undefined;
+    const formatBytes = (bytes: number | undefined) => bytes === undefined ? "unknown" : bytes >= 1_073_741_824 ? `${(bytes / 1_073_741_824).toFixed(1)} GB` : bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${bytes} B`;
+    return (
+      <div className="deployment-panel">
+        <ol className="deployment-stages" aria-label="Deployment pipeline">
+          {(["preflight", "write", "verify", "complete"] as SdDeploymentStage[]).map((stage) => (
+            <li key={stage} className={sdStage === stage ? "active" : sdResult?.status === "verified" ? "done" : sdResult?.status === "failed" && sdResult.stage === stage ? "failed" : ""}>{stage}</li>
+          ))}
+        </ol>
+        {!nativeTransport && (
+          <div className="deployment-notice">
+            <strong>No removable-storage transport in this build</strong>
+            <span>Writing to a card needs the desktop shell. The web build has no filesystem access, so detection and writing are unavailable here — the package can still be built, verified and exported as a file.</span>
+          </div>
+        )}
+        <div className="deployment-actions">
+          <button type="button" className="small-action" disabled={sdBusy || !nativeTransport} title={nativeTransport ? "Enumerate removable volumes" : "Requires the desktop build"} onClick={() => { void detectSdTargets(); }}>Detect Targets</button>
+          <button type="button" className="small-action primary-action" disabled={sdBusy || !nativeTransport || !lastPackage || !selected || !selected.removable || selected.readOnly} title={!lastPackage ? "Run Build & Verify Package first" : !selected ? "Select a target" : selected.removable ? (selected.readOnly ? "The selected volume is read-only" : `Write and verify on ${selected.mountPath}`) : "The selected volume is not removable and will be refused"} onClick={() => { void deployToSdCard(); }}>Deploy &amp; Verify</button>
+          <button type="button" className="small-action" disabled={sdBusy || !nativeTransport || !selected} title="Attempt a safe removal" onClick={() => { void ejectSdTarget(); }}>Safe Eject</button>
+          <span className="deployment-meta">Transport: {sdTransport}{lastPackage ? ` · package ${lastPackage.files.length} file(s)` : " · no package built"}</span>
+        </div>
+        {sdDetectError && <div className="deployment-notice is-error"><strong>Detection failed</strong><span>{sdDetectError}</span></div>}
+        {nativeTransport && sdVolumes.length === 0 && !sdDetectError && <div className="deployment-notice"><strong>No SD card / removable target detected.</strong><span>Insert a card and choose Detect Targets.</span></div>}
+        {sdVolumes.length > 0 && (
+          <table className="deployment-targets">
+            <thead><tr><th scope="col">Target</th><th scope="col">Volume</th><th scope="col">Filesystem</th><th scope="col">Free</th><th scope="col">Capacity</th><th scope="col">Status</th></tr></thead>
+            <tbody>
+              {sdVolumes.map((volume) => {
+                const eligible = volume.removable && !volume.readOnly;
+                return (
+                  <tr key={volume.id} className={volume.id === sdSelectedId ? "is-selected" : ""}>
+                    <td>
+                      <label className="deployment-target-choice">
+                        <input type="radio" name="sd-target" checked={volume.id === sdSelectedId} disabled={!eligible} aria-label={`Select ${volume.mountPath}`} onChange={() => setSdSelectedId(volume.id)} />
+                        <span>{volume.mountPath}</span>
+                      </label>
+                    </td>
+                    <td>{volume.volumeName}</td>
+                    <td>{volume.fileSystem ?? "unknown"}</td>
+                    <td>{formatBytes(volume.freeBytes)}</td>
+                    <td>{formatBytes(volume.totalBytes)}</td>
+                    <td className={eligible ? "is-eligible" : "is-refused"}>{volume.removable ? (volume.readOnly ? "read-only" : "removable") : "fixed disk — refused"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        {probeless && probeless.findings.length > 0 && (
+          <ul className="deployment-findings">
+            {probeless.findings.map((finding) => (
+              <li key={finding.code} className={finding.severity}>
+                <strong>{finding.code}</strong> {finding.message} <em>{finding.remediation}</em>
+              </li>
+            ))}
+          </ul>
+        )}
+        {sdResult && (
+          <div className={`deployment-result ${sdResult.status === "verified" ? "is-ok" : "is-error"}`}>
+            {sdResult.status === "verified" ? (
+              <>
+                <strong>Deployed and verified</strong>
+                <span>{sdResult.writtenFiles} file(s), {sdResult.writtenBytes} byte(s) written to {sdResult.rootPath} and read back byte-for-byte.</span>
+              </>
+            ) : (
+              <>
+                <strong>Failed at {sdResult.stage} · {sdResult.code}</strong>
+                <span>{sdResult.message}</span>
+                <span className="deployment-remediation">{sdResult.remediation}</span>
+                {sdResult.partial && <span className="deployment-partial">{sdResult.partial.writtenFiles} file(s) had already been written. The card is incomplete and must not be used.</span>}
+                {sdResult.verified && sdResult.verified.some((detail) => !detail.ok) && (
+                  <ul className="deployment-findings">
+                    {sdResult.verified.filter((detail) => !detail.ok).map((detail) => <li key={detail.path} className="error"><strong>{detail.path}</strong> {detail.reason}</li>)}
+                  </ul>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        <p className="deployment-footnote">The V1 package carries logical asset records (<code>*.asset.json</code>, <code>binary: false</code>); binary media copying is a separate adapter step. Safe eject is reported as unavailable rather than simulated.</p>
+      </div>
+    );
+  };
+
   const renderConsole = () => (
     <>
-      <div className="console-tabs"><button type="button" className={consoleTab === "console" ? "active" : ""} onClick={() => setConsoleTab("console")}>Console</button><button type="button" className={consoleTab === "validation" ? "active" : ""} onClick={() => setConsoleTab("validation")}>Validation <span className="tab-count">{validation.issues.length}</span></button><span className="console-spacer" /><span className="console-scope">Package: {deploymentStatus}</span><button type="button" className="panel-action" title="Float console" onClick={() => setPanelMode("console", "floating")}>⤢</button><button type="button" className="panel-action" title="Collapse console" aria-label="Collapse console" onClick={() => collapsePanel("console")}>−</button></div>
-      <div className="console-body">{consoleTab === "console" ? <div className="console-entry-list">{consoleEntries.map((entry, index) => <div className="console-entry" key={`${entry.time}-${entry.message}-${index}`}><span className="console-time">{entry.time || "—"}</span><span className={`console-level ${entry.level.toLowerCase()}`}>{entry.level}</span><span className="console-info">{entry.message}</span></div>)}<span className="console-muted">Command, validation, export and runtime traces appear here.</span></div> : <div className="console-entry-list"><div className="console-entry"><span className={`validation-dot ${validation.valid ? "ok" : "error"}`} /><span className="console-info">{validation.valid ? "No blocking foundation issues" : `${validation.issues.length} validation issue(s)`}</span></div><span className="console-muted">Each issue lists the problem, its location and the action that resolves it.</span>{validation.issues.map((issue) => { const targetId = resolveValidationTarget(project, issue.path); const target = targetId ? resolveCanonicalNode(project, targetId) : undefined; return <div className="console-entry validation-issue" key={`${issue.code}-${issue.path ?? ""}`}><span className={`console-level ${issue.severity}`}>{issue.severity.toUpperCase()}</span><span className="console-info"><strong className="validation-code">{issue.code}</strong> {target ? <button type="button" className="validation-goto" title={`Select ${"name" in target.node ? String(target.node.name) : targetId} in the editor`} onClick={() => revealValidationTarget(targetId as string)}>{"name" in target.node ? String(target.node.name) : (target.kind === "rotation" ? `R${target.rotation?.angle}` : targetId)}</button> : issue.path ? <code className="validation-path">{issue.path}</code> : null} {issue.message}{issue.remediation ? <em className="validation-remediation"> &rarr; {issue.remediation}</em> : null}</span></div>; })}</div>}</div>
+      <div className="console-tabs"><button type="button" className={consoleTab === "console" ? "active" : ""} onClick={() => setConsoleTab("console")}>Console</button><button type="button" className={consoleTab === "validation" ? "active" : ""} onClick={() => setConsoleTab("validation")}>Validation <span className="tab-count">{validation.issues.length}</span></button><button type="button" className={consoleTab === "deployment" ? "active" : ""} onClick={() => { setConsoleTab("deployment"); if (sdTransport === "unknown") void detectSdTargets(); }}>Deployment</button><span className="console-spacer" /><span className="console-scope">Package: {deploymentStatus}</span><button type="button" className="panel-action" title="Float console" onClick={() => setPanelMode("console", "floating")}>⤢</button><button type="button" className="panel-action" title="Collapse console" aria-label="Collapse console" onClick={() => collapsePanel("console")}>−</button></div>
+      <div className="console-body">{consoleTab === "deployment" ? renderDeployment() : consoleTab === "console" ? <div className="console-entry-list">{consoleEntries.map((entry, index) => <div className="console-entry" key={`${entry.time}-${entry.message}-${index}`}><span className="console-time">{entry.time || "—"}</span><span className={`console-level ${entry.level.toLowerCase()}`}>{entry.level}</span><span className="console-info">{entry.message}</span></div>)}<span className="console-muted">Command, validation, export and runtime traces appear here.</span></div> : <div className="console-entry-list"><div className="console-entry"><span className={`validation-dot ${validation.valid ? "ok" : "error"}`} /><span className="console-info">{validation.valid ? "No blocking foundation issues" : `${validation.issues.length} validation issue(s)`}</span></div><span className="console-muted">Each issue lists the problem, its location and the action that resolves it.</span>{validation.issues.map((issue) => { const targetId = resolveValidationTarget(project, issue.path); const target = targetId ? resolveCanonicalNode(project, targetId) : undefined; return <div className="console-entry validation-issue" key={`${issue.code}-${issue.path ?? ""}`}><span className={`console-level ${issue.severity}`}>{issue.severity.toUpperCase()}</span><span className="console-info"><strong className="validation-code">{issue.code}</strong> {target ? <button type="button" className="validation-goto" title={`Select ${"name" in target.node ? String(target.node.name) : targetId} in the editor`} onClick={() => revealValidationTarget(targetId as string)}>{"name" in target.node ? String(target.node.name) : (target.kind === "rotation" ? `R${target.rotation?.angle}` : targetId)}</button> : issue.path ? <code className="validation-path">{issue.path}</code> : null} {issue.message}{issue.remediation ? <em className="validation-remediation"> &rarr; {issue.remediation}</em> : null}</span></div>; })}</div>}</div>
     </>
   );
 

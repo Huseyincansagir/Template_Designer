@@ -1,0 +1,46 @@
+
+== A. SD deployment panel is honest in the web build ==
+PASS A1 deployment tab exists and is selected
+PASS A2 the full pipeline is shown as stages :: ["PREFLIGHT","WRITE","VERIFY","COMPLETE"]
+PASS A3 the web build states it has no transport :: No removable-storage transport in this build
+PASS A4 the transport is named, not implied :: Transport: none · no package built
+PASS A5 detect/deploy/eject are all offered :: Detect Targets | Deploy & Verify | Safe Eject
+PASS A6 every action is disabled without a transport :: [["Detect Targets",true],["Deploy & Verify",true],["Safe Eject",true]]
+PASS A7 the deploy button explains why it cannot run :: Run Build & Verify Package first
+PASS A8 the package boundary and eject limit are stated :: The V1 package carries logical asset records (*.asset.json, binary: false); binary media copying is a separate adapter step. Safe 
+PASS A9 no fake target is listed
+
+== B. Media Slide is an ordered sequence ==
+PASS B0 assets imported
+PASS B1 the inspector presents a Media Sequence :: Media Sequence Not configured
+  append 1: ok:asset-fbf0c7e8-f5f3-4ce1-be13-93c338b24fac
+  append 2: ok:asset-37fae915-63ac-4b39-bc65-13b16175c94a
+PASS B2 several entries can be appended in order :: 2 entries
+PASS B3 the sequence is ordered and shows each asset :: ["▧ lobby","▧ arrow-up"]
+PASS B4 an entry can be moved within the sequence :: ["▧ lobby","▧ arrow-up"] -> ["▧ arrow-up","▧ lobby"]
+PASS B5 reorder is one undoable step
+PASS B6 the summary counts entries and total duration :: Media Slide 2 entries · 10.0s
+PASS B7 an entry can be removed
+
+== C. Binding priority 0-15, independent of Scene priority ==
+PASS C1 priority offers exactly 0-15 :: 16 levels
+  ref: ok:fire
+  priority: ok:9
+PASS C2 the created binding kept its priority :: card priority 9
+PASS C3 Scene priority is a separate field :: scene priority field = 0
+
+== D. Floor identifiers are symbolic Unicode strings ==
+PASS D1 the Theme inspector has a Floor Mappings section :: ["IDENTITY","CANONICAL CONTEXT","THEME RESOURCES","FLOOR MAPPINGS"]
+PASS D2 a mapping can be created
+PASS D3 an entry can be appended
+PASS D4 the identifier is free text, not a picker
+PASS D5 a word identifier is accepted :: stored "Restaurant"
+PASS D6 a localized Unicode identifier is accepted :: stored "الطابق"
+  digit value source: absent
+
+== E. Audio channel count is recorded as OPEN ==
+PASS E1 an Audio page exists
+PASS E2 it states the decision is open
+PASS E3 it requires firmware confirmation
+PASS E4 it names the contradiction instead of choosing
+PASS E5 no channel control is offered
