@@ -1,4 +1,5 @@
 import type { Project } from "../Domain/models";
+import { migrateLoadedProject } from "../Domain/migration";
 import { isLoadableProject } from "./project-storage";
 
 /**
@@ -51,7 +52,7 @@ export function parseProjectFile(raw: string): { readonly ok: true; readonly pro
   if (!isLoadableProject(parsed)) {
     return { ok: false, reason: "the file is not a complete Template Designer project document" };
   }
-  return { ok: true, project: parsed };
+  return { ok: true, project: migrateLoadedProject(parsed) };
 }
 
 export class BrowserProjectFileGateway implements ProjectFileGateway {

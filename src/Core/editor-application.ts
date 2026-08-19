@@ -1,4 +1,4 @@
-import type { Asset, Binding, Condition, DeviceProfile, Geometry, MediaType, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
+import type { Asset, Binding, Condition, DeviceProfile, FloorMapping, Geometry, MediaType, Project, Rotation, RotationAngle, Scene, ThemeProject, ThemeProjectGroup, Widget } from "../Domain/models";
 import { createStableId, type IdPrefix } from "../Domain/identity";
 import { InMemoryDocumentStore } from "./document-store";
 
@@ -393,7 +393,10 @@ export class EditorApplication {
         ...(theme.defaultAssetIds ? { defaultAssetIds: keepIds(theme.defaultAssetIds) } : {}),
       }));
       return mapAllWidgets(withThemes, (widget) => {
-        const slideBroken = Boolean(widget.mediaSlide && removed.has(widget.mediaSlide.assetId));
+        // A sequence entry whose asset is gone is dropped; a slide left with no
+        // entry at all is cleared, because an empty sequence plays nothing.
+        const remainingItems = widget.mediaSlide?.items.filter((item) => !removed.has(item.assetId)) ?? [];
+        const slideBroken = Boolean(widget.mediaSlide && remainingItems.length === 0);
         return {
           ...widget,
           ...(widget.assetIds ? { assetIds: widget.assetIds.filter((id) => !removed.has(id)) } : {}),
@@ -401,7 +404,7 @@ export class EditorApplication {
           ...(widget.mediaSlide
             ? slideBroken
               ? { mediaSlide: undefined }
-              : { mediaSlide: { ...widget.mediaSlide, ...(widget.mediaSlide.audioAssetId && removed.has(widget.mediaSlide.audioAssetId) ? { audioAssetId: undefined } : {}) } }
+              : { mediaSlide: { ...widget.mediaSlide, items: remainingItems, ...(widget.mediaSlide.audioAssetId && removed.has(widget.mediaSlide.audioAssetId) ? { audioAssetId: undefined } : {}) } }
             : {}),
           bindings: widget.bindings.map((binding) => binding.contentId && removed.has(binding.contentId) ? { ...binding, contentId: undefined } : binding),
         };
@@ -415,6 +418,28 @@ export class EditorApplication {
    * `manifest.resourceAssetIds`; without an editor the export scope could
    * never contain anything.
    */
+  /**
+   * Replaces a Theme Project's Floor Mappings. A floor identifier is a symbolic
+   * Unicode string (product decision): `1`, `G`, `B2`, `Restaurant` and
+   * localized identifiers are all valid. Identifiers are compared in NFC so a
+   * composed and a decomposed spelling are one identifier, never two.
+   */
+  setThemeFloorMappings(themeId: string, mappings: readonly FloorMapping[]): MutationResult {
+    const current = this.documents.getCurrent();
+    if (!current) return { changed: false };
+    const themeExists = current.themeProjectGroups.some((group) => group.themeProjects.some((theme) => theme.id === themeId));
+    if (!themeExists) return { changed: false };
+    if (new Set(mappings.map((mapping) => mapping.id)).size !== mappings.length) return { changed: false };
+    for (const mapping of mappings) {
+      if (mapping.id.trim().length === 0) return { changed: false };
+      const identifiers = mapping.entries.map((entry) => String(entry.firmwareValue).normalize("NFC"));
+      if (identifiers.some((identifier) => identifier.trim().length === 0)) return { changed: false };
+      if (new Set(identifiers).size !== identifiers.length) return { changed: false };
+      if (mapping.entries.some((entry) => entry.displayValue.trim().length === 0)) return { changed: false };
+    }
+    return this.execute("Edit Floor Mappings", (project) => mapAllThemes(project, (theme) => theme.id === themeId ? { ...theme, floorMappings: clone(mappings) } : theme));
+  }
+
   setThemeResources(themeId: string, assetIds: readonly string[]): MutationResult {
     const current = this.documents.getCurrent();
     if (!current) return { changed: false };
@@ -441,7 +466,8 @@ export class EditorApplication {
     const known = new Set(current.assets.map((asset) => asset.id));
     if (patch.assetIds !== undefined && !patch.assetIds.every((id) => known.has(id))) return { changed: false };
     if (patch.audioAssetId !== undefined && patch.audioAssetId !== undefined && patch.audioAssetId !== null && !known.has(patch.audioAssetId)) return { changed: false };
-    if (patch.mediaSlide !== undefined && patch.mediaSlide !== null && !known.has(patch.mediaSlide.assetId)) return { changed: false };
+    // Every entry of the ordered sequence must reference a real asset.
+    if (patch.mediaSlide !== undefined && patch.mediaSlide !== null && !patch.mediaSlide.items.every((item) => known.has(item.assetId))) return { changed: false };
     return this.execute("Edit Widget Configuration", (project) => mapAllScenes(project, (scene) => {
       if (scene.id !== sceneId) return scene;
       return mapWidgets(scene, (widget) => {

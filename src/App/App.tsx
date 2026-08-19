@@ -7,6 +7,7 @@ import { createDeploymentService } from "../Core/deployment-service";
 import { SDCardTarget } from "../Infrastructure/sd-card-target";
 import { evaluateActiveSceneBindings, evaluateBinding, selectActiveScene } from "../Core/runtime";
 import { validateProject } from "../Core/validation";
+import { MAX_BINDING_PRIORITY, MIN_BINDING_PRIORITY } from "../Domain/models";
 import { stableSerialize } from "../Core/serialize";
 import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
@@ -14,7 +15,7 @@ import { createAssetImportSource } from "../Infrastructure/asset-import";
 import { createProjectFileGateway } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
-import type { Asset, Binding, Condition, ConditionMode, ConditionOperator, DeploymentPackage, Geometry, MediaSlideContent, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
+import type { Asset, Binding, Condition, ConditionMode, ConditionOperator, DeploymentPackage, FloorMapping, FloorMappingEntry, Geometry, MediaSlideContent, MediaSlideItem, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
 import { DEFAULT_GRID_SIZE, DEFAULT_SNAP_THRESHOLD, calculateAlignUpdates, calculateDistributeUpdates, calculateNudgeStep, calculateZOrderUpdates, exceedsPointerDragThreshold, getBounds, getCanvasViewFrame, hitTest, isCanonicalModifier, isCanvasKeyboardExcludedTarget, marqueeSelection, moveGeometry, normalizeRect, orderSelectionIds, resizeGeometry, screenToCanvas, selectIds, snapGeometryWithTargets, transformGeometryWithinBounds, type CanvasPoint, type CanvasRect, type CanvasViewport, type AlignOperation, type DistributeOperation, type ResizeHandle, type SnapGuide, type ZOrderOperation } from "./canvas-interaction";
 import { commandsForSelection, describeSelectionRefusal, type EditorCommandId, type SelectionOperation } from "./editor-commands";
 import type { PanelId, PanelMode, SelectionKind } from "./editor-types";
@@ -26,7 +27,7 @@ type ViewMode = "design" | "preview";
 type CanvasTool = "select" | "pan";
 type MenuKey = "File" | "Edit" | "View" | "Project" | "Theme" | "Scene" | "Widget" | "Asset" | "Tools";
 type AssetCategory = "depot" | "resources" | "scene" | "unsupported";
-type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Simulator" | "Validation" | "Export" | "Shortcuts";
+type SettingsCategory = "General" | "Appearance" | "Editor" | "Canvas" | "Assets" | "Audio" | "Simulator" | "Validation" | "Export" | "Shortcuts";
 type BindingModalState = { widgetId: string } | null;
 
 type Selection = {
@@ -90,7 +91,7 @@ const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 
 const menuKeys: MenuKey[] = ["File", "Edit", "View", "Project", "Theme", "Scene", "Widget", "Asset", "Tools"];
-const settingsCategories: SettingsCategory[] = ["General", "Appearance", "Editor", "Canvas", "Assets", "Simulator", "Validation", "Export", "Shortcuts"];
+const settingsCategories: SettingsCategory[] = ["General", "Appearance", "Editor", "Canvas", "Assets", "Audio", "Simulator", "Validation", "Export", "Shortcuts"];
 const assetCategories: { id: AssetCategory; label: string }[] = [
   { id: "depot", label: "Asset Depot" },
   { id: "resources", label: "Project Resources" },
@@ -213,7 +214,7 @@ function countAssetReferences(project: Project, assetId: string): number {
           for (const widget of scene.widgets) {
             count += (widget.assetIds ?? []).filter((id) => id === assetId).length;
             if (widget.audioAssetId === assetId) count += 1;
-            if (widget.mediaSlide?.assetId === assetId) count += 1;
+            count += (widget.mediaSlide?.items ?? []).filter((item) => item.assetId === assetId).length;
             if (widget.mediaSlide?.audioAssetId === assetId) count += 1;
             count += widget.bindings.filter((binding) => binding.contentId === assetId).length;
           }
@@ -605,7 +606,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const [clipboard, setClipboard] = useState<{ widgets: Widget[]; cut: boolean } | null>(null);
   const [confirmState, setConfirmState] = useState<ConfirmRequest | null>(null);
   const [duplicateMode, setDuplicateMode] = useState(false);
-  const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "" });
+  const [bindingDraft, setBindingDraft] = useState<{ stateId: string; operator: string; value: string; negated: boolean; action: string; conditionMode: ConditionMode; contentId: string; targetBindingId: string; priority: number }>({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "", priority: MIN_BINDING_PRIORITY });
   const editorApplication = useMemo(() => createEditorApplication(documentStore), [documentStore]);
   const commandHistory = documentStore.history;
   const [runtimeValues, setRuntimeValues] = useState<Record<string, PrimitiveValue | null>>({});
@@ -1139,6 +1140,46 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   const setWidgetAssetIds = (assetIds: readonly string[]): boolean => configureWidget({ assetIds }, "Set asset references");
 
+  // ---- Media sequence (ordered) --------------------------------------------
+  // Each edit replaces the whole sequence in ONE undoable command, so a reorder
+  // is a single history step rather than a remove followed by an insert.
+
+  const commitSequence = (widget: Widget, items: readonly MediaSlideItem[], label: string): boolean => {
+    const slide = widget.mediaSlide;
+    if (items.length === 0) return configureWidget({ mediaSlide: undefined }, "Clear media sequence");
+    const next: MediaSlideContent = {
+      ...(slide ?? {}),
+      items,
+    };
+    return configureWidget({ mediaSlide: next }, label);
+  };
+
+  const appendSequenceItem = (widget: Widget, assetId: string): boolean => {
+    const asset = project.assets.find((candidate) => candidate.id === assetId);
+    if (!asset || !asset.mediaType || asset.mediaType === "audio") {
+      logAction("A media sequence entry needs an image or video asset with an assigned type", "WARN");
+      return false;
+    }
+    const item: MediaSlideItem = { id: createStableId("media-item"), mediaType: asset.mediaType, assetId, duration: 5 };
+    return commitSequence(widget, [...(widget.mediaSlide?.items ?? []), item], `Append ${asset.name} to the media sequence`);
+  };
+
+  const removeSequenceItem = (widget: Widget, itemId: string): boolean =>
+    commitSequence(widget, (widget.mediaSlide?.items ?? []).filter((item) => item.id !== itemId), "Remove media sequence entry");
+
+  const updateSequenceItem = (widget: Widget, itemId: string, patch: Partial<MediaSlideItem>): boolean =>
+    commitSequence(widget, (widget.mediaSlide?.items ?? []).map((item) => item.id === itemId ? { ...item, ...patch } : item), "Edit media sequence entry");
+
+  const moveSequenceItem = (widget: Widget, itemId: string, direction: 1 | -1): boolean => {
+    const items = [...(widget.mediaSlide?.items ?? [])];
+    const from = items.findIndex((item) => item.id === itemId);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= items.length) return false;
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved);
+    return commitSequence(widget, items, `Move media sequence entry to position ${to + 1}`);
+  };
+
   // ---- Scene lifecycle & activation ---------------------------------------
 
   const duplicateSceneCommand = (sceneId: string | undefined): boolean => {
@@ -1622,13 +1663,29 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       conditions: [condition],
       conditionMode: bindingDraft.conditionMode,
       action: bindingDraft.action as Binding["action"],
+      priority: bindingDraft.priority,
       ...(bindingDraft.contentId ? { contentId: bindingDraft.contentId } : {}),
     };
     const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, [...widget.bindings, binding]);
     if (result.changed) {
       logAction(`Binding added: ${bindingDraft.stateId} → ${bindingDraft.action}`, "EVENT");
-      setBindingDraft({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "" });
+      setBindingDraft({ stateId: "", operator: "equals", value: "", negated: false, action: "show", conditionMode: "all", contentId: "", targetBindingId: "", priority: MIN_BINDING_PRIORITY });
     }
+    return result.changed;
+  };
+
+  /** Binding priority 0-15; higher wins when several bindings match one widget. */
+  const setBindingPriority = (bindingId: string, priority: number): boolean => {
+    const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
+    const sceneId = resolved?.scene?.id;
+    const widget = resolved?.widget;
+    if (!sceneId || !widget) return false;
+    if (!Number.isInteger(priority) || priority < MIN_BINDING_PRIORITY || priority > MAX_BINDING_PRIORITY) {
+      logAction(`Binding priority must be a whole number from ${MIN_BINDING_PRIORITY} through ${MAX_BINDING_PRIORITY}`, "WARN");
+      return false;
+    }
+    const result = editorApplication.replaceWidgetBindings(sceneId, widget.id, widget.bindings.map((binding) => binding.id === bindingId ? { ...binding, priority } : binding));
+    if (result.changed) logAction(`Binding priority set to ${priority}`, "EVENT");
     return result.changed;
   };
 
@@ -2038,19 +2095,25 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const previewActive = viewMode === "preview" && Boolean(runtime.activeScene);
   const displayedWidgets = previewActive && runtime.activeScene ? runtime.activeScene.widgets : canvasWidgets;
   const bindingEffects = useMemo(() => {
-    const effects: Record<string, { hidden?: boolean; playback?: Binding["action"]; contentId?: string }> = {};
+    const effects: Record<string, { hidden?: boolean; playback?: Binding["action"]; contentId?: string; decidedBy?: string }> = {};
     if (!activeProfile) return effects;
     for (const widget of displayedWidgets) {
-      for (const binding of widget.bindings) {
-        const evaluation = evaluateBinding(binding, runtimeContext, activeProfile);
-        if (!evaluation.matched) continue;
+      // Product decision: binding priority is an integer 0-15, independent of
+      // Scene priority. Higher wins; document order breaks a tie; an absent
+      // priority is the lowest level, so it never outranks an explicit one.
+      const matched = widget.bindings
+        .map((binding, index) => ({ binding, index, evaluation: evaluateBinding(binding, runtimeContext, activeProfile) }))
+        .filter((entry) => entry.evaluation.matched)
+        .sort((left, right) => (left.binding.priority ?? MIN_BINDING_PRIORITY) - (right.binding.priority ?? MIN_BINDING_PRIORITY) || left.index - right.index);
+      for (const { binding } of matched) {
         const current = effects[widget.id] ?? {};
-        if (binding.action === "hide") effects[widget.id] = { ...current, hidden: true };
-        else if (binding.action === "show") effects[widget.id] = { ...current, hidden: false };
+        const decidedBy = `priority ${binding.priority ?? MIN_BINDING_PRIORITY}`;
+        if (binding.action === "hide") effects[widget.id] = { ...current, hidden: true, decidedBy };
+        else if (binding.action === "show") effects[widget.id] = { ...current, hidden: false, decidedBy };
         else if (binding.action === "play" || binding.action === "pause" || binding.action === "stop" || binding.action === "restart" || binding.action === "continue") {
-          effects[widget.id] = { ...current, playback: binding.action };
+          effects[widget.id] = { ...current, playback: binding.action, decidedBy };
         }
-        if (binding.contentId) effects[widget.id] = { ...effects[widget.id] ?? {}, contentId: binding.contentId };
+        if (binding.contentId) effects[widget.id] = { ...(effects[widget.id] ?? {}), contentId: binding.contentId, decidedBy };
       }
     }
     return effects;
@@ -2752,13 +2815,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return <span className="widget-render widget-render-direction" title={style ? `Direction style: ${style}` : "Profile default direction style"}>{glyph}</span>;
     }
     if (widget.widgetType === "media") {
-      const assetId = effect?.contentId ?? widget.mediaSlide?.assetId ?? widget.assetIds?.[0];
+      const assetId = effect?.contentId ?? widget.mediaSlide?.items[0]?.assetId ?? widget.assetIds?.[0];
       const asset = assetId ? project.assets.find((candidate) => candidate.id === assetId) : undefined;
       return (
         <span className="widget-render widget-render-media">
           <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>
           <strong>{asset?.name ?? (assetId ? `${assetId} (unresolved)` : "No asset")}</strong>
-          <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.duration}s${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
+          <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"}${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
         </span>
       );
     }
@@ -2964,7 +3027,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   );
 
   const resourceAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.resources)));
-  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => [...(widget.assetIds ?? []), ...(widget.audioAssetId ? [widget.audioAssetId] : []), ...(widget.mediaSlide ? [widget.mediaSlide.assetId, ...(widget.mediaSlide.audioAssetId ? [widget.mediaSlide.audioAssetId] : [])] : [])]))))));
+  const sceneAssetIds = new Set(groups.flatMap((currentGroup) => currentGroup.themeProjects.flatMap((theme) => theme.rotations.flatMap((rotation) => rotation.scenes.flatMap((scene) => scene.widgets.flatMap((widget) => [...(widget.assetIds ?? []), ...(widget.audioAssetId ? [widget.audioAssetId] : []), ...(widget.mediaSlide ? [...widget.mediaSlide.items.map((item) => item.assetId), ...(widget.mediaSlide.audioAssetId ? [widget.mediaSlide.audioAssetId] : [])] : [])]))))));
   const supportedFormatSet = new Set((activeProfile?.supportedFormats ?? []).map((format) => format.toLowerCase()));
   // "Unsupported" is a real, derived category: an asset whose extension the
   // active DeviceProfile does not declare (the exact ASSET_FORMAT_UNSUPPORTED
@@ -3169,6 +3232,8 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const renderWidgetMediaSection = (widget: Widget) => {
     const visualTypes = (activeProfile?.supportedMediaTypes ?? []).filter((mediaType): mediaType is VisualMediaType => mediaType !== "audio");
     const slide = widget.mediaSlide;
+    // Only visual assets the profile supports can enter the sequence.
+    const appendableAssets = project.assets.filter((asset) => asset.mediaType !== undefined && asset.mediaType !== "audio" && visualTypes.includes(asset.mediaType as VisualMediaType));
     const isMedia = widget.widgetType === "media";
     return (
       <section className="property-section">
@@ -3182,24 +3247,60 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             </select>
           </div>
         )}
-        {isMedia && widget.mediaType && (
+        {isMedia && (
           <>
-            {renderAssetSelect("Slide Asset", slide?.assetId, widget.mediaType, (assetId) => {
-              if (!assetId) {
-                configureWidget({ mediaSlide: undefined }, "Clear media slide");
-                return;
-              }
-              const next: MediaSlideContent = { mediaType: widget.mediaType as VisualMediaType, assetId, duration: slide?.duration ?? 5, ...(slide?.loop !== undefined ? { loop: slide.loop } : {}), ...(slide?.repeatCount !== undefined ? { repeatCount: slide.repeatCount } : {}), ...(slide?.audioAssetId ? { audioAssetId: slide.audioAssetId } : {}), ...(slide?.volume !== undefined ? { volume: slide.volume } : {}), ...(slide?.continuePlayback !== undefined ? { continuePlayback: slide.continuePlayback } : {}) };
-              configureWidget({ mediaSlide: next }, "Set media slide asset");
-            })}
+            {/* A Media Slide is an ORDERED MEDIA SEQUENCE: entries may mix Image
+                and Video in any order, and each entry carries its own dwell time. */}
+            <div className="property-row"><span>Media Sequence</span><strong>{slide ? `${slide.items.length} entr${slide.items.length === 1 ? "y" : "ies"} · ${slide.items.reduce((total, item) => total + item.duration, 0).toFixed(1)}s total` : "Not configured"}</strong></div>
+            {slide && slide.items.length > 0 && (
+              <ol className="sequence-list">
+                {slide.items.map((item, index) => {
+                  const asset = project.assets.find((candidate) => candidate.id === item.assetId);
+                  return (
+                    <li key={item.id}>
+                      <span className="sequence-index">{index + 1}</span>
+                      <span className="sequence-body">
+                        <strong>{assetGlyph(item.mediaType)} {asset?.name ?? `${item.assetId} (unresolved)`}</strong>
+                        <small>{item.mediaType}{item.loop ? " · loop" : ""}{item.repeatCount ? ` · ×${item.repeatCount}` : ""}</small>
+                      </span>
+                      <DraftNumberField scope={`${widget.id}:seq:${item.id}`} value={String(item.duration)} disabled={false} min={0} max={3600} decimals={1} ariaLabel={`Entry ${index + 1} duration in seconds`} onCommit={(value) => updateSequenceItem(widget, item.id, { duration: Math.round(value * 10) / 10 })} />
+                      <span className="sequence-actions">
+                        <button type="button" className="small-action" disabled={index === 0} aria-label={`Move entry ${index + 1} earlier`} title="Move earlier in the sequence" onClick={() => moveSequenceItem(widget, item.id, -1)}>↑</button>
+                        <button type="button" className="small-action" disabled={index === slide.items.length - 1} aria-label={`Move entry ${index + 1} later`} title="Move later in the sequence" onClick={() => moveSequenceItem(widget, item.id, 1)}>↓</button>
+                        <button type="button" className="reference-remove" aria-label={`Remove entry ${index + 1}`} title="Remove this entry" onClick={() => removeSequenceItem(widget, item.id)}>×</button>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ol>
+            )}
+            <div className="property-row property-row-edit">
+              <span>Append Entry</span>
+              <select
+                aria-label="Append media sequence entry"
+                value=""
+                disabled={appendableAssets.length === 0}
+                title={appendableAssets.length === 0 ? `No ${visualTypes.join(" or ")} asset is imported yet — use Asset Browser → Import…` : "Appends to the end of the ordered sequence"}
+                onChange={(event) => { if (event.target.value) appendSequenceItem(widget, event.target.value); }}
+              >
+                <option value="">{appendableAssets.length === 0 ? "No image or video asset imported" : "Choose an asset…"}</option>
+                {appendableAssets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}
+              </select>
+            </div>
             {slide && (
               <>
-                <div className="property-row property-row-edit"><span>Duration (s)</span><DraftNumberField scope={`${widget.id}:duration`} value={String(slide.duration)} disabled={false} min={0} max={3600} step={0.1} decimals={1} ariaLabel="Media slide duration in seconds" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, duration: Math.round(value * 10) / 10 } }, "Set slide duration")} /></div>
-                <div className="property-row property-row-edit"><span>Loop</span><input type="checkbox" aria-label="Media slide loop" checked={slide.loop === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, loop: event.target.checked } }, "Set slide loop")} /></div>
-                <div className="property-row property-row-edit"><span>Repeat Count</span><DraftNumberField scope={`${widget.id}:repeat`} value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media slide repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set slide repeat count")} /></div>
-                {renderAssetSelect("Slide Audio", slide.audioAssetId, "audio", (assetId) => configureWidget({ mediaSlide: { ...slide, audioAssetId: assetId } }, "Set slide audio"))}
+                <div className="property-row property-row-edit"><span>Loop Sequence</span><input type="checkbox" aria-label="Loop the media sequence" checked={slide.loop === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, loop: event.target.checked } }, "Set sequence loop")} /></div>
+                <div className="property-row property-row-edit"><span>Repeat Sequence</span><DraftNumberField scope={`${widget.id}:seqrepeat`} value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media sequence repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set sequence repeat count")} /></div>
+                {renderAssetSelect("Sequence Audio", slide.audioAssetId, "audio", (assetId) => configureWidget({ mediaSlide: { ...slide, audioAssetId: assetId } }, "Set sequence audio"))}
               </>
             )}
+            <div className="property-row property-row-edit">
+              <span>Visual Type</span>
+              <select aria-label="Media visual type" value={widget.mediaType ?? ""} onChange={(event) => configureWidget({ mediaType: (event.target.value || undefined) as VisualMediaType | undefined }, "Set media type")}>
+                <option value="">Not selected</option>
+                {visualTypes.map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}
+              </select>
+            </div>
             {renderAssetSelect("Attached Audio", widget.audioAssetId, "audio", (assetId) => configureWidget({ audioAssetId: assetId }, "Set attached audio"))}
           </>
         )}
@@ -3278,6 +3379,66 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     );
   };
 
+  /**
+   * Floor Mapping editor. A floor identifier is a symbolic Unicode string
+   * (product decision): `1`, `G`, `B2`, `Restaurant`, `North` and localized
+   * identifiers are all valid, so the field is free text, never a picker over a
+   * fixed alphabet. Identifiers are compared in NFC, so a composed and a
+   * decomposed spelling of the same identifier are rejected as a duplicate.
+   */
+  const renderFloorMappingSection = (theme: ThemeProject) => {
+    const mappings = theme.floorMappings ?? [];
+    const commit = (next: readonly FloorMapping[], label: string) => {
+      const result = editorApplication.setThemeFloorMappings(theme.id, next);
+      if (result.changed) logAction(label, "EVENT");
+      else logAction("Floor mapping rejected: an identifier is empty or duplicated, or a display value is missing", "WARN");
+      return result.changed;
+    };
+    const patchEntry = (mappingId: string, entryIndex: number, patch: Partial<FloorMappingEntry>) => commit(
+      mappings.map((mapping) => mapping.id === mappingId
+        ? { ...mapping, entries: mapping.entries.map((entry, index) => index === entryIndex ? { ...entry, ...patch } : entry) }
+        : mapping),
+      "Floor mapping entry updated",
+    );
+    return (
+      <section className="property-section">
+        <div className="property-section-title">Floor Mappings</div>
+        <p className="property-note">A floor identifier is a symbolic value the firmware reports — <code>1</code>, <code>G</code>, <code>B2</code>, <code>Restaurant</code> — not a fixed A–Z list. Unicode and localized identifiers are accepted.</p>
+        {mappings.length === 0 && <p className="property-note">No Floor Mapping. A Digit widget without one shows the raw firmware value.</p>}
+        {mappings.map((mapping) => (
+          <div className="floor-mapping" key={mapping.id}>
+            <div className="floor-mapping-head">
+              <strong>{mapping.id}</strong>
+              <span className="floor-mapping-actions">
+                <button type="button" className="small-action" title="Append an entry to this mapping" onClick={() => commit(mappings.map((candidate) => candidate.id === mapping.id ? { ...candidate, entries: [...candidate.entries, { firmwareValue: `F${candidate.entries.length + 1}`, displayValue: `${candidate.entries.length + 1}` }] } : candidate), "Floor mapping entry added")}>+ Entry</button>
+                <button type="button" className="reference-remove" aria-label={`Remove floor mapping ${mapping.id}`} title="Remove this mapping" onClick={() => commit(mappings.filter((candidate) => candidate.id !== mapping.id), "Floor mapping removed")}>×</button>
+              </span>
+            </div>
+            {mapping.entries.length === 0
+              ? <p className="property-note">No entry yet.</p>
+              : (
+                <ul className="floor-entry-list">
+                  {mapping.entries.map((entry, index) => (
+                    <li key={`${mapping.id}-${index}`}>
+                      <DraftTextField scope={`${mapping.id}:${index}:firmware`} value={String(entry.firmwareValue)} disabled={false} placeholder="firmware id" ariaLabel={`Firmware identifier ${index + 1}`} onCommit={(value) => patchEntry(mapping.id, index, { firmwareValue: value })} />
+                      <span className="floor-arrow" aria-hidden="true">→</span>
+                      <DraftTextField scope={`${mapping.id}:${index}:display`} value={entry.displayValue} disabled={false} placeholder="shown" ariaLabel={`Display value ${index + 1}`} onCommit={(value) => patchEntry(mapping.id, index, { displayValue: value })} />
+                      <select aria-label={`Digit style for entry ${index + 1}`} value={entry.digitStyleId ?? ""} onChange={(event) => patchEntry(mapping.id, index, { digitStyleId: event.target.value || undefined })}>
+                        <option value="">Mapping default</option>
+                        {(activeProfile?.digitStyles ?? []).map((style) => <option key={style} value={style}>{style}</option>)}
+                      </select>
+                      <button type="button" className="reference-remove" aria-label={`Remove entry ${index + 1}`} onClick={() => commit(mappings.map((candidate) => candidate.id === mapping.id ? { ...candidate, entries: candidate.entries.filter((_, current) => current !== index) } : candidate), "Floor mapping entry removed")}>×</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </div>
+        ))}
+        <button type="button" className="property-inline-action" onClick={() => commit([...mappings, { id: createStableId("floor-mapping"), entries: [] }], "Floor mapping added")}>Add Floor Mapping</button>
+      </section>
+    );
+  };
+
   const renderThemeResourcesSection = (theme: ThemeProject) => (
     <section className="property-section">
       <div className="property-section-title">Theme Resources</div>
@@ -3347,13 +3508,13 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div>{multi ? <PropertyRow label="Widget Type" value={valueFor((current) => current.widget?.widgetType)} /> : <div className="property-row property-row-edit"><span>Widget Type</span><select aria-label="Widget type" value={widget.widgetType} onChange={(event) => changeWidgetType(event.target.value)}>{(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => <option key={widgetType} value={widgetType}>{defaultWidgetName(widgetType)}</option>)}{!(activeProfile?.supportedWidgetTypes ?? []).includes(widget.widgetType) && <option value={widget.widgetType}>{widget.widgetType} (unsupported)</option>}</select></div>}<div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
             <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField scope={`${draftScope}:x`} label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:y`} label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:w`} label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:h`} label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField scope={`${draftScope}:z`} value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
-            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? `${widget.mediaSlide.mediaType} · ${widget.mediaSlide.duration}s` : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
+            <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? `${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"} · ${widget.mediaSlide.items.reduce((total, item) => total + item.duration, 0).toFixed(1)}s` : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {!multi && renderWidgetContentSection(widget)}
             {!multi && renderWidgetMediaSection(widget)}
           </>}
           {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={false} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
-          {node.kind === "theme" && node.theme && renderThemeResourcesSection(node.theme)}
+          {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
           {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} onChange={(event) => { const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
         </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={false} ariaLabel="Project name" onCommit={(value) => { const result = editorApplication.renameNode(project.id, value); if (result.changed) logAction(`Project renamed to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
@@ -3410,6 +3571,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     Editor: <><h3>Editor</h3><p>Editor defaults apply to the UI shell only; domain geometry remains canonical.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.restoreSession} onChange={(event) => setSettingsDraft((current) => ({ ...current, restoreSession: event.target.checked }))} /> Restore the last Theme / Rotation / Scene, zoom and panels on reload</label><div className="settings-value">Shortcut registry <strong>Canonical table + Alt navigation family</strong></div></>,
     Canvas: <><h3>Canvas</h3><p>Canvas preferences are application UI defaults and do not change runtime semantics.</p><label className="settings-check"><input type="checkbox" checked={settingsDraft.showGrid} onChange={(event) => setSettingsDraft((current) => ({ ...current, showGrid: event.target.checked }))} /> Show grid by default</label><label className="settings-check"><span>Snap grid size</span><input className="settings-number" type="number" min="1" step="1" value={settingsDraft.snapGridSize} onChange={(event) => setSettingsDraft((current) => ({ ...current, snapGridSize: Math.max(1, Number(event.target.value) || DEFAULT_GRID_SIZE) }))} /><small className="settings-unit">scene units</small></label></>,
     Assets: <><h3>Assets</h3><p>Asset Browser is a depot/library view. Resources, Scene Content and Unsupported Files remain separate.</p><div className="settings-value">Preview mode <strong>Profile-supported</strong></div></>,
+    Audio: <><h3>Audio</h3><p>Audio channel modelling is an <strong>open product decision</strong>. The specification states three separately modelled channels in one document and five in another, and its runtime-setting defaults disagree on both values and keys — including within a single document.</p><p className="property-note">Status: <strong>firmware specification confirmation required</strong>. No channel count is assumed, so this build exposes no channel, mixing or default-volume control rather than guessing one. A Media Sequence may carry one attached audio asset, which is the only audio behaviour every document agrees on.</p></>,
     Simulator: <><h3>Simulator</h3><p>Simulator consumes canonical DeviceProfile runtime state and settings registries.</p><div className="settings-value">Rule system <strong>Canonical evaluator</strong></div></>,
     Validation: <><h3>Validation</h3><p>Validation issues are sourced from the shared validation service.</p><div className="settings-value">Severity <strong>Profile-aware</strong></div></>,
     Export: <><h3>Export</h3><p>Export scope is controlled by canonical Resources + Used + Default asset rules.</p><div className="settings-value">Format conversion <strong>Not in V1</strong></div></>,
@@ -3461,7 +3623,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
       <footer className="statusbar"><span><span className={`status-led ${validation.valid ? "" : "is-error"}`} aria-hidden="true" /> {validation.valid ? "No blocking foundation issues" : "Foundation validation requires attention"}</span><span aria-live="polite">{profileStatus} · Selection: {activeSelectionLabel} · Zoom {zoom}% · {snapEnabled ? "Snap on" : "Snap off"} · {gridVisible ? "Grid on" : "Grid off"}</span><span>{deploymentStatus} · Document: {documentSnapshot.isDirty ? "dirty" : "clean"} · Browser core · Tauri shell reserved</span></footer>
 
-      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code>{binding.conditions.length > 1 && <button type="button" className="reference-remove" aria-label={`Remove condition ${conditionIndex + 1}`} onClick={() => removeBindingCondition(binding.id, conditionIndex)}>x</button>}</div>; })}</div><label className="binding-mode-row"><span>Match</span><select aria-label={`Condition mode for ${binding.action} binding`} value={binding.conditionMode ?? "all"} onChange={(event) => setBindingConditionMode(binding.id, event.target.value as ConditionMode)}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ? (project.assets.find((asset) => asset.id === binding.contentId)?.name ?? `${binding.contentId} (unresolved)`) : "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{(bindingDraftDefinition ? operatorsForType(bindingDraftDefinition.type, bindingDraftDefinition.operators) : ["equals", "not-equals"]).map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label className="binding-field"><span>Match</span><select aria-label="Binding condition mode" value={bindingDraft.conditionMode} disabled={Boolean(bindingDraft.targetBindingId)} onChange={(event) => setBindingDraft((current) => ({ ...current, conditionMode: event.target.value as ConditionMode }))}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label>{(bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && <label className="binding-field"><span>Content Asset</span><select aria-label="Binding content asset" value={bindingDraft.contentId} disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet - use Asset Browser Import" : undefined} onChange={(event) => setBindingDraft((current) => ({ ...current, contentId: event.target.value }))}><option value="">{project.assets.length === 0 ? "No asset imported" : "Select asset..."}</option>{project.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}</select></label>}<label className="binding-field"><span>Add to</span><select aria-label="Add condition to existing binding" value={bindingDraft.targetBindingId} onChange={(event) => setBindingDraft((current) => ({ ...current, targetBindingId: event.target.value }))}><option value="">New binding</option>{(bindingWidget?.bindings ?? []).map((binding) => <option key={binding.id} value={binding.id}>{binding.action} ({binding.conditions.length} condition{binding.conditions.length === 1 ? "" : "s"})</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId || ((bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && !bindingDraft.contentId && !bindingDraft.targetBindingId)} onClick={addBinding}>{bindingDraft.targetBindingId ? "Add Condition" : "Add Binding"}</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
+      {bindingModal && <div className="settings-backdrop" role="presentation"><section className="binding-dialog" role="dialog" aria-modal="true" aria-labelledby="binding-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">CANONICAL PRESENTATION</span><h2 id="binding-title">Binding Editor</h2></div><button type="button" className="panel-action" aria-label="Close Binding Editor" onClick={() => setBindingModal(null)}>×</button></header><div className="binding-layout"><div className="binding-context-card"><span className="context-icon has-selection">◇</span><div><strong>{bindingWidget?.name ?? "Widget"}</strong><small>{bindingWidget?.widgetType ?? "Unknown"} · Evaluated against the current runtime context</small></div></div><div className="binding-section"><div className="property-section-title">Bindings</div>{bindingWidget?.bindings.length ? bindingWidget.bindings.map((binding, index) => { const evaluation = bindingEvaluations[index]; return <div className="binding-card" key={binding.id}><div className="binding-card-head"><strong>{binding.action}</strong><span className="binding-card-actions"><span className={evaluation?.matched ? "binding-true" : "binding-false"}>{evaluation?.matched ? "TRUE" : "FALSE"}</span><button type="button" className="binding-remove" aria-label="Remove binding" title="Remove binding" onClick={() => removeBinding(binding.id)}>×</button></span></div><div className="binding-condition-list">{binding.conditions.map((condition, conditionIndex) => { const definition = [...profileStates, ...profileSettings].find((candidate) => candidate.id === condition.stateId); return <div className="binding-condition" key={`${binding.id}-${conditionIndex}`}><span>{condition.negated ? "NOT " : ""}{definition?.displayName ?? condition.stateId}</span><code>{condition.operator} {String(condition.value)}</code>{binding.conditions.length > 1 && <button type="button" className="reference-remove" aria-label={`Remove condition ${conditionIndex + 1}`} onClick={() => removeBindingCondition(binding.id, conditionIndex)}>x</button>}</div>; })}</div><label className="binding-mode-row"><span>Priority</span><select aria-label={`Priority for ${binding.action} binding`} value={String(binding.priority ?? MIN_BINDING_PRIORITY)} onChange={(event) => setBindingPriority(binding.id, Number(event.target.value))}>{Array.from({ length: MAX_BINDING_PRIORITY - MIN_BINDING_PRIORITY + 1 }, (_, offset) => MIN_BINDING_PRIORITY + offset).map((level) => <option key={level} value={level}>{level}</option>)}</select></label><label className="binding-mode-row"><span>Match</span><select aria-label={`Condition mode for ${binding.action} binding`} value={binding.conditionMode ?? "all"} onChange={(event) => setBindingConditionMode(binding.id, event.target.value as ConditionMode)}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label><small>Target widget: {evaluation?.widgetId ?? binding.widgetId} · content/style: {binding.contentId ? (project.assets.find((asset) => asset.id === binding.contentId)?.name ?? `${binding.contentId} (unresolved)`) : "presentation"}</small></div>; }) : <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No bindings on this widget</strong><span>Add a binding below from DeviceProfile-defined states and settings.</span></div>}</div><div className="binding-section"><div className="property-section-title">Add Binding</div>{[...profileStates, ...profileSettings].length === 0 ? <div className="binding-empty"><span className="empty-panel-icon">⌘</span><strong>No DeviceProfile runtime registry</strong><span>The active DeviceProfile declares no runtime states or settings, so no condition can be authored.</span></div> : <div className="binding-authoring"><label className="binding-field"><span>When</span><select aria-label="Binding state" value={bindingDraft.stateId} onChange={(event) => setBindingDraft((current) => ({ ...current, stateId: event.target.value }))}><option value="">Select state…</option>{[...profileStates, ...profileSettings].map((definition) => <option key={definition.id} value={definition.id}>{definition.displayName} ({definition.type})</option>)}</select></label><label className="binding-field"><span>Operator</span><select aria-label="Binding operator" value={bindingDraft.operator} onChange={(event) => setBindingDraft((current) => ({ ...current, operator: event.target.value }))}>{(bindingDraftDefinition ? operatorsForType(bindingDraftDefinition.type, bindingDraftDefinition.operators) : ["equals", "not-equals"]).map((operator) => <option key={operator} value={operator}>{operator}</option>)}</select></label><label className="binding-field"><span>Value</span>{bindingDraftDefinition?.type === "boolean" ? <input type="checkbox" aria-label="Binding value" checked={bindingDraft.value === "true"} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.checked ? "true" : "false" }))} /> : bindingDraftDefinition?.type === "enum" ? <select aria-label="Binding value" value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))}><option value="">Select value…</option>{(bindingDraftDefinition.enumValues ?? []).map((enumValue) => <option key={enumValue} value={enumValue}>{enumValue}</option>)}</select> : <input aria-label="Binding value" type={bindingDraftDefinition?.type === "integer" || bindingDraftDefinition?.type === "number" ? "number" : "text"} step={bindingDraftDefinition?.type === "number" ? "any" : "1"} value={bindingDraft.value} onChange={(event) => setBindingDraft((current) => ({ ...current, value: event.target.value }))} />}</label><label className="binding-field binding-field-check"><span>Negate</span><input type="checkbox" aria-label="Negate condition" checked={bindingDraft.negated} onChange={(event) => setBindingDraft((current) => ({ ...current, negated: event.target.checked }))} /></label><label className="binding-field"><span>Action</span><select aria-label="Binding action" value={bindingDraft.action} onChange={(event) => setBindingDraft((current) => ({ ...current, action: event.target.value }))}>{["show", "hide", "play", "pause", "stop", "restart", "continue", "select-content", "select-style"].map((action) => <option key={action} value={action}>{action}</option>)}</select></label><label className="binding-field"><span>Priority</span><select aria-label="Binding priority" value={String(bindingDraft.priority)} disabled={Boolean(bindingDraft.targetBindingId)} title={`Integer ${MIN_BINDING_PRIORITY}-${MAX_BINDING_PRIORITY}. Higher wins when several bindings match this widget. Independent of Scene priority.`} onChange={(event) => setBindingDraft((current) => ({ ...current, priority: Number(event.target.value) }))}>{Array.from({ length: MAX_BINDING_PRIORITY - MIN_BINDING_PRIORITY + 1 }, (_, offset) => MIN_BINDING_PRIORITY + offset).map((level) => <option key={level} value={level}>{level}</option>)}</select></label><label className="binding-field"><span>Match</span><select aria-label="Binding condition mode" value={bindingDraft.conditionMode} disabled={Boolean(bindingDraft.targetBindingId)} onChange={(event) => setBindingDraft((current) => ({ ...current, conditionMode: event.target.value as ConditionMode }))}><option value="all">All (AND)</option><option value="any">Any (OR)</option></select></label>{(bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && <label className="binding-field"><span>Content Asset</span><select aria-label="Binding content asset" value={bindingDraft.contentId} disabled={project.assets.length === 0} title={project.assets.length === 0 ? "No asset is imported yet - use Asset Browser Import" : undefined} onChange={(event) => setBindingDraft((current) => ({ ...current, contentId: event.target.value }))}><option value="">{project.assets.length === 0 ? "No asset imported" : "Select asset..."}</option>{project.assets.map((asset) => <option key={asset.id} value={asset.id}>{asset.name} ({asset.mediaType})</option>)}</select></label>}<label className="binding-field"><span>Add to</span><select aria-label="Add condition to existing binding" value={bindingDraft.targetBindingId} onChange={(event) => setBindingDraft((current) => ({ ...current, targetBindingId: event.target.value }))}><option value="">New binding</option>{(bindingWidget?.bindings ?? []).map((binding) => <option key={binding.id} value={binding.id}>{binding.action} ({binding.conditions.length} condition{binding.conditions.length === 1 ? "" : "s"})</option>)}</select></label><button type="button" className="settings-button-primary" disabled={!bindingDraft.stateId || ((bindingDraft.action === "select-content" || bindingDraft.action === "select-style") && !bindingDraft.contentId && !bindingDraft.targetBindingId)} onClick={addBinding}>{bindingDraft.targetBindingId ? "Add Condition" : "Add Binding"}</button></div>}</div><div className="binding-section"><div className="property-section-title">DeviceProfile Registry</div><div className="binding-registry-grid"><div><strong>Runtime States</strong>{profileStates.length ? profileStates.map((state) => <span key={state.id}>{state.displayName}<small>{state.type}</small></span>) : <em>Empty registry</em>}</div><div><strong>Runtime Settings</strong>{profileSettings.length ? profileSettings.map((setting) => <span key={setting.id}>{setting.displayName}<small>{setting.type}</small></span>) : <em>Empty registry</em>}</div></div></div></div><footer className="settings-footer"><span>Positive/negative conditions and actions are constrained by the active DeviceProfile.</span><div><button type="button" autoFocus className="settings-button-primary" onClick={() => setBindingModal(null)}>Close</button></div></footer></section></div>}
       {settingsOpen && <div className="settings-backdrop" role="presentation"><section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">APPLICATION PREFERENCES</span><h2 id="settings-title">Settings</h2></div><button type="button" className="panel-action" aria-label="Close Settings" onClick={cancelSettings}>×</button></header><div className="settings-layout"><nav className="settings-nav" aria-label="Settings categories">{settingsCategories.map((category) => <button key={category} type="button" className={settingsCategory === category ? "active" : ""} onClick={() => setSettingsCategory(category)}>{category}</button>)}</nav><div className="settings-content">{settingsContent[settingsCategory]}</div></div><footer className="settings-footer"><span>Program settings only · Project/Theme/Runtime settings stay in their canonical contexts.</span><div><button type="button" autoFocus className="settings-button-secondary" onClick={cancelSettings}>Cancel</button><button type="button" className="settings-button-primary" onClick={saveSettings}>Save / Apply &amp; Close</button></div></footer></section></div>}
 
       {newProjectDraft && <div className="settings-backdrop" role="presentation"><section className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onKeyDown={trapModalFocus}><header className="settings-header"><div><span className="panel-kicker">PROJECT</span><h2 id="new-project-title">New Project</h2></div></header><div className="confirm-body"><label className="dialog-field"><span>Project name</span><input autoFocus aria-label="New project name" value={newProjectDraft.name} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, name: event.target.value } : current)} /></label><label className="dialog-field"><span>Device Profile</span><select aria-label="New project device profile" value={newProjectDraft.profileId} onChange={(event) => setNewProjectDraft((current) => current ? { ...current, profileId: event.target.value } : current)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}</select></label><p className="dialog-note">The project is created with one Theme Project Group, one Theme Project and the canonical four Rotation / Form variants sized from the chosen display.</p></div><footer className="settings-footer"><div><button type="button" className="settings-button-secondary" onClick={() => setNewProjectDraft(null)}>Cancel</button><button type="button" className="settings-button-primary" onClick={confirmNewProject}>Create Project</button></div></footer></section></div>}

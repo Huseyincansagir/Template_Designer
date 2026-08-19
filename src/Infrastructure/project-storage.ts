@@ -1,3 +1,4 @@
+import { migrateLoadedProject } from "../Domain/migration";
 import type { Project } from "../Domain/models";
 
 /**
@@ -127,7 +128,9 @@ export class LocalStorageProjectStorage implements ProjectStorage {
     if (!isLoadableProject(parsed)) {
       return { status: "rejected", reason: "the stored project is structurally incomplete", backupKey: this.preserve(raw) };
     }
-    return { status: "loaded", project: parsed };
+    // A document written by an earlier build is upgraded here rather than
+    // rejected or loaded into a shape the current code misreads.
+    return { status: "loaded", project: migrateLoadedProject(parsed) };
   }
 
   /**

@@ -134,7 +134,7 @@ describe("Asset lifecycle (L-01/D1-01)", () => {
       mediaType: "image",
       assetIds: [imageId],
       audioAssetId: audioId,
-      mediaSlide: { mediaType: "image", assetId: imageId, duration: 4, audioAssetId: audioId },
+      mediaSlide: { items: [{ id: "mi-a", mediaType: "image", assetId: imageId, duration: 4 }], audioAssetId: audioId },
     }).changed).toBe(true);
     expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(true);
 
@@ -201,7 +201,7 @@ describe("Widget configuration (L-06/L-07/D1-03)", () => {
     })]);
     const { store, editor } = setup(project);
     const assetId = editor.addAssets([{ name: "A", sourcePath: "a.png", mediaType: "image" }]).createdIds?.[0] as string;
-    editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { mediaType: "image", assetId, duration: 3 } });
+    editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { items: [{ id: "mi-b", mediaType: "image", assetId, duration: 3 }] } });
     expect(firstScene(current(store)).widgets[0].mediaSlide).toBeDefined();
 
     expect(editor.setWidgetConfiguration(sceneId, "w1", { widgetType: "digit" }).changed).toBe(true);
@@ -224,7 +224,7 @@ describe("Widget configuration (L-06/L-07/D1-03)", () => {
     const { store, editor } = setup(project);
     expect(editor.setWidgetConfiguration(sceneId, "w1", { assetIds: ["ghost"] }).changed).toBe(false);
     expect(editor.setWidgetConfiguration(sceneId, "w1", { audioAssetId: "ghost" }).changed).toBe(false);
-    expect(editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { mediaType: "image", assetId: "ghost", duration: 1 } }).changed).toBe(false);
+    expect(editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { items: [{ id: "mi-c", mediaType: "image", assetId: "ghost", duration: 1 }] } }).changed).toBe(false);
     expect(editor.setWidgetConfiguration("missing-scene", "w1", { content: { text: "x" } }).changed).toBe(false);
     expect(editor.setWidgetConfiguration(sceneId, "missing", { content: { text: "x" } }).changed).toBe(false);
     expect(editor.setWidgetConfiguration(sceneId, "w1", { widgetType: "   " }).changed).toBe(false);
@@ -235,7 +235,7 @@ describe("Widget configuration (L-06/L-07/D1-03)", () => {
     const { project, sceneId } = fixture([widget("w1", "text")]);
     const { store, editor } = setup(project);
     const assetId = editor.addAssets([{ name: "A", sourcePath: "a.png", mediaType: "image" }]).createdIds?.[0] as string;
-    editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { mediaType: "image", assetId, duration: 2 } });
+    editor.setWidgetConfiguration(sceneId, "w1", { mediaSlide: { items: [{ id: "mi-d", mediaType: "image", assetId, duration: 2 }] } });
     expect(firstScene(current(store)).widgets[0].mediaSlide).toBeUndefined();
     expect(validateProject(current(store), foundationDeviceProfile).issues.some((issue) => issue.code === "MEDIA_SLIDE_WIDGET_TYPE_INVALID")).toBe(false);
   });

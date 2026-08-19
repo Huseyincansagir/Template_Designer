@@ -18,7 +18,7 @@ export const foundationDeviceProfile: DeviceProfile = {
   supportedFormats: ["png", "jpg", "jpeg", "mp4", "mp3", "wav"],
   runtimeStates: [
     { id: "fire", displayName: "Fire", type: "boolean", category: "safety", simulatorSupport: true },
-    { id: "floor", displayName: "Floor", type: "integer", category: "position", operators: ["equals", "not-equals", "greater-than", "less-than"], simulatorSupport: true },
+    { id: "floor", displayName: "Floor", type: "string", category: "position", description: "Symbolic floor identifier reported by the firmware: 1, G, B2, Restaurant, and localized values.", operators: ["equals", "not-equals", "contains"], simulatorSupport: true },
     { id: "door_state", displayName: "Door State", type: "enum", category: "position", enumValues: ["closed", "opening", "open", "closing"], simulatorSupport: true },
     { id: "service_state", displayName: "Service State", type: "enum", category: "service", enumValues: ["normal", "service_out", "overload"], simulatorSupport: true },
   ],
@@ -64,7 +64,7 @@ export const compactDeviceProfile: DeviceProfile = {
   supportedFormats: ["png", "jpg", "jpeg", "mp3", "wav"],
   runtimeStates: [
     { id: "fire", displayName: "Fire", type: "boolean", category: "safety", simulatorSupport: true },
-    { id: "floor", displayName: "Floor", type: "integer", category: "position", operators: ["equals", "not-equals", "greater-than", "less-than"], simulatorSupport: true },
+    { id: "floor", displayName: "Floor", type: "string", category: "position", description: "Symbolic floor identifier reported by the firmware: 1, G, B2, Restaurant, and localized values.", operators: ["equals", "not-equals", "contains"], simulatorSupport: true },
     { id: "door_state", displayName: "Door State", type: "enum", category: "position", enumValues: ["closed", "opening", "open", "closing"], simulatorSupport: true },
   ],
   runtimeSettings: [

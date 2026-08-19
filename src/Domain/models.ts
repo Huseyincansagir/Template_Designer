@@ -128,13 +128,51 @@ export interface Binding {
     | "select-content"
     | "select-style";
   contentId?: Id;
+  /**
+   * Binding priority, integer 0–15 inclusive (16 levels). Product decision:
+   * this is INDEPENDENT of `Scene.priority`, which stays 0–10 and decides which
+   * Scene is active. Binding priority decides which binding wins when several
+   * match the same widget in one Scene; higher wins, and document order breaks
+   * a tie. Absent means the lowest level, so an unprioritised binding never
+   * silently outranks an explicit one.
+   */
+  priority?: number;
 }
 
-export interface MediaSlideContent {
+/** Lowest and highest binding priority (product decision: 16 levels). */
+export const MIN_BINDING_PRIORITY = 0;
+export const MAX_BINDING_PRIORITY = 15;
+
+/**
+ * One entry of an ordered Media Slide sequence. Each entry carries its own
+ * visual asset and dwell time, so a slide can alternate image and video.
+ */
+export interface MediaSlideItem {
+  id: Id;
   mediaType: VisualMediaType;
   assetId: Id;
+  /** Dwell time in seconds, 0.1-second precision. */
   duration: number;
+  /** Loop this entry for its dwell time (video). */
   loop?: boolean;
+  /** Repeat this entry N times before advancing. */
+  repeatCount?: number;
+}
+
+/**
+ * A Media Slide is an ORDERED MEDIA SEQUENCE (product decision), not a single
+ * asset: `items` may mix Image and Video in any order, e.g.
+ * Image → Video → Image → Video. Slide-level audio and playback continuation
+ * apply to the sequence as a whole.
+ *
+ * No playback semantics beyond ordering, dwell time and repetition are implied;
+ * anything further is a runtime-contract decision that has not been made.
+ */
+export interface MediaSlideContent {
+  items: readonly MediaSlideItem[];
+  /** Loop the whole sequence after the last entry. */
+  loop?: boolean;
+  /** Repeat the whole sequence N times. */
   repeatCount?: number;
   audioAssetId?: Id;
   volume?: number;
@@ -177,8 +215,22 @@ export interface Rotation {
   scenes: readonly Scene[];
 }
 
+/**
+ * A floor identifier is a SYMBOLIC STRING, not an enumeration (product
+ * decision). `A`–`Z` and digits must work, and the representation must already
+ * permit values such as `Restaurant`, `Park`, `Terminal`, `North`, `South` and
+ * localized/Unicode identifiers including Arabic, without a domain change.
+ *
+ * Comparison and de-duplication are Unicode-safe: identifiers are compared in
+ * NFC so a composed and a decomposed spelling of the same identifier are one
+ * identifier, never two that silently differ.
+ */
+export type FloorIdentifier = string;
+
 export interface FloorMappingEntry {
-  firmwareValue: PrimitiveValue;
+  /** The symbolic identifier the firmware reports. */
+  firmwareValue: FloorIdentifier;
+  /** What the display shows for it. */
   displayValue: string;
   digitStyleId?: Id;
 }

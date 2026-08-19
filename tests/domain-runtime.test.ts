@@ -54,9 +54,8 @@ function mediaWidget(id: string, bindingCondition = "fire"): Widget {
       contentId: "asset-used-video",
     }],
     mediaSlide: {
-      mediaType: "video",
-      assetId: "asset-used-video",
-      duration: 3,
+      // A Media Slide is an ordered sequence; this fixture is a one-entry one.
+      items: [{ id: "mi-used-video", mediaType: "video", assetId: "asset-used-video", duration: 3 }],
       audioAssetId: "asset-used-audio",
       continuePlayback: true,
     },
@@ -156,7 +155,7 @@ describe("canonical validation", () => {
           ...projectWithTheme().themeProjectGroups[0]!.themeProjects[0]!,
           rotations: projectWithTheme().themeProjectGroups[0]!.themeProjects[0]!.rotations.map((rotation, index) => index === 0 ? {
             ...rotation,
-            scenes: [scene("invalid", 1, { ...mediaWidget("invalid-widget"), widgetType: "unsupported", mediaSlide: { mediaType: "video", assetId: "missing", duration: 3 } })],
+            scenes: [scene("invalid", 1, { ...mediaWidget("invalid-widget"), widgetType: "unsupported", mediaSlide: { items: [{ id: "mi-missing", mediaType: "video", assetId: "missing", duration: 3 }] } })],
           } : rotation),
         }],
       }],

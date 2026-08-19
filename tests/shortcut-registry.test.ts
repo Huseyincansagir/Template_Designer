@@ -57,17 +57,29 @@ describe("Runtime coercion (INT-55 remediation)", () => {
     expect(coerceToDefinitionType(null, "integer")).toBeNull();
   });
 
-  it("makes integer conditions match string simulator values", () => {
-    const condition = { stateId: "floor", operator: "equals" as const, value: 6 };
+  it("treats a symbolic floor identifier as Unicode text, not a number", () => {
+    // Product decision: floor identifiers are SYMBOLIC STRINGS. `floor` is a
+    // string state, so a numeric literal and its string spelling agree, and
+    // letters and words are first-class identifiers rather than invalid input.
+    const condition = { stateId: "floor", operator: "equals" as const, value: "6" };
     expect(conditionMatches(condition, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(true);
-    expect(conditionMatches({ ...condition, operator: "greater-than" }, { values: { floor: "7" } }, foundationDeviceProfile)).toBe(true);
-    expect(conditionMatches({ ...condition, operator: "not-equals" }, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(false);
+    expect(conditionMatches({ ...condition, value: 6 }, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(true);
+    expect(conditionMatches({ ...condition, value: "G" }, { values: { floor: "G" } }, foundationDeviceProfile)).toBe(true);
+    expect(conditionMatches({ ...condition, value: "Restaurant" }, { values: { floor: "Restaurant" } }, foundationDeviceProfile)).toBe(true);
+    expect(conditionMatches({ ...condition, value: "B2" }, { values: { floor: "B1" } }, foundationDeviceProfile)).toBe(false);
+    expect(conditionMatches({ ...condition, operator: "not-equals", value: "6" }, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(false);
+    // `contains` is meaningful for symbolic identifiers.
+    expect(conditionMatches({ ...condition, operator: "contains", value: "erra" }, { values: { floor: "Terrace" } }, foundationDeviceProfile)).toBe(true);
+    // Unicode-safe: a composed and a decomposed spelling are ONE identifier.
+    expect(conditionMatches({ ...condition, value: "\u00c7at\u0131" }, { values: { floor: "C\u0327at\u0131" } }, foundationDeviceProfile)).toBe(true);
+    // A localized identifier works without any Arabic-specific handling.
+    expect(conditionMatches({ ...condition, value: "\u0627\u0644\u0637\u0627\u0628\u0642" }, { values: { floor: "\u0627\u0644\u0637\u0627\u0628\u0642" } }, foundationDeviceProfile)).toBe(true);
   });
 
   it("applies negation symmetrically, including on unset inputs", () => {
-    const condition = { stateId: "floor", operator: "equals" as const, value: 6, negated: true };
-    expect(conditionMatches(condition, { values: { floor: 6 } }, foundationDeviceProfile)).toBe(false);
-    expect(conditionMatches(condition, { values: { floor: 5 } }, foundationDeviceProfile)).toBe(true);
+    const condition = { stateId: "floor", operator: "equals" as const, value: "6", negated: true };
+    expect(conditionMatches(condition, { values: { floor: "6" } }, foundationDeviceProfile)).toBe(false);
+    expect(conditionMatches(condition, { values: { floor: "5" } }, foundationDeviceProfile)).toBe(true);
     // NOT(floor==6) holds while floor is unset.
     expect(conditionMatches(condition, { values: {} }, foundationDeviceProfile)).toBe(true);
     expect(conditionMatches({ ...condition, negated: false }, { values: {} }, foundationDeviceProfile)).toBe(false);

@@ -35,7 +35,8 @@ function collectWidgetAssetIds(widget: Widget, result: Set<string>): void {
   widget.assetIds?.forEach((assetId) => result.add(assetId));
   if (widget.audioAssetId) result.add(widget.audioAssetId);
   if (widget.mediaSlide) {
-    result.add(widget.mediaSlide.assetId);
+    // A Media Slide is an ordered sequence, so every entry contributes an asset.
+    widget.mediaSlide.items.forEach((item) => result.add(item.assetId));
     if (widget.mediaSlide.audioAssetId) result.add(widget.mediaSlide.audioAssetId);
   }
   widget.bindings.forEach((binding) => {

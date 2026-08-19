@@ -1,3 +1,4 @@
+import { MAX_BINDING_PRIORITY, MIN_BINDING_PRIORITY } from "../Domain/models";
 import type {
   Asset,
   Binding,
@@ -115,6 +116,10 @@ function validateBinding(
     issue(issues, "BINDING_WIDGET_MISMATCH", "Binding widgetId must match its owning widget.", path, "Rebind the condition to the owning widget.");
   }
 
+  if (binding.priority !== undefined && (!Number.isInteger(binding.priority) || binding.priority < MIN_BINDING_PRIORITY || binding.priority > MAX_BINDING_PRIORITY)) {
+    issue(issues, "BINDING_PRIORITY_INVALID", `Binding priority must be an integer from ${MIN_BINDING_PRIORITY} through ${MAX_BINDING_PRIORITY}.`, `${path}.priority`, `Use a whole number between ${MIN_BINDING_PRIORITY} and ${MAX_BINDING_PRIORITY}. Binding priority is separate from Scene priority.`);
+  }
+
   if (binding.conditions.length === 0) {
     issue(issues, "BINDING_CONDITION_REQUIRED", "A binding requires at least one condition.", path, "Add a DeviceProfile-defined condition or remove the binding.");
   }
@@ -229,28 +234,43 @@ function validateWidget(
     if (widget.widgetType !== "media") {
       issue(issues, "MEDIA_SLIDE_WIDGET_TYPE_INVALID", "Media Slide must use the Media semantic widget type.", `${path}.mediaSlide`, "Use widgetType 'media' for a Media Slide.");
     }
-    if (!profile.supportedMediaTypes.includes(widget.mediaSlide.mediaType)) {
-      issue(issues, "MEDIA_SLIDE_MEDIA_UNSUPPORTED", `Media Slide type '${widget.mediaSlide.mediaType}' is not supported by the active DeviceProfile.`, `${path}.mediaSlide.mediaType`, "Choose a supported image or video capability.");
+    const items = Array.isArray(widget.mediaSlide.items) ? widget.mediaSlide.items : [];
+    // A Media Slide is an ordered sequence; an empty one plays nothing.
+    if (items.length === 0) {
+      issue(issues, "MEDIA_SLIDE_EMPTY", "Media Slide contains no media entry, so it would play nothing.", `${path}.mediaSlide.items`, "Add at least one Image or Video entry to the sequence, or clear the Media Slide.");
     }
-    if (widget.mediaSlide.duration < 0 || !Number.isFinite(widget.mediaSlide.duration)) {
-      issue(issues, "MEDIA_DURATION_INVALID", "Media duration cannot be negative or non-finite.", `${path}.mediaSlide.duration`, "Use duration 0 or a finite non-negative duration in 0.1 second precision.");
-    }
-    if (widget.mediaSlide.duration * 10 !== Math.trunc(widget.mediaSlide.duration * 10)) {
-      issue(issues, "MEDIA_DURATION_PRECISION_INVALID", "Media duration must use 0.1 second precision.", `${path}.mediaSlide.duration`, "Round the duration to one decimal place.");
-    }
+    const seenItemIds = new Set<string>();
+    items.forEach((item, itemIndex) => {
+      const itemPath = `${path}.mediaSlide.items[${itemIndex}]`;
+      if (seenItemIds.has(item.id)) {
+        issue(issues, "DUPLICATE_MEDIA_SLIDE_ITEM_ID", `Media Slide entry ID '${item.id}' is duplicated.`, `${itemPath}.id`, "Assign a unique stable ID to each sequence entry.");
+      }
+      seenItemIds.add(item.id);
+      if (!profile.supportedMediaTypes.includes(item.mediaType)) {
+        issue(issues, "MEDIA_SLIDE_MEDIA_UNSUPPORTED", `Media Slide entry type '${item.mediaType}' is not supported by the active DeviceProfile.`, `${itemPath}.mediaType`, "Choose a supported image or video capability.");
+      }
+      if (item.duration < 0 || !Number.isFinite(item.duration)) {
+        issue(issues, "MEDIA_DURATION_INVALID", "Media duration cannot be negative or non-finite.", `${itemPath}.duration`, "Use duration 0 or a finite non-negative duration in 0.1 second precision.");
+      } else if (item.duration * 10 !== Math.trunc(item.duration * 10)) {
+        issue(issues, "MEDIA_DURATION_PRECISION_INVALID", "Media duration must use 0.1 second precision.", `${itemPath}.duration`, "Round the duration to one decimal place.");
+      }
+      if (item.repeatCount !== undefined && (!Number.isInteger(item.repeatCount) || item.repeatCount < 0)) {
+        issue(issues, "MEDIA_REPEAT_COUNT_INVALID", "Media repeat count must be a non-negative integer.", `${itemPath}.repeatCount`, "Use a non-negative integer repeat count.");
+      }
+      validateAssetReference(item.assetId, assets, `${itemPath}.assetId`, issues);
+      const visualAsset = assets.get(item.assetId);
+      if (visualAsset && visualAsset.mediaType && visualAsset.mediaType !== item.mediaType) {
+        issue(issues, "MEDIA_ASSET_TYPE_INVALID", `Asset '${visualAsset.name}' is a ${visualAsset.mediaType}, but this sequence entry is declared as ${item.mediaType}.`, `${itemPath}.assetId`, "Select an asset whose media type matches the entry, or change the entry type.");
+      }
+    });
     if (widget.mediaSlide.repeatCount !== undefined && (!Number.isInteger(widget.mediaSlide.repeatCount) || widget.mediaSlide.repeatCount < 0)) {
-      issue(issues, "MEDIA_REPEAT_COUNT_INVALID", "Media repeat count must be a non-negative integer.", `${path}.mediaSlide.repeatCount`, "Use a non-negative integer repeat count.");
-    }
-    validateAssetReference(widget.mediaSlide.assetId, assets, `${path}.mediaSlide.assetId`, issues);
-    const visualAsset = assets.get(widget.mediaSlide.assetId);
-    if (visualAsset && visualAsset.mediaType !== widget.mediaSlide.mediaType) {
-      issue(issues, "MEDIA_ASSET_TYPE_INVALID", `Asset '${widget.mediaSlide.assetId}' does not match Media Slide type '${widget.mediaSlide.mediaType}'.`, `${path}.mediaSlide.assetId`, "Select an asset with the same media type as the Media Slide.");
+      issue(issues, "MEDIA_REPEAT_COUNT_INVALID", "Media Slide repeat count must be a non-negative integer.", `${path}.mediaSlide.repeatCount`, "Use a non-negative integer repeat count.");
     }
     if (widget.mediaSlide.audioAssetId) {
       validateAssetReference(widget.mediaSlide.audioAssetId, assets, `${path}.mediaSlide.audioAssetId`, issues);
       const audioAsset = assets.get(widget.mediaSlide.audioAssetId);
-      if (audioAsset && audioAsset.mediaType !== "audio") {
-        issue(issues, "MEDIA_SLIDE_AUDIO_TYPE_INVALID", `Asset '${widget.mediaSlide.audioAssetId}' is not an audio asset.`, `${path}.mediaSlide.audioAssetId`, "Select an audio asset for the attached Media Slide audio.");
+      if (audioAsset && audioAsset.mediaType && audioAsset.mediaType !== "audio") {
+        issue(issues, "MEDIA_SLIDE_AUDIO_TYPE_INVALID", `Asset '${audioAsset.name}' is not an audio asset.`, `${path}.mediaSlide.audioAssetId`, "Select an audio asset for the attached Media Slide audio.");
       }
     }
   }
@@ -290,7 +310,9 @@ function validateScene(
 
   const maxConcurrentDecode = profile.videoCapabilities?.maxConcurrentDecode;
   if (maxConcurrentDecode !== undefined && maxConcurrentDecode > 0) {
-    const videoWidgets = scene.widgets.filter((widget) => widget.mediaType === "video" || widget.mediaSlide?.mediaType === "video");
+    // A Media Slide is a SEQUENCE: entries play one at a time, so a slide needs
+    // one decode slot if it contains any video, not one per video entry.
+    const videoWidgets = scene.widgets.filter((widget) => widget.mediaType === "video" || (widget.mediaSlide?.items ?? []).some((item) => item.mediaType === "video"));
     if (videoWidgets.length > maxConcurrentDecode) {
       issue(
         issues,
@@ -312,7 +334,16 @@ function validateFloorMapping(
 ): void {
   const seen = new Set<string>();
   mapping.entries.forEach((entry, index) => {
-    const key = `${typeof entry.firmwareValue}:${String(entry.firmwareValue)}`;
+    // Symbolic identifiers are Unicode strings: NFC so a composed and a
+    // decomposed spelling of the same identifier are ONE identifier.
+    const identifier = String(entry.firmwareValue ?? "");
+    if (identifier.trim().length === 0) {
+      issue(issues, "FLOOR_IDENTIFIER_REQUIRED", "A floor mapping entry needs a firmware identifier.", `${path}.entries[${index}].firmwareValue`, "Enter the symbolic identifier the firmware reports, for example 1, G, B2, Restaurant.");
+    }
+    if (entry.displayValue.trim().length === 0) {
+      issue(issues, "FLOOR_DISPLAY_VALUE_REQUIRED", `Floor identifier '${identifier}' has no display value.`, `${path}.entries[${index}].displayValue`, "Enter what the display should show for this identifier.");
+    }
+    const key = identifier.normalize("NFC");
     if (seen.has(key)) {
       issue(issues, "DUPLICATE_FLOOR_MAPPING", `Firmware floor value '${entry.firmwareValue}' is mapped more than once.`, `${path}.entries[${index}]`, "Keep one deterministic display mapping per firmware value.");
     }

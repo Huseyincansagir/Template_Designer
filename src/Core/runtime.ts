@@ -33,6 +33,11 @@ function valuesEqual(left: PrimitiveValue | null | undefined, right: PrimitiveVa
  */
 export function coerceToDefinitionType(value: PrimitiveValue | null | undefined, type: RuntimeValueType): PrimitiveValue | null | undefined {
   if (value === null || value === undefined) return value;
+  // A `string` state carries a SYMBOLIC identifier (product decision: floor
+  // identifiers are symbolic Unicode strings, not an enum). Both sides are
+  // normalized to NFC text, so a numeric literal and its string spelling agree,
+  // and a composed and a decomposed identifier are the same identifier.
+  if (type === "string") return String(value).normalize("NFC");
   if (type === "integer" && typeof value === "string" && /^-?\d+$/.test(value.trim())) return Number.parseInt(value, 10);
   if (type === "number" && typeof value === "string") {
     const parsed = Number.parseFloat(value);
@@ -56,23 +61,27 @@ export function conditionMatches(
   // semantics: NOT(floor==6) holds while floor is unset).
   if (rawValue === undefined || rawValue === null) return condition.negated === true;
   const value = coerceToDefinitionType(rawValue, definition.type);
+  // The authored value is coerced against the SAME declared type. Coercing only
+  // the runtime input left `value: 6` unable to match a symbolic string state
+  // spelled "6", which is the exact mismatch the floor decision introduces.
+  const expected = coerceToDefinitionType(condition.value, definition.type) as PrimitiveValue;
   let matched = false;
 
   switch (condition.operator) {
     case "equals":
-      matched = valuesEqual(value, condition.value);
+      matched = valuesEqual(value, expected);
       break;
     case "not-equals":
-      matched = !valuesEqual(value, condition.value);
+      matched = !valuesEqual(value, expected);
       break;
     case "greater-than":
-      matched = isNumber(value) && isNumber(condition.value) && value > condition.value;
+      matched = isNumber(value) && isNumber(expected) && value > expected;
       break;
     case "less-than":
-      matched = isNumber(value) && isNumber(condition.value) && value < condition.value;
+      matched = isNumber(value) && isNumber(expected) && value < expected;
       break;
     case "contains":
-      matched = typeof value === "string" && typeof condition.value === "string" && value.includes(condition.value);
+      matched = typeof value === "string" && typeof expected === "string" && value.includes(expected);
       break;
   }
 

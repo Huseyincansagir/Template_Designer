@@ -610,3 +610,22 @@ body.relaxed-density .sim-input-row { min-height: 36px; }
 
 .sim-group { display: grid; gap: 2px; margin-bottom: var(--space-2); }
 .sim-group-title { color: var(--text-muted); font-size: var(--micro-label); text-transform: uppercase; letter-spacing: var(--kicker-tracking); }
+
+/* Ordered media sequence and floor mapping editors (product decisions 2.2/2.4). */
+.sequence-list { display: grid; gap: 2px; margin: var(--space-1) 0 0; padding: 0; list-style: none; counter-reset: seq; }
+.sequence-list li { display: flex; align-items: center; gap: var(--space-1); min-width: 0; padding: 3px var(--space-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-well); }
+.sequence-index { flex: 0 0 auto; width: 16px; height: 16px; border-radius: var(--radius-full); background: var(--accent-muted); color: var(--accent-active); font-size: var(--micro-label); font-weight: 700; text-align: center; line-height: 16px; }
+.sequence-body { display: grid; flex: 1 1 auto; min-width: 0; }
+.sequence-body strong { overflow: hidden; color: var(--text-primary); font-size: var(--text-sm); font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.sequence-body small { color: var(--text-muted); font-size: var(--micro-label); }
+.sequence-actions { display: flex; flex: 0 0 auto; gap: 2px; }
+.sequence-list .draft-number-field input { width: 46px; }
+.floor-mapping { margin-top: var(--space-2); padding-top: var(--space-2); border-top: 1px dashed var(--border); }
+.floor-mapping-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); }
+.floor-mapping-head strong { overflow: hidden; color: var(--text-secondary); font-size: var(--micro-label); text-overflow: ellipsis; white-space: nowrap; }
+.floor-mapping-actions { display: flex; flex: 0 0 auto; gap: var(--space-1); }
+.floor-entry-list { display: grid; gap: 2px; margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.floor-entry-list li { display: flex; align-items: center; gap: var(--space-1); }
+.floor-entry-list .draft-text-field input { width: 72px; }
+.floor-entry-list select { min-width: 0; flex: 1 1 auto; height: var(--control-height-sm); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text-primary); font-size: var(--text-sm); }
+.floor-arrow { flex: 0 0 auto; color: var(--text-muted); font-size: var(--micro-label); }

@@ -23,7 +23,7 @@
  * id migration once the firmware contract lands. See
  * `docs/PRODUCT_COMPLETION_LEDGER.md` (C10a) for the decision record.
  */
-export type IdPrefix = "project" | "theme-group" | "theme" | "rotation" | "scene" | "widget" | "binding" | "asset" | "floor-mapping";
+export type IdPrefix = "project" | "theme-group" | "theme" | "rotation" | "scene" | "widget" | "binding" | "asset" | "floor-mapping" | "floor-entry" | "media-item";
 
 /** 128 bits of randomness in the same 8-4-4-4-12 shape as a UUID, without requiring one. */
 function fallbackUuid(): string {
