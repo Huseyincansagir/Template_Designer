@@ -1295,6 +1295,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const setThemeResources = (themeId: string, assetIds: readonly string[]): boolean => {
+    if (blockedInPreview("Theme resources")) return false;
     const result = editorApplication.setThemeResources(themeId, assetIds);
     if (result.changed) logAction(`Theme resources updated · ${assetIds.length} asset(s)`, "EVENT");
     return result.changed;
@@ -1366,6 +1367,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   /** Records the active DeviceProfile version, clearing a drift warning. */
   const adoptProfileVersion = (): boolean => {
+    if (blockedInPreview("Adopt Profile Version")) return false;
     if (!activeProfile) return false;
     const result = editorApplication.adoptDeviceProfileVersion(activeProfile.version);
     if (result.changed) logAction(`DeviceProfile version recorded as ${activeProfile.version}`, "EVENT");
@@ -1641,6 +1643,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const enterDuplicateMode = (): boolean => {
+    if (blockedInPreview("Duplicate Mode")) return false;
     if (!selectedWidgetIds.length || !activeScene?.id) {
       logAction("Duplicate Mode requires a selected widget in the active Scene", "WARN");
       return false;
@@ -1651,6 +1654,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const addBinding = (): boolean => {
+    if (blockedInPreview("Add Binding")) return false;
     const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
     const sceneId = resolved?.scene?.id;
     const widget = resolved?.widget;
@@ -1714,6 +1718,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
 
   /** Binding priority 0-15; higher wins when several bindings match one widget. */
   const setBindingPriority = (bindingId: string, priority: number): boolean => {
+    if (blockedInPreview("Binding priority")) return false;
     const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
     const sceneId = resolved?.scene?.id;
     const widget = resolved?.widget;
@@ -1728,6 +1733,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const setBindingConditionMode = (bindingId: string, mode: ConditionMode): boolean => {
+    if (blockedInPreview("Binding condition mode")) return false;
     const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
     const sceneId = resolved?.scene?.id;
     const widget = resolved?.widget;
@@ -1738,6 +1744,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const removeBindingCondition = (bindingId: string, index: number): boolean => {
+    if (blockedInPreview("Remove binding condition")) return false;
     const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
     const sceneId = resolved?.scene?.id;
     const widget = resolved?.widget;
@@ -1753,6 +1760,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const removeBinding = (bindingId: string): boolean => {
+    if (blockedInPreview("Remove Binding")) return false;
     const resolved = bindingModal ? resolveCanonicalNode(project, bindingModal.widgetId) : undefined;
     const sceneId = resolved?.scene?.id;
     const widget = resolved?.widget;
@@ -2355,6 +2363,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const commitGeometryCommand = (sceneId: string | undefined, updates: Readonly<Record<string, Geometry>>, label: string) => {
+    if (blockedInPreview("Geometry edit")) return;
     // Scene-bounds clamp (S1-04): a committed geometry can never strand a
     // widget outside the active Rotation's logical space.
     const clamped = Object.fromEntries(Object.entries(updates).map(([id, geometry]) => [id, clampGeometryToScene(geometry)]));
@@ -2578,6 +2587,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return;
     }
     if (duplicateMode) {
+      if (blockedInPreview("Duplicate place")) return;
       const sceneId = activeScene?.id;
       if (!sceneId || !selectedWidgetIds.length) return;
       const point = toCanvasPoint(event);
@@ -3525,6 +3535,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   const renderFloorMappingSection = (theme: ThemeProject) => {
     const mappings = theme.floorMappings ?? [];
     const commit = (next: readonly FloorMapping[], label: string) => {
+      if (blockedInPreview("Floor mapping")) return false;
       const result = editorApplication.setThemeFloorMappings(theme.id, next);
       if (result.changed) logAction(label, "EVENT");
       else logAction("Floor mapping rejected: an identifier is empty or duplicated, or a display value is missing", "WARN");
@@ -3648,12 +3659,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
             {!multi && renderWidgetContentSection(widget)}
             {!multi && renderWidgetMediaSection(widget)}
           </>}
-          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
+          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
-          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} onChange={(event) => { const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
+          {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} onChange={(event) => { if (blockedInPreview("Asset properties")) return; const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { if (blockedInPreview("Asset properties")) return; const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}
           {multi && <div className="multi-selection-note"><strong>Multi-selection</strong><span>Same values show their value; different values show `*`. Geometry fields remain read-only when a selected widget is locked.</span></div>}
-        </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={false} ariaLabel="Project name" onCommit={(value) => { const result = editorApplication.renameNode(project.id, value); if (result.changed) logAction(`Project renamed to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
+        </div> : <div className="properties-scroll"><section className="property-section"><div className="property-section-title">Document</div><div className="property-row property-row-edit"><span>Project Name</span><DraftTextField scope={`document:${project.id}`} value={project.name} disabled={false} ariaLabel="Project name" onCommit={(value) => renameNodeById(project.id, value)} /></div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Document device profile" value={project.deviceProfileId} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name} · {profile.display.width}×{profile.display.height}</option>)}{!activeProfile && <option value={project.deviceProfileId}>{project.deviceProfileId} (not registered)</option>}</select></div><PropertyRow label="Display" value={activeProfile ? `${activeProfile.display.width} × ${activeProfile.display.height}` : "unavailable"} /><PropertyRow label="Theme Projects" value={String(allThemes.length)} /><PropertyRow label="Assets" value={String(project.assets.length)} /><PropertyRow label="Schema" value={`v${project.schemaVersion}`} muted /><PropertyRow label="Validation" value={validation.valid ? `Valid · ${validation.issues.length} note(s)` : `${validation.issues.filter((issue) => issue.severity === "error").length} error(s)`} muted /></section><section className="property-section"><div className="property-section-title">Next Step</div><p className="property-note">{!activeProfile ? "The saved DeviceProfile is not registered in this build. Pick a registered profile above; every Rotation / Form is re-dimensioned to it." : allThemes.length === 0 ? "Add a Theme Project, then a Scene, then widgets." : !activeSceneNode ? "Add a Scene to the active Rotation / Form to start placing widgets." : "Select an object in the Explorer, the canvas or the Scene tabs to inspect and edit it."}</p></section></div>}
         <div className="panel-footnote"><span className="footnote-mark">i</span><span>Properties is a model view; edits must flow through commands and profile capability checks.</span></div>
       </>
     );
