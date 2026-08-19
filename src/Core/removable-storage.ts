@@ -20,6 +20,12 @@ export interface RemovableVolume {
   readonly mountPath: string;
   readonly volumeName: string;
   readonly fileSystem?: string;
+  /**
+   * Byte counts cross the native boundary as `u64` and land in a JS `number`, so
+   * a value above 2^53-1 (about 8 PiB) would lose precision. Every SD card is
+   * orders of magnitude below that, and the only arithmetic performed on these is
+   * the free-space comparison in `preflightDeployment`.
+   */
   readonly totalBytes?: number;
   readonly freeBytes?: number;
   /** False for fixed disks. A non-removable volume must never be written by default. */

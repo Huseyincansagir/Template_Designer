@@ -3692,7 +3692,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <span className="deployment-meta">Transport: {sdTransport}{lastPackage ? ` · package ${lastPackage.files.length} file(s)` : " · no package built"}</span>
         </div>
         {sdDetectError && <div className="deployment-notice is-error"><strong>Detection failed</strong><span>{sdDetectError}</span></div>}
-        {nativeTransport && sdVolumes.length === 0 && !sdDetectError && <div className="deployment-notice"><strong>No SD card / removable target detected.</strong><span>Insert a card and choose Detect Targets.</span></div>}
+        {nativeTransport && sdVolumes.length === 0 && !sdDetectError && <div className="deployment-notice"><strong>No SD card / removable target detected.</strong><span>Insert a card and choose Detect Targets. A card that is still mounting is reported as not ready and skipped, so if it was only just inserted, detect again.</span></div>}
         {sdVolumes.length > 0 && (
           <table className="deployment-targets">
             <thead><tr><th scope="col">Target</th><th scope="col">Volume</th><th scope="col">Filesystem</th><th scope="col">Free</th><th scope="col">Capacity</th><th scope="col">Status</th></tr></thead>
