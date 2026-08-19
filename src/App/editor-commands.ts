@@ -130,6 +130,9 @@ export function describeSelectionRefusal(
   if (operation === "duplicate" && kinds.every((kind) => kind === "asset")) {
     return "Duplicate is not defined for Assets - import the file again or reuse the same asset";
   }
+  if (operation === "duplicate" && kinds.includes("theme-group")) {
+    return "Duplicate is not defined for Theme Project Groups - duplicate a Theme Project inside the group instead";
+  }
   if (operation === "delete" && kinds.includes("theme-group") && themeGroupCount <= 1) {
     return "A project must keep at least one Theme Project Group";
   }

@@ -294,6 +294,40 @@ describe("Scene activation and navigation (L-12/L-13/D2-01)", () => {
     expect(editor.deleteSelection([current(store).themeProjectGroups[1].id]).changed).toBe(true);
     expect(current(store).themeProjectGroups).toHaveLength(1);
   });
+
+  it("never creates a Theme Project without the four rotations", () => {
+    const { project } = fixture();
+    const { store, editor } = setup(project);
+    const groupId = current(store).themeProjectGroups[0].id;
+    expect(editor.addThemeProject(groupId, "Inferred").changed).toBe(true);
+    const added = current(store).themeProjectGroups[0].themeProjects.find((theme) => theme.name === "Inferred");
+    expect(added?.rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
+  });
+
+  it("refuses Add Theme Project when no display can be resolved", () => {
+    const { project } = fixture();
+    const empty: Project = {
+      ...project,
+      themeProjectGroups: [{ ...project.themeProjectGroups[0], themeProjects: [] }],
+    };
+    const { editor } = setup(empty);
+    expect(editor.addThemeProject(empty.themeProjectGroups[0].id, "Dead").changed).toBe(false);
+  });
+
+  it("profile switch seeds any missing canonical rotations", () => {
+    const { project } = fixture();
+    const theme = project.themeProjectGroups[0].themeProjects[0];
+    const broken: Project = {
+      ...project,
+      themeProjectGroups: [{
+        ...project.themeProjectGroups[0],
+        themeProjects: [{ ...theme, rotations: theme.rotations.filter((rotation) => rotation.angle === 0) }],
+      }],
+    };
+    const { store, editor } = setup(broken);
+    expect(editor.setProjectDeviceProfile(foundationDeviceProfile.id, foundationDeviceProfile.display, foundationDeviceProfile.version).changed).toBe(true);
+    expect(current(store).themeProjectGroups[0].themeProjects[0].rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
+  });
 });
 
 function firstRotation(project: Project) {
@@ -545,8 +579,7 @@ describe("Refusal policy is explained before it is enforced (D2-05/D2-06/D2-09)"
     expect(describeSelectionRefusal(["theme-group"], "delete", 1)).toMatch(/at least one Theme Project Group/);
     // With a sibling group the delete is allowed again.
     expect(describeSelectionRefusal(["theme-group"], "delete", 2)).toBeUndefined();
-    // Duplicating a group is not constrained by the count.
-    expect(describeSelectionRefusal(["theme-group"], "duplicate", 1)).toBeUndefined();
+    expect(describeSelectionRefusal(["theme-group"], "duplicate", 1)).toMatch(/not defined for Theme Project Groups/);
   });
 
   it("refuses mixed selections and asset duplication with specific reasons", () => {

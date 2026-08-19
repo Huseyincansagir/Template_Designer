@@ -76,7 +76,8 @@ describe("canonical editor mutation pipeline remediation", () => {
     const after = structuredClone(current(store));
     expect(after.themeProjectGroups[0].themeProjects).toHaveLength(2);
     expect(after.themeProjectGroups[0].themeProjects[0]).toMatchObject({ name: "New Theme Project" });
-    expect(after.themeProjectGroups[0].themeProjects[1]).toMatchObject({ name: "Theme A", rotations: [], resources: [] });
+    expect(after.themeProjectGroups[0].themeProjects[1]).toMatchObject({ name: "Theme A", resources: [] });
+    expect(after.themeProjectGroups[0].themeProjects[1].rotations.map((rotation) => rotation.angle)).toEqual([0, 90, 180, 270]);
     expect(after.themeProjectGroups[0].themeProjects[1].id).not.toBe(after.themeProjectGroups[0].themeProjects[0].id);
     expect(store.undo()).toBe(true);
     expect(current(store)).toEqual(before);

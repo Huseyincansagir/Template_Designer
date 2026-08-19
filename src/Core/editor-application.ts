@@ -39,6 +39,23 @@ function rotationDimensions(display: DeviceProfile["display"], angle: RotationAn
     : { width: display.width, height: display.height };
 }
 
+const CANONICAL_ANGLES: readonly RotationAngle[] = [0, 90, 180, 270];
+
+function canonicalRotations(display: DeviceProfile["display"]): Rotation[] {
+  return CANONICAL_ANGLES.map((angle) => ({ id: newId("rotation"), angle, ...rotationDimensions(display, angle), scenes: [] }));
+}
+
+function resolveThemeDisplay(display: DeviceProfile["display"] | undefined, project: Project): DeviceProfile["display"] | undefined {
+  if (display && Number.isFinite(display.width) && Number.isFinite(display.height) && display.width > 0 && display.height > 0) return display;
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      const r0 = theme.rotations.find((rotation) => rotation.angle === 0);
+      if (r0 && r0.width > 0 && r0.height > 0) return { width: r0.width, height: r0.height };
+    }
+  }
+  return undefined;
+}
+
 export function defaultWidgetName(widgetType: string): string {
   const label = widgetType.replace(/[-_]/g, " ").trim();
   return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Widget";
@@ -255,16 +272,16 @@ export class EditorApplication {
 
   addThemeProject(groupId: string, name = "New Theme Project", display?: DeviceProfile["display"]): MutationResult {
     const id = newId("theme");
-    // Canonical shape (S2-05): when the DeviceProfile display is known, the
-    // new Theme Project is born with exactly R0/R90/R180/R270 sourced from
-    // the profile — a menu-created theme must be as valid as the scaffold.
-    const rotations: Rotation[] = display && Number.isFinite(display.width) && Number.isFinite(display.height) && display.width > 0 && display.height > 0
-      ? ([0, 90, 180, 270] as const).map((angle) => ({ id: newId("rotation"), angle, ...rotationDimensions(display, angle), scenes: [] }))
-      : [];
-    const result = this.execute(`Add Theme Project: ${name}`, (project) => mapProjectGroups(project, (group) => group.id === groupId ? {
-      ...group,
-      themeProjects: [...group.themeProjects, { id, name, rotations, resources: [] }],
-    } : group));
+    const result = this.execute(`Add Theme Project: ${name}`, (project) => {
+      const usableDisplay = resolveThemeDisplay(display, project);
+      // A Theme Project without the four rotations cannot be repaired: there is
+      // deliberately no Add Rotation command. Refuse rather than create a dead theme.
+      if (!usableDisplay) return project;
+      return mapProjectGroups(project, (group) => group.id === groupId ? {
+        ...group,
+        themeProjects: [...group.themeProjects, { id, name, rotations: canonicalRotations(usableDisplay), resources: [] }],
+      } : group);
+    });
     return result.changed ? { changed: true, createdIds: [id] } : result;
   }
 
@@ -636,20 +653,25 @@ export class EditorApplication {
         ...withProfile,
         themeProjectGroups: withProfile.themeProjectGroups.map((group) => ({
           ...group,
-          themeProjects: group.themeProjects.map((theme) => ({
-            ...theme,
-            rotations: theme.rotations.map((rotation) => {
-              const dimensions = rotationDimensions(usableDisplay, rotation.angle);
-              return {
-                ...rotation,
-                ...dimensions,
-                scenes: rotation.scenes.map((scene) => ({
-                  ...scene,
-                  widgets: scene.widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, dimensions) })),
-                })),
-              };
-            }),
-          })),
+          themeProjects: group.themeProjects.map((theme) => {
+            const byAngle = new Map(theme.rotations.map((rotation) => [rotation.angle, rotation]));
+            return {
+              ...theme,
+              rotations: CANONICAL_ANGLES.map((angle) => {
+                const dimensions = rotationDimensions(usableDisplay, angle);
+                const current = byAngle.get(angle);
+                if (!current) return { id: newId("rotation"), angle, ...dimensions, scenes: [] };
+                return {
+                  ...current,
+                  ...dimensions,
+                  scenes: current.scenes.map((scene) => ({
+                    ...scene,
+                    widgets: scene.widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, dimensions) })),
+                  })),
+                };
+              }),
+            };
+          }),
         })),
       };
     });
