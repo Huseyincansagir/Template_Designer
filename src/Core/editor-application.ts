@@ -719,7 +719,12 @@ export class EditorApplication {
       ...(patch.locked !== undefined ? { locked: patch.locked } : {}),
       ...(patch.zIndex !== undefined ? { zIndex: patch.zIndex } : {}),
     };
-    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => selected.has(widget.id) ? { ...widget, ...clone(cleanPatch) } : widget) } : scene)))));
+    return this.execute("Edit Widget Properties", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => scene.id === sceneId ? { ...scene, widgets: scene.widgets.map((widget) => {
+      if (!selected.has(widget.id)) return widget;
+      const next = { ...widget, ...clone(cleanPatch) };
+      // Locked widgets keep zIndex; geometry already has its own command.
+      return widget.locked && patch.zIndex !== undefined ? { ...next, zIndex: widget.zIndex } : next;
+    }) } : scene)))));
   }
 
   deleteSelection(ids: readonly string[]): MutationResult {

@@ -279,6 +279,17 @@ describe("Phase 5 command surfaces", () => {
     expect(store.undo()).toBe(true);
   });
 
+  it("does not restack a locked widget through bulk property patch", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { locked: true }).changed).toBe(true);
+    const before = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0];
+    expect(before?.locked).toBe(true);
+    expect(editor.setWidgetsPropertiesInScene(sceneId, ["w1"], { zIndex: 99 }).changed).toBe(false);
+    expect(store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].zIndex).toBe(before?.zIndex);
+    expect(editor.setWidgetZIndicesInScene(sceneId, { w1: 99 }).changed).toBe(false);
+  });
+
   it("places duplicate-mode copies centered at the click point in one command", () => {
     const { project, sceneId } = projectWithScene();
     const { store, editor } = setup(project);
