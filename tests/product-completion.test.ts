@@ -645,8 +645,8 @@ describe("Deployment goes through the application service (F16)", () => {
     expect(built.status).toBe("built");
     if (built.status !== "built") return;
     const written = await service.write(built.package, "sd-card");
-    // V1 has no native SD-card write. The adapter refuses with its own reason
-    // and the service passes it through unchanged - it must never read as done.
+    // The legacy adapter-plane write() still refuses; the product path is
+    // deployToSdCard + RemovableStorageAdapter, not this stub.
     expect(written.status).toBe("unavailable");
     if (written.status !== "unavailable") return;
     expect(written.code).toBe("SD_CARD_DEPLOYMENT_NOT_IMPLEMENTED");

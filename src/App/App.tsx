@@ -4,7 +4,6 @@ import { CommandHistory } from "../Core/commands";
 import { InMemoryDocumentStore } from "../Core/document-store";
 import { createEditorApplication, defaultWidgetName, type MutationResult } from "../Core/editor-application";
 import { createDeploymentService } from "../Core/deployment-service";
-import { SDCardTarget } from "../Infrastructure/sd-card-target";
 import { createRemovableStorageAdapter } from "../Infrastructure/tauri-removable-storage";
 import type { RemovableVolume } from "../Core/removable-storage";
 import type { SdDeploymentResult, SdDeploymentStage } from "../Core/deployment-service";
@@ -639,7 +638,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // rather than offering a deployment that cannot happen.
   const storageAdapterRef = useRef<Awaited<ReturnType<typeof createRemovableStorageAdapter>>>(undefined);
   const deploymentService = useMemo(
-    () => createDeploymentService([new SDCardTarget()], storageAdapterRef.current),
+    () => createDeploymentService([], storageAdapterRef.current),
     [storageAdapterReady],
   );
   const [geometryOverrides, setGeometryOverrides] = useState<Record<string, Geometry>>({});
@@ -864,6 +863,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // ---- Asset lifecycle -----------------------------------------------------
 
   const importAssets = async (): Promise<boolean> => {
+    if (blockedInPreview("Import Asset")) return false;
     if (!assetImportSource) {
       logAction("Asset import is unavailable in this build", "WARN");
       return false;
@@ -1005,6 +1005,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const addThemeProjectGroupCommand = (): boolean => {
+    if (blockedInPreview("Add Theme Project Group")) return false;
     const name = uniqueDefaultName("New Theme Group", groups.map((currentGroup) => currentGroup.name));
     const result = editorApplication.addThemeProjectGroup(name);
     if (!result.changed) return false;
@@ -1555,6 +1556,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const setDeviceProfile = (profileId: string): boolean => {
+    if (blockedInPreview("Change Device Profile")) return false;
     const target = profileRegistry.get(profileId);
     if (!target) {
       logAction(`Device Profile '${profileId}' is not registered`, "WARN");
@@ -1616,6 +1618,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
    * No mis-target was reproducible - this closes the hazard, not a live defect.
    */
   const renameNodeById = (nodeId: string, name: string): boolean => {
+    if (blockedInPreview("Rename")) return false;
     const result = editorApplication.renameNode(nodeId, name);
     if (result.changed) {
       setSelection((current) => current && current.id === nodeId ? { ...current, label: name.trim() } : current);
@@ -1625,6 +1628,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   };
 
   const renameSelectedNode = (name: string): boolean => {
+    if (blockedInPreview("Rename")) return false;
     if (!selection) return false;
     const result = editorApplication.renameNode(selection.id, name);
     if (result.changed) {
@@ -1944,30 +1948,6 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setSdTransport(deploymentService.storageKind ?? "none");
     setSdDetectError(null);
     setSdVolumes([]);
-  };
-
-  /** Writes the last verified package through the configured transport. */
-  const writePackage = async () => {
-    if (!lastPackage) {
-      logAction("Write requires a verified package — run Build & Verify first", "WARN");
-      return;
-    }
-    const target = deploymentService.targets()[0];
-    if (!target) {
-      logAction("No deployment transport is configured in this build", "WARN");
-      return;
-    }
-    setDeploymentStatus(`Writing to ${target.displayName}…`);
-    const outcome = await deploymentService.write(lastPackage, target.id);
-    if (outcome.status === "written") {
-      setDeploymentStatus(`Written · ${outcome.target.displayName} · verified`);
-      logAction(`Package written and verified on ${outcome.target.displayName}`, "INFO");
-      return;
-    }
-    // The transport's own refusal, surfaced verbatim: V1 has no native SD-card
-    // write, and the product says so instead of implying success.
-    setDeploymentStatus(`Blocked · ${target.displayName} unavailable`);
-    logAction(`Write to ${target.displayName} unavailable (${outcome.code}): ${outcome.reason}`, "ERROR");
   };
 
   const setPanelMode = (panel: PanelId, mode: PanelMode) => {
@@ -3249,6 +3229,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
   // path applies exactly one undoable command across the whole selection
   // (multi-select `*` apply-to-all, corrections §9).
   const commitSelectionGeometryField = (field: keyof Geometry, value: number) => {
+    if (blockedInPreview("Geometry edit")) return;
     if (!Number.isFinite(value)) {
       logAction(`Geometry edit rejected: ${field} must be a finite number`, "WARN");
       return;
@@ -3339,14 +3320,14 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <div className="property-section-title">Digit</div>
           <div className="property-row property-row-edit">
             <span>Digit Style</span>
-            <select aria-label="Digit style" value={String(widget.style?.digitStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("digitStyleId", event.target.value)}>
+            <select aria-label="Digit style" value={String(widget.style?.digitStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("digitStyleId", event.target.value, contentTarget)}>
               <option value="">{activeProfile?.defaultDigitStyleId ? `Profile default (${activeProfile.defaultDigitStyleId})` : "Profile default"}</option>
               {styles.map((style) => <option key={style} value={style}>{style}</option>)}
             </select>
           </div>
           <div className="property-row property-row-edit">
             <span>Value Source</span>
-            <select aria-label="Digit runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value)}>
+            <select aria-label="Digit runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value, contentTarget)}>
               <option value="">Not bound</option>
               {stateOptions.map((state) => <option key={state.id} value={state.id}>{state.displayName} ({state.type})</option>)}
             </select>
@@ -3368,14 +3349,14 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <div className="property-section-title">Direction</div>
           <div className="property-row property-row-edit">
             <span>Direction Style</span>
-            <select aria-label="Direction style" value={String(widget.style?.directionStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("directionStyleId", event.target.value)}>
+            <select aria-label="Direction style" value={String(widget.style?.directionStyleId ?? "")} disabled={styles.length === 0} onChange={(event) => setWidgetStyleValue("directionStyleId", event.target.value, contentTarget)}>
               <option value="">Profile default</option>
               {styles.map((style) => <option key={style} value={style}>{style}</option>)}
             </select>
           </div>
           <div className="property-row property-row-edit">
             <span>Value Source</span>
-            <select aria-label="Direction runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value)}>
+            <select aria-label="Direction runtime value source" value={String(widget.content?.sourceStateId ?? "")} onChange={(event) => setWidgetContentValue("sourceStateId", event.target.value, contentTarget)}>
               <option value="">Not bound</option>
               {stateOptions.map((state) => <option key={state.id} value={state.id}>{state.displayName} ({state.type})</option>)}
             </select>
@@ -3422,6 +3403,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
                         <small>{item.mediaType}{item.loop ? " · loop" : ""}{item.repeatCount ? ` · ×${item.repeatCount}` : ""}</small>
                       </span>
                       <DraftNumberField scope={`${widget.id}:seq:${item.id}`} value={String(item.duration)} disabled={false} min={0} max={3600} decimals={1} ariaLabel={`Entry ${index + 1} duration in seconds`} onCommit={(value) => updateSequenceItem(widget, item.id, { duration: Math.round(value * 10) / 10 })} />
+                      <label className="sequence-loop" title="Loop this entry">
+                        <input type="checkbox" aria-label={`Loop entry ${index + 1}`} checked={item.loop === true} onChange={(event) => updateSequenceItem(widget, item.id, { loop: event.target.checked })} />
+                      </label>
                       <span className="sequence-actions">
                         <button type="button" className="small-action" disabled={index === 0} aria-label={`Move entry ${index + 1} earlier`} title="Move earlier in the sequence" onClick={() => moveSequenceItem(widget, item.id, -1)}>↑</button>
                         <button type="button" className="small-action" disabled={index === slide.items.length - 1} aria-label={`Move entry ${index + 1} later`} title="Move later in the sequence" onClick={() => moveSequenceItem(widget, item.id, 1)}>↓</button>
@@ -3450,15 +3434,9 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
                 <div className="property-row property-row-edit"><span>Loop Sequence</span><input type="checkbox" aria-label="Loop the media sequence" checked={slide.loop === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, loop: event.target.checked } }, "Set sequence loop")} /></div>
                 <div className="property-row property-row-edit"><span>Repeat Sequence</span><DraftNumberField scope={`${widget.id}:seqrepeat`} value={String(slide.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel="Media sequence repeat count" onCommit={(value) => configureWidget({ mediaSlide: { ...slide, repeatCount: value } }, "Set sequence repeat count")} /></div>
                 {renderAssetSelect("Sequence Audio", slide.audioAssetId, "audio", (assetId) => configureWidget({ mediaSlide: { ...slide, audioAssetId: assetId } }, "Set sequence audio"))}
+                <div className="property-row property-row-edit"><span>Continue Playback</span><input type="checkbox" aria-label="Continue playback across scene changes" checked={slide.continuePlayback === true} onChange={(event) => configureWidget({ mediaSlide: { ...slide, continuePlayback: event.target.checked } }, "Set sequence continue playback")} /></div>
               </>
             )}
-            <div className="property-row property-row-edit">
-              <span>Visual Type</span>
-              <select aria-label="Media visual type" value={widget.mediaType ?? ""} onChange={(event) => configureWidget({ mediaType: (event.target.value || undefined) as VisualMediaType | undefined }, "Set media type")}>
-                <option value="">Not selected</option>
-                {visualTypes.map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}
-              </select>
-            </div>
             {renderAssetSelect("Attached Audio", widget.audioAssetId, "audio", (assetId) => configureWidget({ audioAssetId: assetId }, "Set attached audio"))}
           </>
         )}
@@ -3665,12 +3643,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
           <section className="property-section"><div className="property-section-title">Project</div><div className="property-row property-row-edit"><span>Device Profile</span><select aria-label="Device Profile" title={availableProfiles.length < 2 ? "Only one DeviceProfile is registered" : undefined} value={project.deviceProfileId} disabled={availableProfiles.length < 2} onChange={(event) => setDeviceProfile(event.target.value)}>{availableProfiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}</select></div><PropertyRow label="Validation" value={issueCount > 0 ? `${issueCount} issue(s)` : validation.valid ? "Valid" : "Review project"} muted /></section>
           {widget && <>
             <section className="property-section"><div className="property-section-title">Widget</div>{multi ? <PropertyRow label="Widget Type" value={valueFor((current) => current.widget?.widgetType)} /> : <div className="property-row property-row-edit"><span>Widget Type</span><select aria-label="Widget type" value={widget.widgetType} onChange={(event) => changeWidgetType(event.target.value)}>{(activeProfile?.supportedWidgetTypes ?? []).map((widgetType) => <option key={widgetType} value={widgetType}>{defaultWidgetName(widgetType)}</option>)}{!(activeProfile?.supportedWidgetTypes ?? []).includes(widget.widgetType) && <option value={widget.widgetType}>{widget.widgetType} (unsupported)</option>}</select></div>}<div className="property-row property-row-edit"><span>Visible</span><input type="checkbox" aria-label="Widget visible" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.visible) : widget.visible} onChange={() => toggleWidgetProperty("visible")} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Widget enabled" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.enabled) : widget.enabled} onChange={() => toggleWidgetProperty("enabled")} /></div><div className="property-row property-row-edit"><span>Geometry Lock</span><input type="checkbox" aria-label="Widget geometry lock" checked={multi ? selectedSceneWidgets.length > 0 && selectedSceneWidgets.every((current) => current.locked) : widget.locked} onChange={() => toggleWidgetProperty("locked")} /></div></section>
-            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField scope={`${draftScope}:x`} label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:y`} label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:w`} label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:h`} label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField scope={`${draftScope}:z`} value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={false} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
+            <section className="property-section"><div className="property-section-title">Geometry / Layer</div><div className="geometry-editor"><GeometryField scope={`${draftScope}:x`} label="X" field="x" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).x : undefined) : canonicalGeometry(widget).x} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("x")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:y`} label="Y" field="y" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).y : undefined) : canonicalGeometry(widget).y} multi={multi} disabled={!geometryEditable} min={0} max={geometryBound("y")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:w`} label="W" field="width" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).width : undefined) : canonicalGeometry(widget).width} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("width")} onCommit={commitSelectionGeometryField} /><GeometryField scope={`${draftScope}:h`} label="H" field="height" value={multi ? valueFor((current) => current.widget ? canonicalGeometry(current.widget).height : undefined) : canonicalGeometry(widget).height} multi={multi} disabled={!geometryEditable} min={10} max={geometryBound("height")} onCommit={commitSelectionGeometryField} /></div><div className="property-row property-row-edit"><span>Z-order</span><DraftNumberField scope={`${draftScope}:z`} value={multi ? valueFor((current) => current.widget?.zIndex) : String(widget.zIndex)} disabled={!geometryEditable} min={-100000} max={100000} ariaLabel="Widget z-order" onCommit={(value) => { if (blockedInPreview("Z-order")) return; const sceneId = activeScene?.id; if (!sceneId || !selectedWidgetIds.length) return; const result = editorApplication.setWidgetsPropertiesInScene(sceneId, selectedWidgetIds, { zIndex: value }); if (result.changed) logAction(`Set widget zIndex to ${value}`, "EVENT"); }} /></div></section>
             <section className="property-section"><div className="property-section-title">Presentation</div><PropertyRow label="Bindings" value={String(widget.bindings.length)} /><PropertyRow label="Asset References" value={String(widget.assetIds?.length ?? 0)} /><PropertyRow label="Media Type" value={widget.mediaType ?? "None"} /><PropertyRow label="Media Slide" value={widget.mediaSlide ? `${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"} · ${widget.mediaSlide.items.reduce((total, item) => total + item.duration, 0).toFixed(1)}s` : "None"} /><button type="button" className="property-inline-action" onClick={() => setBindingModal({ widgetId: widget.id })}>Open Binding Editor</button></section>
             {!multi && renderWidgetContentSection(widget)}
             {!multi && renderWidgetMediaSection(widget)}
           </>}
-          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={false} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
+          {node.kind === "scene" && node.scene && <><section className="property-section"><div className="property-section-title">Scene Runtime</div><div className="property-row property-row-edit"><span>Priority</span><DraftNumberField scope={`${draftScope}:priority`} value={String(node.scene.priority)} disabled={viewMode === "preview"} min={0} max={10} integer ariaLabel="Scene priority" onCommit={(value) => { if (blockedInPreview("Scene properties")) return; const result = editorApplication.setSceneProperties(node.scene!.id, { priority: value }); if (result.changed) logAction(`Scene priority set to ${value}`, "EVENT"); }} /></div><div className="property-row property-row-edit"><span>Enabled</span><input type="checkbox" aria-label="Scene enabled" checked={node.scene.enabled !== false} onChange={(event) => { const result = editorApplication.setSceneProperties(node.scene!.id, { enabled: event.target.checked }); if (result.changed) logAction(`Scene ${event.target.checked ? "enabled" : "disabled"}`, "EVENT"); }} /></div><PropertyRow label="Widgets" value={String(node.scene.widgets.length)} /></section>{renderSceneActivationSection(node.scene)}</>}
           {node.kind === "rotation" && node.rotation && <section className="property-section"><div className="property-section-title">Rotation / Form</div><PropertyRow label="Angle" value={`R${node.rotation.angle}`} /><PropertyRow label="Display" value={`${node.rotation.width} × ${node.rotation.height}`} /><PropertyRow label="Scenes" value={String(node.rotation.scenes.length)} /><p className="property-note">Every Theme Project carries exactly R0, R90, R180 and R270. Dimensions come from the DeviceProfile display; a Rotation / Form cannot be added or deleted.</p></section>}
           {node.kind === "theme" && node.theme && <>{renderThemeResourcesSection(node.theme)}{renderFloorMappingSection(node.theme)}</>}
           {node.asset && <section className="property-section"><div className="property-section-title">Asset</div><div className="property-row property-row-edit"><span>Media Type</span><select aria-label="Asset media type" value={node.asset.mediaType ?? ""} onChange={(event) => { const next = event.target.value === "" ? undefined : event.target.value as MediaType; const result = editorApplication.setAssetProperties(node.asset!.id, { mediaType: next }); if (result.changed) logAction(next ? `Asset media type set to ${next}` : "Asset media type cleared", "EVENT"); }}><option value="">Not assigned</option>{(activeProfile?.supportedMediaTypes ?? ["image", "video", "audio"]).map((mediaType) => <option key={mediaType} value={mediaType}>{mediaType}</option>)}</select></div><div className="property-row property-row-edit"><span>Source Path</span><DraftTextField scope={`${draftScope}:source`} value={node.asset.sourcePath} disabled={false} ariaLabel="Asset source path" onCommit={(value) => { const result = editorApplication.setAssetProperties(node.asset!.id, { sourcePath: value }); if (result.changed) logAction("Asset source path updated", "EVENT"); }} /></div><PropertyRow label="References" value={countAssetReferences(project, node.asset.id) > 0 ? `${countAssetReferences(project, node.asset.id)} reference(s)` : "unused"} /><PropertyRow label="Stable ID" value={node.asset.id} muted /><button type="button" className="property-inline-action" onClick={() => deleteAssetsCommand([node.asset!.id])}>Delete Asset</button><p className="property-note">The package carries a logical asset record; binary media is materialized by the deployment adapter.</p></section>}

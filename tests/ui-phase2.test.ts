@@ -46,5 +46,7 @@ describe("UI Phase 2 foundations", () => {
     expect(app).not.toContain("renderCanvasNavigator()");
     expect(app).toContain("data-testid=\"canvas-stage\"");
     expect(app).toContain("deploy-dialog");
+    expect(app).not.toContain("SDCardTarget");
+    expect(app).not.toContain("writePackage");
   });
 });
