@@ -221,14 +221,15 @@ function clampWidgetsToRotation(widgets: readonly Widget[], bounds: { readonly w
   return widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, bounds) }));
 }
 
-function duplicateScene(scene: Scene, collect?: string[]): Scene {
+function duplicateScene(scene: Scene, collect?: string[], bounds?: { readonly width: number; readonly height: number }): Scene {
   const id = newId("scene");
   collect?.push(id);
+  const widgets = scene.widgets.map((widget) => duplicateWidget(widget));
   return {
     ...clone(scene),
     id,
     name: `${scene.name} Copy`,
-    widgets: scene.widgets.map((widget) => duplicateWidget(widget)),
+    widgets: bounds ? clampWidgetsToRotation(widgets, bounds) : widgets,
   };
 }
 
@@ -236,7 +237,7 @@ function duplicateRotation(rotation: Rotation): Rotation {
   return {
     ...clone(rotation),
     id: newId("rotation"),
-    scenes: rotation.scenes.map((scene) => duplicateScene(scene)),
+    scenes: rotation.scenes.map((scene) => duplicateScene(scene, undefined, rotation)),
   };
 }
 
@@ -826,7 +827,8 @@ export class EditorApplication {
     return result.changed ? { changed: true, createdIds: copyIds } : result;
   }
 
-  duplicateSelection(ids: readonly string[]): MutationResult {    if (!ids.length) return { changed: false };
+  duplicateSelection(ids: readonly string[]): MutationResult {
+    if (!ids.length) return { changed: false };
     const current = this.documents.getCurrent();
     const selected = new Set(ids);
     if (!current) return { changed: false };
@@ -857,7 +859,7 @@ export class EditorApplication {
           const scenes: Scene[] = [];
           for (const scene of rotation.scenes) {
             if (selected.has(scene.id)) {
-              scenes.push(scene, duplicateScene(scene, containerIds));
+              scenes.push(scene, duplicateScene(scene, containerIds, rotation));
               continue;
             }
 
@@ -865,7 +867,10 @@ export class EditorApplication {
             for (const widget of scene.widgets) {
               widgets.push(widget);
               const copyId = copyIds.get(widget.id);
-              if (copyId) widgets.push(duplicateWidget(widget, copyId));
+              if (copyId) {
+                const copy = duplicateWidget(widget, copyId);
+                widgets.push({ ...copy, geometry: clampGeometry(copy.geometry, rotation) });
+              }
             }
             scenes.push({ ...scene, widgets });
           }

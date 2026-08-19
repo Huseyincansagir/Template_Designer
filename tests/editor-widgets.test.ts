@@ -205,6 +205,18 @@ describe("Duplicate integrity (INT-56 remediation)", () => {
     const widgets = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets ?? [];
     expect(widgets.map((widget) => widget.id)).toEqual(["w1", result.createdIds?.[0]]);
   });
+
+  it("clamps global duplicateSelection copies to the parent Rotation", () => {
+    const { project, sceneId } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.setWidgetGeometriesInScene(sceneId, { w1: { x: 700, y: 1260, width: 100, height: 40 } }).changed).toBe(true);
+    expect(editor.duplicateSelection(["w1"]).changed).toBe(true);
+    const copy = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[1];
+    expect(copy?.geometry.x).toBe(620);
+    expect(copy?.geometry.y).toBe(1240);
+    expect((copy?.geometry.x ?? 0) + (copy?.geometry.width ?? 0)).toBeLessThanOrEqual(720);
+    expect((copy?.geometry.y ?? 0) + (copy?.geometry.height ?? 0)).toBeLessThanOrEqual(1280);
+  });
 });
 
 describe("Clipboard paste (clipboard capability remediation)", () => {

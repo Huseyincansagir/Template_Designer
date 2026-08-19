@@ -227,6 +227,30 @@ function countAssetReferences(project: Project, assetId: string): number {
   return count;
 }
 
+function listAssetReferenceLabels(project: Project, assetId: string): string[] {
+  const labels: string[] = [];
+  if (project.defaultAssetIds?.includes(assetId)) labels.push("Project defaults");
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      if (theme.resources.includes(assetId)) labels.push(`${theme.name} · Resources`);
+      if (theme.defaultAssetIds?.includes(assetId)) labels.push(`${theme.name} · Defaults`);
+      for (const rotation of theme.rotations) {
+        for (const scene of rotation.scenes) {
+          for (const widget of scene.widgets) {
+            const used = (widget.assetIds ?? []).includes(assetId)
+              || widget.audioAssetId === assetId
+              || (widget.mediaSlide?.items ?? []).some((item) => item.assetId === assetId)
+              || widget.mediaSlide?.audioAssetId === assetId
+              || widget.bindings.some((binding) => binding.contentId === assetId);
+            if (used) labels.push(`${widget.name} · ${scene.name}`);
+          }
+        }
+      }
+    }
+  }
+  return labels;
+}
+
 /** Default names stay unique so identically-named scenes/widgets never
  *  make the runtime context ambiguous (final-workflow finding). */
 function uniqueDefaultName(base: string, existing: readonly string[]): string {
@@ -969,9 +993,12 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       return true;
     };
     if (referenced.length && savedSettings.confirmDestructive) {
+      const usedBy = [...new Set(assetIds.flatMap((assetId) => listAssetReferenceLabels(project, assetId)))];
+      const preview = usedBy.slice(0, 8).join("; ");
+      const extra = usedBy.length > 8 ? ` and ${usedBy.length - 8} more` : "";
       setConfirmState({
         title: "Delete Asset",
-        message: `${referenced.length} of ${assetIds.length} asset(s) are still referenced (${referenced.reduce((total, entry) => total + entry.uses, 0)} reference(s)). Deleting clears those references so the project stays valid. This is undoable.`,
+        message: `${referenced.length} of ${assetIds.length} asset(s) are still referenced (${referenced.reduce((total, entry) => total + entry.uses, 0)} reference(s)). Used By: ${preview || "unknown"}${extra}. Deleting clears those references so the project stays valid. This is undoable.`,
         confirmLabel: "Delete & Clear References",
         onConfirm: run,
       });
@@ -3459,6 +3486,20 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
                         <strong>{assetGlyph(item.mediaType)} {asset?.name ?? `${item.assetId} (unresolved)`}</strong>
                         <small>{item.mediaType}{item.loop ? " · loop" : ""}{item.repeatCount ? ` · ×${item.repeatCount}` : ""}</small>
                       </span>
+                      <select
+                        aria-label={`Replace entry ${index + 1} asset`}
+                        title="Replace this sequence entry; duration and loop are kept"
+                        value={item.assetId}
+                        disabled={appendableAssets.length === 0}
+                        onChange={(event) => {
+                          const next = project.assets.find((candidate) => candidate.id === event.target.value);
+                          if (!next || !next.mediaType || next.mediaType === "audio") return;
+                          updateSequenceItem(widget, item.id, { assetId: next.id, mediaType: next.mediaType as VisualMediaType });
+                        }}
+                      >
+                        {appendableAssets.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                        {!appendableAssets.some((candidate) => candidate.id === item.assetId) && <option value={item.assetId}>{asset?.name ?? item.assetId} (unresolved)</option>}
+                      </select>
                       <DraftNumberField scope={`${widget.id}:seq:${item.id}`} value={String(item.duration)} disabled={false} min={0} max={3600} decimals={1} ariaLabel={`Entry ${index + 1} duration in seconds`} onCommit={(value) => updateSequenceItem(widget, item.id, { duration: Math.round(value * 10) / 10 })} />
                       <DraftNumberField scope={`${widget.id}:seqrepeat:${item.id}`} value={String(item.repeatCount ?? 0)} disabled={false} min={0} max={999} integer ariaLabel={`Entry ${index + 1} repeat count`} onCommit={(value) => updateSequenceItem(widget, item.id, { repeatCount: value > 0 ? value : undefined })} />
                       <label className="sequence-loop" title="Loop this entry">
@@ -3513,6 +3554,19 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
               return (
                 <li key={`${assetId}-${index}`}>
                   <span>{assetGlyph(asset?.mediaType ?? "image")} {asset?.name ?? `${assetId} (unresolved)`}</span>
+                  <select
+                    aria-label={`Replace asset reference ${index + 1}`}
+                    title="Replace this reference; order is kept"
+                    value={assetId}
+                    onChange={(event) => {
+                      const next = [...(widget.assetIds ?? [])];
+                      next[index] = event.target.value;
+                      setWidgetAssetIds(next);
+                    }}
+                  >
+                    {project.assets.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}
+                    {!project.assets.some((candidate) => candidate.id === assetId) && <option value={assetId}>{assetId} (unresolved)</option>}
+                  </select>
                   <button type="button" className="reference-remove" aria-label={`Remove asset reference ${asset?.name ?? assetId}`} onClick={() => setWidgetAssetIds((widget.assetIds ?? []).filter((_, current) => current !== index))}>×</button>
                 </li>
               );
