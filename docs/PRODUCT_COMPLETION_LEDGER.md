@@ -282,7 +282,7 @@ Independent live measurement on 2026-08-19 against the running Vite app at `127.
 | FC-07 | P2 | UX | New widgets are separately selectable | Cascade of 10px on 120×80 widgets stacked into one blob. | `cascade * snapGridSize`. | Cascade step `max(grid*4, 40)`. | `App.tsx` | Placement formula; live 3-widget create. | **FIXED** |
 | FC-08 | P3 | UX | Chrome is CAD-dense | 48px app bar, 52–79px panel headings, kickers, footnotes, "ASPECT LOCKED". | Token defaults + AI chrome copy. | 32/26/28/22 shell; kickers hidden; Save in toolbar. | `app.css`, `App.tsx` | Live: heading 28px, chrome strip 33px. | **FIXED** |
 
-**Still CODE COMPLETE, HARDWARE/TAURI UNVERIFIED:** SD write/flush/verify/eject (`cargo` absent; no physical card). Binary media copy via `sd_copy_file` is implemented in Rust and unused from TS because browser import has no real path — recorded, not faked.
+**Still CODE COMPLETE, HARDWARE/TAURI UNVERIFIED:** SD write/flush/verify/eject (`cargo` absent; no physical card). Binary media copy is wired (FC-09): copies when `resolvedPath` is absolute; browser imports stay logical-only.
 
 | ID | Sev | Class | Expected | Observed | Root cause | Decision | Fix | Test | Status |
 |----|-----|-------|----------|----------|------------|----------|-----|------|--------|
@@ -295,3 +295,15 @@ Independent live measurement on 2026-08-19 against the running Vite app at `127.
 | FC-15 | P2 | UX | One Visual Type control; sequence entries loopable | Duplicate Visual Type; item `loop` display-only | Copy-paste inspector | Removed duplicate; per-entry loop checkbox; Continue Playback. | `App.tsx` | — | **FIXED** |
 
 **Stale ledger note:** Floor Mapping authoring **was** added in PD-04; the "Out of scope" row above is historical.
+
+### Chrome rewrite (post-FC-15)
+
+Source landed after FC-08’s one-row 33px measurement. `docs/visual-qa/` shots are the previous chrome. Visual P2 is **not** complete.
+
+| ID | Sev | Class | Expected | Observed | Decision | Status |
+|----|-----|-------|----------|----------|----------|--------|
+| FC-07b (UI-D-0017) | P2 | UX | Successive Add Widget are separately selectable | FC-07 `max(grid*4, 40)` still overlapped 120×80 boxes | Cascade step = widget size + snap grid (`width + snapGridSize` / `height + snapGridSize`, wrap 8) | **FIXED** |
+| FC-16 (UI-D-0015, UI-D-0016) | P2 | UX | Scene tabs never share a wrap line with tools | One-row fused chrome wrapped at 1280 | Two-row `.editor-chrome`; exclusive `.is-scenes` strip | **CODE COMPLETE, VISUAL UNVERIFIED** |
+| FC-17 (UI-D-0018) | P2 | UX | Project/device fields only when the document is selected | `renderProperties` always emits a Project section for any selected node | Restrict to `node.kind === "project"` + empty-selection Document inspector | **CODE COMPLETE, VISUAL UNVERIFIED** |
+
+Unchanged and still not done: **PD-01** audio **BLOCKED ON PRODUCT**; asset thumbnails **DEFERRED**; Wi-Fi **V2 / not implemented**. SD write/verify/eject remains **CODE COMPLETE, HARDWARE/TAURI UNVERIFIED** (`cargo`/`rustc` absent; no physical card).

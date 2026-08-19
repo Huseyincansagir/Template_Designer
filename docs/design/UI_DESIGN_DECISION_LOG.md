@@ -198,7 +198,7 @@ These decisions are canonical and live in their source documents. They are liste
 - **Decision:** One `.editor-chrome` row (≈32px, wrapping at 1280) holds Select/Pan/Grid/Snap, Theme (when present), R0–R270, scene tabs + add/reorder, Design/Preview and zoom. App bar is 32px with Save/Undo/Redo/Deploy/Settings. Panel headings are 28px with no kickers; panel footnotes are hidden.
 - **Reason:** Compact CAD density; scene/rotation navigation must be obvious without a second band.
 - **Alternatives:** (a) keep two navigator rows — rejected (measured waste); (b) icon rail copied from the visual mockup — rejected: mockup is style reference only, Explorer remains the hierarchy.
-- **Status:** CONFIRMED
+- **Status:** SUPERSEDED by UI-D-0015 / UI-D-0016
 - **Canonical source:** UI spec §5–§6; this log
 - **Date:** 2026-08-19
 
@@ -210,5 +210,45 @@ These decisions are canonical and live in their source documents. They are liste
 - **Alternatives:** (a) keep Console-only — rejected (undiscoverable, cramped); (b) a permanent Deploy panel — rejected (not a continuous editor surface).
 - **Status:** CONFIRMED
 - **Canonical source:** UI spec §26; media-publish skill; this log
+- **Date:** 2026-08-19
+
+### UI-D-0015 — Two-row editor chrome
+- **Topic:** Editor chrome vertical structure.
+- **Context:** UI-D-0013 fused tools, Theme, rotations and scene tabs into one wrapping row. At 1280 the scene tabs shared a wrap line with tools/zoom and stopped being a reliable jump surface.
+- **Decision:** `.editor-chrome` is two rows (`grid-template-rows: 32px auto`): row 1 = Select/Pan/Grid/Snap, Theme, R0–R270, Design/Preview, zoom; row 2 = exclusive scene strip. Canvas workspace stays `auto minmax(0, 1fr) auto` (UI-D-0012). App bar remains 32px.
+- **Reason:** Scene switching is a primary canvas control and must keep a dedicated band. One wrapping row failed that at compact viewports.
+- **Alternatives:** (a) keep UI-D-0013 one-row wrap — rejected: scene tabs lost; (b) restore `.canvas-navigator` as a 4th workspace child — rejected: UI-D-0012 P0.
+- **Status:** CONFIRMED (source landed). Rendered visual P2 not re-run against this chrome.
+- **Canonical source:** This log; UI spec §5–§6; supersedes UI-D-0013 layout
+- **Date:** 2026-08-19
+
+### UI-D-0016 — Exclusive scene strip
+- **Topic:** Where Scene tabs live in the editor chrome.
+- **Context:** Mixing scene tabs with tools and rotation buttons on one row made the active Scene compete for width and wrap.
+- **Decision:** Scene tabs, `+ Scene`, and scene reorder live only on `.editor-chrome-row.is-scenes`. They do not appear on the tools/rotation row.
+- **Reason:** One exclusive strip makes the active Scene obvious at every viewport without stealing tool/rotation width.
+- **Alternatives:** (a) scene tabs in row 1 with wrap — rejected (UI-D-0013 failure); (b) Explorer-only scene switching — rejected: L-09 required an always-visible strip.
+- **Status:** CONFIRMED (source landed). Visual P2 not re-measured.
+- **Canonical source:** This log; UI spec §5–§6, §10
+- **Date:** 2026-08-19
+
+### UI-D-0017 — Widget cascade uses widget size + snap grid
+- **Topic:** Default placement of successive Add Widget.
+- **Context:** A 10px / `snapGridSize` cascade stacked 120×80 widgets into one blob (S4-01, FC-07). FC-07 then recorded `max(grid*4, 40)`, which still overlapped the default widget.
+- **Decision:** Each new widget steps by `width + snapGridSize` on X and `height + snapGridSize` on Y from scene centre, wrapping after 8. Default size remains 120×80.
+- **Reason:** The step must exceed the widget’s own box or the next add is still hit-test-occluded.
+- **Alternatives:** (a) grid-only step — rejected (measured occlusion); (b) `max(grid*4, 40)` — rejected: smaller than 120×80.
+- **Status:** CONFIRMED (landed in `addWidget`; covered in `tests/editor-widgets.test.ts`)
+- **Canonical source:** This log; S4-01 / FC-07
+- **Date:** 2026-08-19
+
+### UI-D-0018 — Project inspector section only at document
+- **Topic:** When the inspector shows project-level fields.
+- **Context:** `renderProperties` emits a Project section (Device Profile + Validation) for every selected node, so a widget/scene/theme inspector also hosts document fields (D5-05/D5-06 over-reach; D6 ancestor-section rule).
+- **Decision:** Project/document fields (name, device profile, display, counts, validation, Next Step) appear only when nothing is selected — the document inspector. A selected object shows Identity plus kind-specific sections only.
+- **Reason:** Contextual inspector (UI spec §8): selection kind owns the panel. Project fields on a widget bury type-specific editors.
+- **Alternatives:** (a) keep Project on every selection — rejected: not contextual; (b) duplicate Document and Project — rejected: two editors for one device profile.
+- **Status:** CONFIRMED (landed). Project Device Profile + Validation render only for `node.kind === "project"`; the empty-selection path keeps the Document inspector. Widget/scene/theme/asset inspectors no longer host project fields.
+- **Canonical source:** This log; UI spec §8
 - **Date:** 2026-08-19
 

@@ -1,7 +1,7 @@
 # Final Functional Acceptance — Template Designer V2
 
 **Branch:** `manus2`  
-**Inspected HEAD:** `dc33b10412ac87edf3d0c01bcdf7f50845570d25` plus this closure pass  
+**Inspected HEAD:** `dc33b10412ac87edf3d0c01bcdf7f50845570d25` plus this closure pass (chrome rewrite not visually re-verified)  
 **Date:** 2026-08-19
 
 ## Verdict
@@ -36,3 +36,15 @@ Project → ThemeProjectGroup → ThemeProject → Rotation → Scene → Widget
 Mutations: UI → EditorApplication → DocumentStore / history.
 
 Deployment: UI → DeploymentService → RemovableStorageAdapter → Tauri → filesystem.
+
+## Still open / unverified
+
+| Item | Status |
+|------|--------|
+| Tauri shell / `cargo check` | **UNVERIFIED** (`cargo` / `rustc` absent) |
+| SD write / flush / verify / eject on a physical card | **CODE COMPLETE, HARDWARE UNVERIFIED** |
+| Visual P2 (two-row chrome, exclusive scene strip) | **CODE COMPLETE, VISUAL UNVERIFIED** — source landed; previous live shots are one-row chrome |
+| Project inspector section only at document (UI-D-0018) | **CODE COMPLETE, VISUAL UNVERIFIED** |
+| PD-01 audio channel authoring | **BLOCKED ON PRODUCT** |
+| Asset thumbnails | **DEFERRED** |
+| Wi-Fi / ESP32 transport | **V2 — not implemented** |
