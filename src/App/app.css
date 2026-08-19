@@ -294,8 +294,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .canvas-stage.pan-mode:active { cursor: grabbing; }
 .canvas-stage.place-mode { cursor: crosshair; }
 .canvas-rail-label { position: absolute; top: 8px; left: 10px; color: #4f6469; font-size: 8px; font-weight: 700; letter-spacing: .12em; pointer-events: none; }
-.device-canvas-wrap { display: grid; place-items: center; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; overflow: hidden; transform-origin: center center; transition: transform .12s ease; }
-.device-frame { display: grid; grid-template-rows: 16px minmax(0, 1fr) 14px; width: auto; height: auto; max-width: calc(100% - 24px); max-height: calc(100% - 16px); aspect-ratio: 9 / 16; padding: 5px; border: 1px solid var(--device-bezel); border-radius: var(--radius-sm); background: var(--device-frame); box-shadow: var(--shadow-device); }
+.device-canvas-wrap { display: grid; place-items: center; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; overflow: hidden; container-type: size; transform-origin: center center; transition: transform .12s ease; }
+.device-frame { display: grid; grid-template-rows: 16px minmax(0, 1fr) 14px; box-sizing: border-box; max-width: calc(100% - 24px); max-height: calc(100% - 16px); padding: 5px; border: 1px solid var(--device-bezel); border-radius: var(--radius-sm); background: var(--device-frame); box-shadow: var(--shadow-device); }
 .device-frame-header, .device-frame-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; color: var(--text-on-dark); font-size: 8px; font-weight: 700; letter-spacing: .08em; }
 .device-screen { position: relative; display: grid; place-items: center; min-height: 0; overflow: hidden; border: 1px solid var(--device-bezel); background: var(--device-surface); touch-action: none; }
 .device-screen:focus-visible, .canvas-widget:focus-visible { outline: var(--focus-ring); outline-offset: -2px; }
@@ -497,6 +497,8 @@ input[type="checkbox"] { accent-color: var(--accent); }
 .canvas-widget:hover, .canvas-widget.is-selected { overflow: visible; border: 2px solid var(--accent-on-dark); background: rgba(25, 137, 143, .3); box-shadow: 0 0 0 2px rgba(98, 223, 224, .16); }
 .canvas-widget.is-locked { border-style: dashed; cursor: not-allowed; }
 .canvas-widget span { overflow: hidden; max-width: 100%; font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.canvas-widget > .widget-render { position: absolute; inset: 0; max-width: none; width: auto; height: auto; white-space: normal; overflow: hidden; }
+.canvas-widget.widget-type-media { padding: 0; background: transparent; }
 .canvas-widget small { color: #9bd4d4; font-size: 7px; }
 .resize-handle { position: absolute; z-index: 6; width: 7px; height: 7px; border: 1px solid #0d5e67; border-radius: var(--radius-sm); background: #eafefe; padding: 0; }
 .resize-handle::before { content: ""; position: absolute; inset: -6px; }
@@ -632,14 +634,20 @@ body.relaxed-density .panel-heading { min-height: 36px; }
 .widget-render-direction { color: var(--accent-on-dark); font-size: clamp(16px, 10cqw, 56px); line-height: 1; }
 .widget-render-media { display: grid; place-items: center; gap: 1px; width: 100%; height: 100%; background: rgba(19, 148, 154, 0.22); }
 .widget-render-media.has-face {
-  position: relative;
-  background-color: #1a2a2e;
-  background-image: linear-gradient(45deg, #24383d 25%, transparent 25%), linear-gradient(-45deg, #24383d 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #24383d 75%), linear-gradient(-45deg, transparent 75%, #24383d 75%);
-  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-  background-size: 16px 16px;
+  position: static;
+  background: transparent;
 }
-.widget-render-media.has-face .media-face { position: absolute; inset: 0; object-fit: contain; }
-.widget-render-media.has-face strong, .widget-render-media.has-face small { position: relative; z-index: 1; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65); }
+.canvas-widget img.media-face {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+}
+.widget-render-media.has-face strong, .widget-render-media.has-face small { display: none; }
 .widget-render-media-glyph { color: var(--accent-on-dark); font-size: clamp(9px, 2cqw, 20px); line-height: 1; }
 .media-assign-cta { position: relative; z-index: 2; height: var(--control-height-sm); padding: 0 8px; border: 1px solid var(--accent); border-radius: var(--radius-sm); background: var(--surface); color: var(--accent-active); font-size: 8px; font-weight: 650; }
 .media-assign-cta:hover { background: var(--accent-muted); }

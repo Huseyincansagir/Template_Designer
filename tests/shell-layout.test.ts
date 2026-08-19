@@ -25,15 +25,22 @@ describe("shell layout containment (UI-D-0024)", () => {
 
   it("sizes the device frame by max-width/max-height, not a definite 100% height", () => {
     const frame = rule(".device-frame");
-    expect(frame).toMatch(/width:\s*auto/);
-    expect(frame).toMatch(/height:\s*auto/);
     expect(frame).toMatch(/max-width:\s*calc\(100% - 24px\)/);
     expect(frame).toMatch(/max-height:\s*calc\(100% - 16px\)/);
     expect(frame).not.toMatch(/(?:^|;)\s*height:\s*calc\(/);
+    const app = readFileSync(resolve(__dirname, "../src/App/App.tsx"), "utf8");
+    expect(app).toContain("min(calc(100cqw - 24px), calc((100cqh - 16px) * ${canvasWidth} / ${canvasHeight}))");
 
     const wrap = rule(".device-canvas-wrap");
     expect(wrap).toMatch(/overflow:\s*hidden/);
     expect(wrap).toMatch(/min-width:\s*0/);
+  });
+
+  it("lets media snapshot faces fill the widget box", () => {
+    expect(rule(".canvas-widget > .widget-render")).toMatch(/position:\s*absolute/);
+    expect(rule(".canvas-widget > .widget-render")).toMatch(/inset:\s*0/);
+    expect(rule(".canvas-widget img.media-face")).toMatch(/object-fit:\s*cover/);
+    expect(rule(".canvas-widget img.media-face")).toMatch(/height:\s*100%/);
   });
 
   it("keeps docked Properties above leaked canvas content", () => {

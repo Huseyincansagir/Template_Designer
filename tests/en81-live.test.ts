@@ -1,0 +1,60 @@
+import { describe, expect, it } from "vitest";
+import { chromium } from "playwright";
+
+const APP = "http://127.0.0.1:1420/";
+
+async function serverUp(): Promise<boolean> {
+  try {
+    const response = await fetch(APP, { signal: AbortSignal.timeout(1500) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+describe("live EN 81 cabin snapshots", () => {
+  it("opens the example and paints media faces on the device", async () => {
+    if (!(await serverUp())) {
+      throw new Error("Vite is not running at 127.0.0.1:1420. Start `npm run dev`.");
+    }
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+    await context.addInitScript(() => localStorage.clear());
+    const page = await context.newPage();
+    try {
+      await page.goto(`${APP}?t=${Date.now()}`, { waitUntil: "networkidle" });
+      await page.waitForSelector(".app-shell");
+      await page.locator(".menu-bar .menu-button", { hasText: /^File$/ }).click();
+      await page.getByRole("button", { name: "Open EN 81 Cabin Example" }).click();
+      const confirm = page.getByRole("button", { name: "Discard & Open" });
+      if (await confirm.count()) await confirm.click();
+      await page.waitForTimeout(2000);
+
+      const seyah = await page.evaluate(() => {
+        const faces = [...document.querySelectorAll(".canvas-widget img.media-face")].map((img) => {
+          const r = img.getBoundingClientRect();
+          return { w: r.width, h: r.height, nw: (img as HTMLImageElement).naturalWidth };
+        });
+        const frame = document.querySelector(".device-frame")?.getBoundingClientRect();
+        const stage = document.querySelector("[data-testid='canvas-stage']")?.getBoundingClientRect();
+        return {
+          faces,
+          frameH: frame?.height ?? 0,
+          stageH: stage?.height ?? 0,
+          title: document.querySelector(".document-tab-main")?.textContent ?? "",
+        };
+      });
+      expect(seyah.title).toMatch(/EN 81/);
+      expect(seyah.frameH).toBeGreaterThan(seyah.stageH * 0.45);
+      expect(seyah.faces.some((face) => face.h > 40 && face.nw > 0), `Seyir faces: ${JSON.stringify(seyah.faces)}`).toBe(true);
+
+      await page.getByRole("tab", { name: /Yangın/ }).click();
+      await page.waitForTimeout(300);
+      const fire = await page.evaluate(() => [...document.querySelectorAll(".canvas-widget img.media-face")].map((img) => img.getBoundingClientRect().height));
+      expect(Math.max(0, ...fire), `Yangın face heights ${JSON.stringify(fire)}`).toBeGreaterThan(40);
+    } finally {
+      await context.close();
+      await browser.close();
+    }
+  }, 60_000);
+});

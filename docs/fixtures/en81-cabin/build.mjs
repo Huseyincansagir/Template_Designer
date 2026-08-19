@@ -47,7 +47,7 @@ function solidPng(width, height, r, g, b) {
   return Buffer.concat([signature, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
-writeFileSync(join(root, "arkaplan.png"), solidPng(72, 128, 11, 20, 24));
+writeFileSync(join(root, "arkaplan.png"), solidPng(720, 1280, 11, 20, 24));
 
 const assets = {
   bg: { id: id("asset"), name: "Kabin arka plan", sourcePath: "assets/arkaplan.png", mediaType: "image" },

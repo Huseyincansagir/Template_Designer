@@ -90,6 +90,15 @@ describe("live shell: canvas must not cover Properties", () => {
       expect(landscape.gap).toBeGreaterThanOrEqual(0);
       expect(landscape.offenders, `R90 leaked into Properties: ${JSON.stringify(landscape.offenders)}`).toEqual([]);
       expect(overlapArea(landscape.canvas, landscape.properties)).toBe(0);
+
+      await page.getByRole("button", { name: "R0", exact: true }).click();
+      await page.waitForTimeout(50);
+      const sizes = await page.evaluate(() => {
+        const stage = document.querySelector("[data-testid='canvas-stage']")?.getBoundingClientRect();
+        const frame = document.querySelector(".device-frame")?.getBoundingClientRect();
+        return { stageH: stage?.height ?? 0, frameH: frame?.height ?? 0, frameW: frame?.width ?? 0 };
+      });
+      expect(sizes.frameH, `device frame ${sizes.frameH}px is too small for stage ${sizes.stageH}px`).toBeGreaterThan(sizes.stageH * 0.45);
     } finally {
       await context.close();
       await browser.close();
