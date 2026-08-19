@@ -392,7 +392,14 @@ fn write_package_blocking(volume_id: String, root_directory: String, files: Vec<
     }
     ensure_removable(&volume_id)?;
 
-    let package_root = safe_relative(&root_directory).map(|relative| root.join(relative))?;
+    let live_root = safe_relative(&root_directory).map(|relative| root.join(relative))?;
+    // Write into `<root>.next` first. A failed write must not replace a previous
+    // complete package, and a second deploy must not merge leftover files.
+    let staging_directory = format!("{root_directory}.next");
+    let package_root = safe_relative(&staging_directory).map(|relative| root.join(relative))?;
+    if package_root.exists() {
+        let _ = fs::remove_dir_all(&package_root);
+    }
 
     // Every path is validated BEFORE the first handle opens, so a bad path cannot
     // leave a half-written tree behind.
@@ -440,10 +447,33 @@ fn write_package_blocking(volume_id: String, root_directory: String, files: Vec<
         written_bytes += bytes.len() as u64;
     }
 
+    if live_root.exists() {
+        let backup_directory = format!("{root_directory}.bak");
+        let backup_root = safe_relative(&backup_directory).map(|relative| root.join(relative))?;
+        if backup_root.exists() {
+            let _ = fs::remove_dir_all(&backup_root);
+        }
+        fs::rename(&live_root, &backup_root).map_err(|error| {
+            let (code, message) = describe_io(&error);
+            SdError::new(code, format!("Could not retire the previous package: {message}"))
+        })?;
+        if let Err(error) = fs::rename(&package_root, &live_root) {
+            let _ = fs::rename(&backup_root, &live_root);
+            let (code, message) = describe_io(&error);
+            return Err(SdError::new(code, format!("Could not promote the staged package: {message}")));
+        }
+        let _ = fs::remove_dir_all(&backup_root);
+    } else {
+        fs::rename(&package_root, &live_root).map_err(|error| {
+            let (code, message) = describe_io(&error);
+            SdError::new(code, format!("Could not promote the staged package: {message}"))
+        })?;
+    }
+
     Ok(SdWriteResult {
         written_files,
         written_bytes,
-        root_path: package_root.to_string_lossy().to_string(),
+        root_path: live_root.to_string_lossy().to_string(),
     })
 }
 

@@ -1,4 +1,5 @@
 import type {
+  CopyReport,
   EjectReport,
   PackageFileWrite,
   ReadBackReport,
@@ -115,6 +116,26 @@ export class TauriRemovableStorage implements RemovableStorageAdapter {
         message: failure.message ?? "The native transport could not write the package.",
         ...(failure.failed_path ? { failedPath: failure.failed_path } : {}),
         writtenFiles: failure.written_files ?? 0,
+      };
+    }
+  }
+
+  async copyFile(volumeId: string, rootDirectory: string, destRelativePath: string, sourceAbsolutePath: string): Promise<CopyReport> {
+    try {
+      const bytes = await this.invoke<number>("sd_copy_file", {
+        volumeId,
+        rootDirectory,
+        relativePath: destRelativePath,
+        sourcePath: sourceAbsolutePath,
+      });
+      return { ok: true, bytes, destPath: destRelativePath };
+    } catch (error) {
+      const failure = asRustError(error);
+      return {
+        ok: false,
+        code: failure.code ?? "NATIVE_COPY_FAILED",
+        message: failure.message ?? "The native transport could not copy the source file.",
+        destPath: destRelativePath,
       };
     }
   }

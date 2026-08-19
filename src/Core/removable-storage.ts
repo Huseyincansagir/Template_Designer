@@ -67,6 +67,17 @@ export type EjectReport =
   | { readonly ok: true }
   | { readonly ok: false; readonly code: string; readonly message: string; readonly unsupported?: boolean };
 
+export type CopyReport =
+  | { readonly ok: true; readonly bytes: number; readonly destPath: string }
+  | { readonly ok: false; readonly code: string; readonly message: string; readonly destPath: string };
+
+export type BinaryMediaCopy = {
+  readonly assetId: string;
+  readonly sourcePath: string;
+  readonly destPath: string;
+  readonly sizeBytes: number;
+};
+
 export interface RemovableStorageAdapter {
   readonly kind: "native-tauri" | "in-memory";
   /** Every candidate volume. Filtering to removable ones is the caller's decision, not the adapter's. */
@@ -76,6 +87,12 @@ export interface RemovableStorageAdapter {
   writePackage(volumeId: string, rootDirectory: string, files: readonly PackageFileWrite[], onProgress?: (progress: WriteProgress) => void): Promise<WriteReport>;
   /** Reads one written file back so the caller can verify what actually landed. */
   readBack(volumeId: string, rootDirectory: string, relativePath: string): Promise<ReadBackReport>;
+  /**
+   * Copies a real source file onto the target (binary media). The source must
+   * be an absolute path the adapter can open. Logical `*.asset.json` records
+   * stay in the package; this is the materialization step.
+   */
+  copyFile(volumeId: string, rootDirectory: string, destRelativePath: string, sourceAbsolutePath: string): Promise<CopyReport>;
   /** Best-effort safe removal. `unsupported: true` is an honest answer, not a failure to hide. */
   eject(volumeId: string): Promise<EjectReport>;
 }
@@ -106,6 +123,51 @@ export function contentByteLength(content: string): number {
 
 export function packageFileWrites(packageFile: DeploymentPackage): readonly PackageFileWrite[] {
   return packageFile.files.map((file) => ({ path: file.path, content: file.content }));
+}
+
+/** Windows drive, UNC, or POSIX absolute. Relative package paths never match. */
+export function isAbsoluteFilesystemPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return false;
+  if (/^[A-Za-z]:[\\/]/.test(trimmed)) return true;
+  if (trimmed.startsWith("\\\\")) return true;
+  return trimmed.startsWith("/") && !trimmed.startsWith("//.");
+}
+
+function sourceExtension(path: string): string {
+  const match = /\.([A-Za-z0-9]+)$/.exec(path.replace(/\\/g, "/"));
+  const extension = match ? match[1].toLowerCase() : "";
+  return extension && extension !== "json" ? extension : "bin";
+}
+
+/**
+ * Binary copies implied by a verified package. Only assets whose import
+ * recorded a real absolute path (`metadata.resolvedPath`) are included. The
+ * rest stay as logical `*.asset.json` records — that is the honest browser
+ * outcome, not a silent drop.
+ */
+export function binaryMediaCopiesFromPackage(packageFile: DeploymentPackage): readonly BinaryMediaCopy[] {
+  const copies: BinaryMediaCopy[] = [];
+  for (const file of packageFile.files) {
+    if (file.kind !== "asset") continue;
+    let record: { id?: unknown; sourcePath?: unknown; metadata?: Record<string, unknown> };
+    try {
+      record = JSON.parse(file.content) as { id?: unknown; sourcePath?: unknown; metadata?: Record<string, unknown> };
+    } catch {
+      continue;
+    }
+    const sourcePath = typeof record.sourcePath === "string" ? record.sourcePath : "";
+    const assetId = typeof record.id === "string" ? record.id : file.assetId;
+    const resolved = record.metadata?.resolvedPath === true;
+    if (!assetId || !resolved || !isAbsoluteFilesystemPath(sourcePath)) continue;
+    const destPath = `assets/${assetId}.${sourceExtension(sourcePath)}`;
+    if (unsafePackagePathReason(destPath)) continue;
+    const sizeBytes = typeof record.metadata?.sizeBytes === "number" && Number.isFinite(record.metadata.sizeBytes)
+      ? Math.max(0, record.metadata.sizeBytes)
+      : 0;
+    copies.push({ assetId, sourcePath, destPath, sizeBytes });
+  }
+  return copies;
 }
 
 /**

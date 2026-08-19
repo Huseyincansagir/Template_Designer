@@ -3,7 +3,7 @@ import { InMemoryDocumentStore } from "../src/Core/document-store";
 import { CommandHistory } from "../src/Core/commands";
 import { createEditorApplication } from "../src/Core/editor-application";
 import { createDeploymentService } from "../src/Core/deployment-service";
-import { PACKAGE_ROOT_DIRECTORY, contentByteLength, preflightDeployment, unsafePackagePathReason } from "../src/Core/removable-storage";
+import { PACKAGE_ROOT_DIRECTORY, binaryMediaCopiesFromPackage, contentByteLength, isAbsoluteFilesystemPath, preflightDeployment, unsafePackagePathReason } from "../src/Core/removable-storage";
 import { InMemoryRemovableStorage, type InMemoryVolumeSeed } from "../src/Infrastructure/in-memory-removable-storage";
 import { SDCardTarget } from "../src/Infrastructure/sd-card-target";
 import { createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
@@ -157,6 +157,7 @@ describe("SD deployment: the happy path writes, flushes and verifies real conten
     for (const file of pkg.files) {
       expect(snapshot.get(`E:\\::${PACKAGE_ROOT_DIRECTORY}/${file.path}`)).toBe(file.content);
     }
+    expect(result.copiedBinaries).toEqual([]);
     expect(snapshot.has(`E:\\::${PACKAGE_ROOT_DIRECTORY}/manifest.json`)).toBe(true);
   });
 
@@ -339,5 +340,60 @@ describe("Package path safety mirrors the native guard (G1 review)", () => {
       expect(finding, badPath).toBeDefined();
       expect(finding?.remediation.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("SD deployment: binary media copy", () => {
+  function packageWithResolvedAsset(pkg: DeploymentPackage, sourcePath = "D:\\media\\lobby.png"): DeploymentPackage {
+    return {
+      ...pkg,
+      files: [...pkg.files, {
+        path: "assets/asset-1.asset.json",
+        kind: "asset",
+        assetId: "asset-1",
+        content: JSON.stringify({
+          id: "asset-1",
+          name: "Lobby",
+          mediaType: "image",
+          sourcePath,
+          metadata: { resolvedPath: true, sizeBytes: 2048, originalFileName: "lobby.png" },
+          binary: false,
+        }),
+      }],
+    };
+  }
+
+  it("derives copies only from absolute resolved paths", () => {
+    expect(isAbsoluteFilesystemPath("D:\\media\\lobby.png")).toBe(true);
+    expect(isAbsoluteFilesystemPath("assets/lobby.png")).toBe(false);
+    const logical = {
+      files: [{
+        path: "assets/a.asset.json", kind: "asset" as const, assetId: "a",
+        content: JSON.stringify({ id: "a", sourcePath: "assets/lobby.png", metadata: { resolvedPath: false }, binary: false }),
+      }],
+    } as unknown as DeploymentPackage;
+    expect(binaryMediaCopiesFromPackage(logical)).toEqual([]);
+  });
+
+  it("copies resolved media onto the target after the logical package verifies", async () => {
+    const storage = new InMemoryRemovableStorage([CARD]);
+    const { pkg, service } = await builtPackage(storage);
+    const card = (await service.detectTargets()).volumes[0];
+    const result = await service.deployToSdCard(packageWithResolvedAsset(pkg), card);
+    expect(result.status).toBe("verified");
+    if (result.status !== "verified") return;
+    expect(result.copiedBinaries).toEqual([{ path: "assets/asset-1.png", bytes: "D:\\media\\lobby.png".length }]);
+    expect(storage.snapshot().get(`E:\\::${PACKAGE_ROOT_DIRECTORY}/assets/asset-1.png`)).toBe("BINARY:D:\\media\\lobby.png");
+  });
+
+  it("fails the deployment when a resolved source cannot be copied", async () => {
+    const storage = new InMemoryRemovableStorage([CARD], { copyFailPath: "assets/asset-1.png" });
+    const { pkg, service } = await builtPackage(storage);
+    const card = (await service.detectTargets()).volumes[0];
+    const result = await service.deployToSdCard(packageWithResolvedAsset(pkg), card);
+    expect(result.status).toBe("failed");
+    if (result.status !== "failed") return;
+    expect(result.stage).toBe("write");
+    expect(result.code).toBe("SOURCE_MISSING");
   });
 });

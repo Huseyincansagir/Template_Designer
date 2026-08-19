@@ -66,7 +66,8 @@ describe("Tauri removable-storage boundary", () => {
       .mockResolvedValueOnce({ present: true, writable: true, free_bytes: 512, reason: null })
       .mockResolvedValueOnce({ written_files: 2, written_bytes: 40, root_path: "E:\\pkg" })
       .mockResolvedValueOnce("{}")
-      .mockResolvedValueOnce(undefined);
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(4096);
     const adapter = new TauriRemovableStorage(invoke);
 
     await adapter.probe("E:\\");
@@ -84,6 +85,14 @@ describe("Tauri removable-storage boundary", () => {
 
     await adapter.eject("E:\\");
     expect(invoke).toHaveBeenCalledWith("sd_eject_volume", { volumeId: "E:\\" });
+
+    await adapter.copyFile("E:\\", "template-designer", "assets/a.png", "D:\\media\\a.png");
+    expect(invoke).toHaveBeenCalledWith("sd_copy_file", {
+      volumeId: "E:\\",
+      rootDirectory: "template-designer",
+      relativePath: "assets/a.png",
+      sourcePath: "D:\\media\\a.png",
+    });
   });
 
   it("maps a probe result and treats a null free-space reading as unknown", async () => {

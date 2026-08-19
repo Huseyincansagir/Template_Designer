@@ -109,6 +109,25 @@ export class BrowserProjectFileGateway implements ProjectFileGateway {
   }
 }
 
-export function createProjectFileGateway(documentRef: Document | undefined): ProjectFileGateway | undefined {
-  return documentRef ? new BrowserProjectFileGateway(documentRef) : undefined;
+export class NativeProjectFileGateway implements ProjectFileGateway {
+  readonly kind = "native-dialog" as const;
+  private readonly inner: BrowserProjectFileGateway;
+  constructor(documentRef: Document, urlFactory: typeof URL = URL) {
+    this.inner = new BrowserProjectFileGateway(documentRef, urlFactory);
+  }
+  exportProject(project: Project): Promise<string> {
+    return this.inner.exportProject(project);
+  }
+  importProject(): Promise<ProjectImportResult | undefined> {
+    return this.inner.importProject();
+  }
+}
+
+export function createProjectFileGateway(documentRef: Document | undefined, runtime: unknown = typeof window === "undefined" ? undefined : window): ProjectFileGateway | undefined {
+  if (!documentRef) return undefined;
+  return isTauriShell(runtime) ? new NativeProjectFileGateway(documentRef) : new BrowserProjectFileGateway(documentRef);
+}
+
+function isTauriShell(runtime: unknown): boolean {
+  return Boolean(runtime && typeof runtime === "object" && "__TAURI_INTERNALS__" in runtime);
 }

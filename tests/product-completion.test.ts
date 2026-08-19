@@ -7,7 +7,7 @@ import { selectActiveScene } from "../src/Core/runtime";
 import { validateProject } from "../src/Core/validation";
 import { compactDeviceProfile, createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
 import { LocalStorageProjectStorage, PROJECT_STORAGE_KEY } from "../src/Infrastructure/project-storage";
-import { displayNameOf, extensionOf, inferMediaType, toAssetDraft } from "../src/Infrastructure/asset-import";
+import { displayNameOf, extensionOf, inferMediaType, isTauriRuntime, toAssetDraft } from "../src/Infrastructure/asset-import";
 import { PROJECT_FILE_EXTENSION, parseProjectFile, projectFileName } from "../src/Infrastructure/project-file";
 import { describeSelectionRefusal } from "../src/App/editor-commands";
 import { createStableId } from "../src/Domain/identity";
@@ -441,6 +441,12 @@ describe("Asset import inference (browser transport)", () => {
     expect(unclassified.mediaType).toBeUndefined();
     expect(unclassified.metadata?.typeInferred).toBe(false);
     expect(relative?.metadata?.typeInferred).toBe(true);
+  });
+
+  it("detects the Tauri shell so import can record real paths", () => {
+    expect(isTauriRuntime(undefined)).toBe(false);
+    expect(isTauriRuntime({})).toBe(false);
+    expect(isTauriRuntime({ __TAURI_INTERNALS__: {} })).toBe(true);
   });
 });
 

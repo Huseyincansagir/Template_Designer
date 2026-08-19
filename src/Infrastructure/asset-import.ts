@@ -143,6 +143,31 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
   }
 }
 
-export function createAssetImportSource(documentRef: Document | undefined): AssetImportSource | undefined {
-  return documentRef ? new BrowserFileAssetImportSource(documentRef) : undefined;
+/**
+ * True inside the Tauri webview. The OS file picker is native there, and
+ * WebView2 exposes `File.path` so `toAssetDraft` can record a real absolute
+ * path for the deployment adapter to copy.
+ */
+export function isTauriRuntime(globalObject: unknown = typeof window === "undefined" ? undefined : window): boolean {
+  return Boolean(globalObject && typeof globalObject === "object" && "__TAURI_INTERNALS__" in globalObject);
+}
+
+/**
+ * Same picker as the browser source, but labelled honestly: in the desktop
+ * shell the dialog is the OS picker and picked files carry a real path.
+ */
+export class NativeWebviewAssetImportSource implements AssetImportSource {
+  readonly kind = "native-dialog" as const;
+  private readonly inner: BrowserFileAssetImportSource;
+  constructor(documentRef: Document) {
+    this.inner = new BrowserFileAssetImportSource(documentRef);
+  }
+  pick(options?: AssetPickOptions): Promise<readonly AssetDraft[]> {
+    return this.inner.pick(options);
+  }
+}
+
+export function createAssetImportSource(documentRef: Document | undefined, runtime: unknown = typeof window === "undefined" ? undefined : window): AssetImportSource | undefined {
+  if (!documentRef) return undefined;
+  return isTauriRuntime(runtime) ? new NativeWebviewAssetImportSource(documentRef) : new BrowserFileAssetImportSource(documentRef);
 }

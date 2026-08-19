@@ -1,4 +1,5 @@
 import type {
+  CopyReport,
   EjectReport,
   PackageFileWrite,
   ReadBackReport,
@@ -26,6 +27,8 @@ export type FaultInjection = {
   readonly removeAfterFiles?: number;
   /** Reject every write with a permission error. */
   readonly permissionDenied?: boolean;
+  /** Fail binary copies (source missing or unreadable). */
+  readonly copyFailPath?: string;
   /** Report the volume as read-only. */
   readonly readOnly?: boolean;
   /** Silently corrupt one written file, so only verification can catch it. */
@@ -167,6 +170,23 @@ export class InMemoryRemovableStorage implements RemovableStorageAdapter {
       onProgress?.({ writtenFiles, totalFiles: files.length, writtenBytes, totalBytes, currentPath: file.path });
     }
     return { ok: true, writtenFiles, writtenBytes, rootPath: `${seed.mountPath}${rootDirectory}` };
+  }
+
+  async copyFile(volumeId: string, rootDirectory: string, destRelativePath: string, sourceAbsolutePath: string): Promise<CopyReport> {
+    if (!this.present.has(volumeId)) {
+      return { ok: false, code: "TARGET_UNAVAILABLE", message: "The volume is not present.", destPath: destRelativePath };
+    }
+    if (this.faults.permissionDenied) {
+      return { ok: false, code: "PERMISSION_DENIED", message: "Permission denied writing to the volume.", destPath: destRelativePath };
+    }
+    if (this.faults.copyFailPath === destRelativePath || this.faults.copyFailPath === sourceAbsolutePath) {
+      return { ok: false, code: "SOURCE_MISSING", message: `'${sourceAbsolutePath}' could not be copied.`, destPath: destRelativePath };
+    }
+    if (sourceAbsolutePath.trim().length === 0) {
+      return { ok: false, code: "SOURCE_INVALID", message: "The source path must be absolute.", destPath: destRelativePath };
+    }
+    this.files.set(this.key(volumeId, rootDirectory, destRelativePath), `BINARY:${sourceAbsolutePath}`);
+    return { ok: true, bytes: sourceAbsolutePath.length, destPath: destRelativePath };
   }
 
   async readBack(volumeId: string, rootDirectory: string, relativePath: string): Promise<ReadBackReport> {

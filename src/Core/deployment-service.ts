@@ -2,6 +2,7 @@ import { buildDeploymentPackage, verifyDeploymentPackage } from "./export";
 import { ApplicationError, type DeploymentTargetAdapter } from "./application";
 import {
   PACKAGE_ROOT_DIRECTORY,
+  binaryMediaCopiesFromPackage,
   contentByteLength,
   packageFileWrites,
   preflightDeployment,
@@ -49,6 +50,7 @@ export type SdDeploymentResult =
     readonly writtenFiles: number;
     readonly writtenBytes: number;
     readonly verified: readonly SdVerificationDetail[];
+    readonly copiedBinaries: readonly { readonly path: string; readonly bytes: number }[];
   }
   | {
     readonly status: "failed";
@@ -186,6 +188,20 @@ export class DeploymentService {
       };
     }
 
+    const binaries = binaryMediaCopiesFromPackage(packageFile);
+    const binaryBytes = binaries.reduce((total, copy) => total + copy.sizeBytes, 0);
+    const free = probe.freeBytes ?? volume.freeBytes;
+    if (free !== undefined && binaryBytes > 0 && free < preflight.totalBytes + binaryBytes) {
+      return {
+        status: "failed",
+        stage: "preflight",
+        code: "TARGET_INSUFFICIENT_SPACE",
+        message: `The package plus ${binaries.length} media file(s) need ${preflight.totalBytes + binaryBytes} bytes but '${volume.mountPath}' has ${free} free.`,
+        remediation: "Free space on the card or use a larger one.",
+        preflight,
+      };
+    }
+
     options.onStage?.("write");
     const files = packageFileWrites(packageFile);
     const write = await this.storage.writePackage(volume.id, PACKAGE_ROOT_DIRECTORY, files, options.onProgress);
@@ -235,6 +251,24 @@ export class DeploymentService {
       };
     }
 
+    const copiedBinaries: { path: string; bytes: number }[] = [];
+    for (const copy of binaries) {
+      const copied = await this.storage.copyFile(volume.id, PACKAGE_ROOT_DIRECTORY, copy.destPath, copy.sourcePath);
+      if (!copied.ok) {
+        return {
+          status: "failed",
+          stage: "write",
+          code: copied.code,
+          message: `Could not copy '${copy.sourcePath}' to '${copy.destPath}': ${copied.message}`,
+          remediation: "The logical package is on the card but this media file is missing. Re-import the file from a real path in the desktop build, then deploy again.",
+          partial: { writtenFiles: write.writtenFiles },
+          preflight,
+          verified,
+        };
+      }
+      copiedBinaries.push({ path: copied.destPath, bytes: copied.bytes });
+    }
+
     options.onStage?.("complete");
     return {
       status: "verified",
@@ -243,6 +277,7 @@ export class DeploymentService {
       writtenFiles: write.writtenFiles,
       writtenBytes: write.writtenBytes,
       verified,
+      copiedBinaries,
     };
   }
 
