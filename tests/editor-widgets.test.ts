@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { InMemoryDocumentStore } from "../src/Core/document-store";
 import { CommandHistory } from "../src/Core/commands";
 import { createEditorApplication } from "../src/Core/editor-application";
-import { createEmptyProject, foundationDeviceProfile } from "../src/Domain/factories";
+import { mappedFloorDisplay } from "../src/App/App";
+import { createEmptyProject, compactDeviceProfile, foundationDeviceProfile } from "../src/Domain/factories";
 import type { Binding, Project, Widget } from "../src/Domain/models";
 
 function boundWidget(id: string, bindingId: string): Widget {
@@ -216,6 +217,48 @@ describe("Duplicate integrity (INT-56 remediation)", () => {
     expect(copy?.geometry.y).toBe(1240);
     expect((copy?.geometry.x ?? 0) + (copy?.geometry.width ?? 0)).toBeLessThanOrEqual(720);
     expect((copy?.geometry.y ?? 0) + (copy?.geometry.height ?? 0)).toBeLessThanOrEqual(1280);
+  });
+
+  it("gives successive copies unique default names", () => {
+    const { project } = projectWithScene();
+    const { store, editor } = setup(project);
+    expect(editor.duplicateSelection(["w1"]).changed).toBe(true);
+    expect(editor.duplicateSelection(["w1"]).changed).toBe(true);
+    const names = (store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets ?? []).map((widget) => widget.name);
+    expect(new Set(names).size).toBe(3);
+    expect(names).toContain("w1");
+    expect(names).toContain("w1 Copy");
+    expect(names).toContain("w1 Copy 2");
+  });
+});
+
+describe("Add Widget clamps to the Rotation", () => {
+  it("keeps an overflowing insertion inside compact 480×800", () => {
+    const base = createEmptyProject("Compact", compactDeviceProfile);
+    const theme = base.themeProjectGroups[0].themeProjects[0];
+    const rotation = theme.rotations[0];
+    const sceneId = "scene-compact";
+    const project: Project = {
+      ...base,
+      themeProjectGroups: [{
+        ...base.themeProjectGroups[0],
+        themeProjects: [{ ...theme, rotations: [{ ...rotation, scenes: [{ id: sceneId, name: "S", widgets: [], priority: 0, activationConditions: [] }] }, ...theme.rotations.slice(1)] }],
+      }],
+    };
+    const { store, editor } = setup(project);
+    expect(editor.addWidget(sceneId, "text", { x: 440, y: 100, width: 120, height: 80 }).changed).toBe(true);
+    const geometry = store.getCurrent()?.themeProjectGroups[0].themeProjects[0].rotations[0].scenes[0].widgets[0].geometry;
+    expect((geometry?.x ?? 0) + (geometry?.width ?? 0)).toBeLessThanOrEqual(480);
+    expect(geometry?.x).toBe(360);
+  });
+});
+
+describe("Digit preview floor lookup", () => {
+  it("matches composed and decomposed firmware identifiers", () => {
+    const mapping = { entries: [{ firmwareValue: "\u00c7at\u0131", displayValue: "Roof" }] };
+    expect(mappedFloorDisplay(mapping, "C\u0327at\u0131")).toBe("Roof");
+    expect(mappedFloorDisplay(mapping, "\u00c7at\u0131")).toBe("Roof");
+    expect(mappedFloorDisplay(mapping, "G")).toBeUndefined();
   });
 });
 

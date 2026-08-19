@@ -61,6 +61,13 @@ export function defaultWidgetName(widgetType: string): string {
   return label.length > 0 ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : "Widget";
 }
 
+export function uniqueDefaultName(base: string, existing: readonly string[]): string {
+  if (!existing.includes(base)) return base;
+  let counter = 2;
+  while (existing.includes(`${base} ${counter}`)) counter += 1;
+  return `${base} ${counter}`;
+}
+
 function findUniqueScene(project: Project, sceneId: string): Scene | undefined {
   let found: Scene | undefined;
   let count = 0;
@@ -186,11 +193,11 @@ function normalizeAssetDraft(draft: AssetDraft): AssetDraft | undefined {
   return { name, sourcePath, ...(draft.mediaType ? { mediaType: draft.mediaType } : {}), metadata: draft.metadata };
 }
 
-function duplicateWidget(widget: Widget, id: string = newId("widget")): Widget {
+function duplicateWidget(widget: Widget, id: string = newId("widget"), existingNames: readonly string[] = []): Widget {
   return {
     ...clone(widget),
     id,
-    name: `${widget.name} Copy`,
+    name: uniqueDefaultName(`${widget.name} Copy`, existingNames),
     geometry: { ...widget.geometry, x: widget.geometry.x + 10, y: widget.geometry.y + 10 },
     // Bindings are re-parented to the copy (new binding ids, widgetId → copy).
     // Cloning them verbatim would leave the copy referencing the original and
@@ -221,14 +228,19 @@ function clampWidgetsToRotation(widgets: readonly Widget[], bounds: { readonly w
   return widgets.map((widget) => ({ ...widget, geometry: clampGeometry(widget.geometry, bounds) }));
 }
 
-function duplicateScene(scene: Scene, collect?: string[], bounds?: { readonly width: number; readonly height: number }): Scene {
+function duplicateScene(scene: Scene, collect?: string[], bounds?: { readonly width: number; readonly height: number }, siblingNames: readonly string[] = []): Scene {
   const id = newId("scene");
   collect?.push(id);
-  const widgets = scene.widgets.map((widget) => duplicateWidget(widget));
+  const existing = [...scene.widgets.map((widget) => widget.name)];
+  const widgets = scene.widgets.map((widget) => {
+    const copy = duplicateWidget(widget, newId("widget"), existing);
+    existing.push(copy.name);
+    return copy;
+  });
   return {
     ...clone(scene),
     id,
-    name: `${scene.name} Copy`,
+    name: uniqueDefaultName(`${scene.name} Copy`, siblingNames),
     widgets: bounds ? clampWidgetsToRotation(widgets, bounds) : widgets,
   };
 }
@@ -241,13 +253,13 @@ function duplicateRotation(rotation: Rotation): Rotation {
   };
 }
 
-function duplicateThemeProject(theme: ThemeProject, collect?: string[]): ThemeProject {
+function duplicateThemeProject(theme: ThemeProject, collect?: string[], siblingNames: readonly string[] = []): ThemeProject {
   const id = newId("theme");
   collect?.push(id);
   return {
     ...clone(theme),
     id,
-    name: `${theme.name} Copy`,
+    name: uniqueDefaultName(`${theme.name} Copy`, siblingNames),
     rotations: theme.rotations.map(duplicateRotation),
   };
 }
@@ -319,7 +331,7 @@ export class EditorApplication {
         enabled: true,
         visible: true,
         locked: false,
-        geometry: clone(base),
+        geometry: clampGeometry(clone(base), rotation),
         zIndex: maxZ + 1,
         bindings: [],
         assetIds: [],
@@ -818,10 +830,12 @@ export class EditorApplication {
     const result = this.execute("Paste Widgets", (project) => mapProjectGroups(project, (group) => mapThemeProjects(group, (theme) => mapRotations(theme, (rotation) => mapScenes(rotation, (scene) => {
       if (scene.id !== sceneId) return scene;
       const baseZ = scene.widgets.reduce((maximum, widget) => Math.max(maximum, widget.zIndex), 0);
-      const copies = clampWidgetsToRotation(templates.map((template, index) => ({
-        ...duplicateWidget(template, copyIds[index]),
-        zIndex: baseZ + 1 + index,
-      })), rotation);
+      const existing = scene.widgets.map((widget) => widget.name);
+      const copies = clampWidgetsToRotation(templates.map((template, index) => {
+        const copy = duplicateWidget(template, copyIds[index], existing);
+        existing.push(copy.name);
+        return { ...copy, zIndex: baseZ + 1 + index };
+      }), rotation);
       return { ...scene, widgets: [...scene.widgets, ...copies] };
     })))));
     return result.changed ? { changed: true, createdIds: copyIds } : result;
@@ -845,7 +859,7 @@ export class EditorApplication {
       const themeProjects: ThemeProject[] = [];
       for (const theme of group.themeProjects) {
         if (selected.has(theme.id)) {
-          themeProjects.push(theme, duplicateThemeProject(theme, containerIds));
+          themeProjects.push(theme, duplicateThemeProject(theme, containerIds, [...group.themeProjects.map((candidate) => candidate.name), ...themeProjects.map((candidate) => candidate.name)]));
           continue;
         }
 
@@ -859,16 +873,17 @@ export class EditorApplication {
           const scenes: Scene[] = [];
           for (const scene of rotation.scenes) {
             if (selected.has(scene.id)) {
-              scenes.push(scene, duplicateScene(scene, containerIds, rotation));
+              scenes.push(scene, duplicateScene(scene, containerIds, rotation, [...rotation.scenes.map((candidate) => candidate.name), ...scenes.map((candidate) => candidate.name)]));
               continue;
             }
 
             const widgets: Widget[] = [];
+            const sceneNames = scene.widgets.map((candidate) => candidate.name);
             for (const widget of scene.widgets) {
               widgets.push(widget);
               const copyId = copyIds.get(widget.id);
               if (copyId) {
-                const copy = duplicateWidget(widget, copyId);
+                const copy = duplicateWidget(widget, copyId, [...sceneNames, ...widgets.map((candidate) => candidate.name)]);
                 widgets.push({ ...copy, geometry: clampGeometry(copy.geometry, rotation) });
               }
             }
