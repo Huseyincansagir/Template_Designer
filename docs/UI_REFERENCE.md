@@ -59,3 +59,9 @@ The references show a publish-readiness screen with validation checks, package i
 ## Implementation note
 
 The supplied screenshots are the visual source. The authoritative behavior and V1 scope remain the project prompt. Where visual references imply a capability not required by the written V1 specification, implement the smallest useful version or defer it rather than inventing device behavior.
+
+## Elevator project reference set
+
+The repository also includes an elevator-specific reference set under [`ui-references/elevator/`](./ui-references/elevator/). The four standalone screens cover the canvas-first Design Studio, Theme Library with the four canonical rotations, profile-driven Test Studio/Simulator, and Asset Browser plus validation/publish readiness. They retain the supplied reference language while making elevator-specific content visible: floor and next-stop presentation, direction and door states, warning presentation, device profile metadata, used/unsupported assets and package verification.
+
+The set is indexed in [`ui-references/elevator/README.md`](./ui-references/elevator/README.md), with the generation brief in [`ELEVATOR_UI_REFERENCE_BRIEF.md`](./ELEVATOR_UI_REFERENCE_BRIEF.md). These visuals are static design references only; canonical domain/runtime documents remain authoritative for behavior.
