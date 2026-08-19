@@ -16,7 +16,7 @@ import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource, extensionOf, isFileDrag, pickedFromFiles } from "../Infrastructure/asset-import";
 import { assetPreviewFromStored, displaySrcForPreview, editorPreviewFromBlob, revokeAssetPreview, storedPreviewRecord, type AssetPreview } from "./asset-preview";
 import { createEditorPreviewStore } from "../Infrastructure/editor-preview-store";
-import { createProjectFileGateway } from "../Infrastructure/project-file";
+import { createProjectFileGateway, parseProjectFile } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
 import { LocalStorageProgramSettings, defaultProgramSettings, type ProgramSettings } from "../Infrastructure/program-settings-storage";
 import type { Asset, Binding, Condition, ConditionMode, ConditionOperator, DeploymentPackage, FloorMapping, FloorMappingEntry, Geometry, MediaSlideContent, MediaSlideItem, MediaType, PrimitiveValue, Project, Rotation, RotationAngle, RuntimeContext, RuntimeSettingDefinition, RuntimeStateDefinition, RuntimeValueType, Scene, ThemeProject, ThemeProjectGroup, VisualMediaType, Widget, WidgetType } from "../Domain/models";
@@ -831,10 +831,26 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       }
       if (cancelled || generation !== previewGenerationRef.current) return;
       const incoming: Record<string, AssetPreview> = {};
+      const cached = new Set(records.map((record) => record.assetId));
       for (const record of records) {
         if (assetPreviewsRef.current[record.assetId]) continue;
         const preview = assetPreviewFromStored(record);
         if (preview) incoming[record.assetId] = preview;
+      }
+      const missing = project.assets.filter((asset) => !cached.has(asset.id) && !assetPreviewsRef.current[asset.id] && asset.sourcePath && !asset.sourcePath.includes("://") && !asset.sourcePath.includes("\\"));
+      for (const asset of missing) {
+        try {
+          const response = await fetch(`/${asset.sourcePath.replace(/^\//, "")}`);
+          if (!response.ok) continue;
+          const blob = await response.blob();
+          const preview = await editorPreviewFromBlob(blob, asset.mediaType);
+          if (!preview) continue;
+          incoming[asset.id] = preview;
+          const stored = storedPreviewRecord(projectId, asset.id, preview, blob);
+          if (stored) await editorPreviewStore.put(stored);
+        } catch {
+          /* Same-origin sourcePath is optional; browser imports still live in IndexedDB. */
+        }
       }
       setAssetPreviews((current) => {
         if (generation !== previewGenerationRef.current) {
@@ -1154,6 +1170,38 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     setActiveSceneId(null);
     clearGeometryPreview();
     logAction(origin, "EVENT");
+  };
+
+  const openEn81CabinExample = async (): Promise<boolean> => {
+    const load = async () => {
+      try {
+        const response = await fetch("/fixtures/en81-cabin.tdproj.json");
+        if (!response.ok) {
+          logAction("EN 81 cabin example is not available in this build", "WARN");
+          return;
+        }
+        const parsed = parseProjectFile(await response.text());
+        if (!parsed.ok) {
+          logAction(`EN 81 cabin example refused: ${parsed.reason}`, "ERROR");
+          return;
+        }
+        applyOpenedProject(parsed.project, "EN 81 cabin example opened");
+        saveDocument();
+      } catch (error) {
+        logAction(`EN 81 cabin example failed: ${error instanceof Error ? error.message : "unknown error"}`, "ERROR");
+      }
+    };
+    if (documentSnapshot.isDirty && savedSettings.confirmDestructive) {
+      setConfirmState({
+        title: "Open EN 81 Cabin Example",
+        message: "The current project has unsaved changes. Opening the example discards them.",
+        confirmLabel: "Discard & Open",
+        onConfirm: () => { void load(); },
+      });
+      return true;
+    }
+    await load();
+    return true;
   };
 
   const importProjectFile = async (): Promise<boolean> => {
@@ -3318,6 +3366,7 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       { label: "New Project…", shortcut: shortcutFor("new"), onClick: requestNewProject },
       { label: "Revert to Saved", disabled: !projectStorage, title: projectStorage ? "Discard changes and reload the last saved project from local storage" : "Local storage is unavailable in this build", onClick: openProject },
       { label: "Import Project File…", disabled: !projectFileGateway, title: projectFileGateway ? "Open a portable .tdproj.json project document" : "File access is unavailable in this build", onClick: () => { void importProjectFile(); } },
+      { label: "Open EN 81 Cabin Example", title: "Load the four-rotation EN 81 cabin template (position, direction, fire, overload, out of service)", onClick: () => { void openEn81CabinExample(); } },
       { label: "Export Project File…", disabled: !projectFileGateway, title: projectFileGateway ? "Write the project out as a portable .tdproj.json document" : "File access is unavailable in this build", onClick: () => { void exportProjectFile(); } },
       { label: "Save", shortcut: shortcutFor("save"), title: documentSnapshot.isDirty ? "Save changes to local storage" : "Already saved — writes the current state again", onClick: saveDocument },
     ],

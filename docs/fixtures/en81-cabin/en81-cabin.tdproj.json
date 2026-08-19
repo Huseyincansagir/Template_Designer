@@ -1,0 +1,2701 @@
+{
+  "id": "project-34ee8939-b9e5-460e-ab2b-22e92c02b814",
+  "schemaVersion": 1,
+  "name": "EN 81 Kabin Göstergesi",
+  "deviceProfileId": "foundation-profile",
+  "deviceProfileVersion": "1.0",
+  "themeProjectGroups": [
+    {
+      "id": "theme-group-fcbbc403-95fe-40c7-9b70-7b44915284ed",
+      "name": "Kabin temaları",
+      "themeProjects": [
+        {
+          "id": "theme-11189733-4381-4e02-a861-2855fa0d1f25",
+          "name": "EN 81 Kabin",
+          "rotations": [
+            {
+              "id": "rotation-26fd234b-ff44-40ff-b01b-f9da38bcfe1c",
+              "angle": 0,
+              "width": 720,
+              "height": 1280,
+              "scenes": [
+                {
+                  "id": "scene-4d067330-deb6-44c4-9d79-247b6b87ccce",
+                  "name": "Seyir",
+                  "widgets": [
+                    {
+                      "id": "widget-28694f3c-4088-4cfb-979c-853bf634f911",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-c53d43ae-9c4e-4a24-bcb7-099e120cf89d",
+                      "name": "Video",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 48,
+                        "width": 560,
+                        "height": 220
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-4c72f389-cff5-407e-ae2d-73425d441a75"
+                      ],
+                      "mediaType": "video",
+                      "mediaSlide": {
+                        "items": [
+                          {
+                            "id": "media-item-7f39764d-25e0-43c1-95a8-7286420938e2",
+                            "mediaType": "video",
+                            "assetId": "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+                            "duration": 6,
+                            "loop": true
+                          }
+                        ],
+                        "loop": true
+                      }
+                    },
+                    {
+                      "id": "widget-d3fd7288-46f3-4382-a0ea-2d68b3751dc4",
+                      "name": "Yön",
+                      "widgetType": "direction",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 260,
+                        "y": 292,
+                        "width": 200,
+                        "height": 88
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "style": {
+                        "directionStyleId": "direction-default"
+                      }
+                    },
+                    {
+                      "id": "widget-64b504a5-d595-42d2-ab3d-cf716e277d7d",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 130,
+                        "y": 400,
+                        "width": 460,
+                        "height": 300
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-bbff619e-d191-4e58-b0f9-db811a741007",
+                      "name": "Standart",
+                      "widgetType": "text",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 1188,
+                        "width": 560,
+                        "height": 56
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "EN 81-70 konum / yön",
+                        "textByLanguage": {
+                          "tr": "EN 81-70 konum / yön",
+                          "en": "EN 81-70 position / direction"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 0,
+                  "enabled": true,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-5192418e-821c-4d96-b8f9-95acd6aa08c6",
+                  "name": "Yangın",
+                  "widgets": [
+                    {
+                      "id": "widget-e66f0ec9-92e3-4559-83ce-c8bae2316bfc",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-a994d4a2-6d02-4d1f-936e-f6fd7cc11a97",
+                      "name": "Yangın işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 96,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-abae6d1c-e826-4b66-991a-693f88fa9c44",
+                      "name": "Yangın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 424,
+                        "width": 600,
+                        "height": 100
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "YANGIN",
+                        "textByLanguage": {
+                          "tr": "YANGIN",
+                          "en": "FIRE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-2b422cc3-6e96-4255-8328-880486696b0a",
+                      "name": "Merdiven",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 536,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "MERDİVEN KULLANIN",
+                        "textByLanguage": {
+                          "tr": "MERDİVEN KULLANIN",
+                          "en": "USE THE STAIRS"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-a45f2a21-eb55-459d-80d2-1c6c616b5e87",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 260,
+                        "y": 656,
+                        "width": 200,
+                        "height": 200
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-82dd0e84-9253-4005-a503-fb5cb19a8cb4",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 880,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 5,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-cc697cb9-5768-410f-ad74-c42f0a5bbb68",
+                      "name": "Kullanmayın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 976,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 6,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "ASANSÖRÜ KULLANMAYIN",
+                        "textByLanguage": {
+                          "tr": "ASANSÖRÜ KULLANMAYIN",
+                          "en": "DO NOT USE THE LIFT"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 10,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "fire",
+                      "operator": "equals",
+                      "value": true
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-867b7187-8e8c-428b-98fc-4a49bf151e5d",
+                  "name": "Aşırı yük",
+                  "widgets": [
+                    {
+                      "id": "widget-8afc4c5c-45b6-4be5-bd87-d1890587f0b3",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-78689988-8804-458e-a6f4-d2ec2708cc30",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 130,
+                        "y": 64,
+                        "width": 460,
+                        "height": 220
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-0309bbf0-bd43-4316-a31b-23141fa0c3e7",
+                      "name": "Aşırı yük işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 312,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-4a8a142a-137f-46a6-b320-a139bc7e5675",
+                      "name": "Aşırı yük",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 640,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "AŞIRI YÜK",
+                        "textByLanguage": {
+                          "tr": "AŞIRI YÜK",
+                          "en": "OVERLOAD"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-5e95c176-196f-4043-a43d-4ac70054234e",
+                      "name": "Kapasite",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 768,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KAPASİTE AŞILDI",
+                        "textByLanguage": {
+                          "tr": "KAPASİTE AŞILDI",
+                          "en": "RATED LOAD EXCEEDED"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 8,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "overload"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-665fd7e1-95a7-4578-8b6c-efccccee724f",
+                  "name": "Girilmez",
+                  "widgets": [
+                    {
+                      "id": "widget-de38ab40-f420-402f-91de-508818b6b9be",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-8a826992-4003-4bbf-9d43-0395be6ffd67",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 160,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-bfb3ea43-af31-43b5-bfa2-d9d94bbe3a53",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 496,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-c63d4856-11a5-4d6d-9599-4ee429644ceb",
+                      "name": "Servis dışı",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 624,
+                        "width": 600,
+                        "height": 90
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "SERVİS DIŞI",
+                        "textByLanguage": {
+                          "tr": "SERVİS DIŞI",
+                          "en": "OUT OF SERVICE"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 9,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "service_out"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-935e3188-a71c-4467-9cd6-03dc30bdc22e",
+                  "name": "Deprem",
+                  "widgets": [
+                    {
+                      "id": "widget-c9639ff0-7a6f-481e-a85d-59e6d329c5d9",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-0db517b6-a206-4b45-8fdc-feb228a5741c",
+                      "name": "Deprem işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 160,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-e767ace8-3044-4814-80ec-8aa115af05fb"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-bcde30a5-d969-4595-b314-b57ed2ac1aa2",
+                      "name": "Deprem",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 496,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "DEPREM",
+                        "textByLanguage": {
+                          "tr": "DEPREM",
+                          "en": "EARTHQUAKE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-61fe8462-2928-4f80-bcec-a5ab32d4c213",
+                      "name": "Bekleyin",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 624,
+                        "width": 600,
+                        "height": 90
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KABİNDE KALIN",
+                        "textByLanguage": {
+                          "tr": "KABİNDE KALIN",
+                          "en": "STAY IN THE CAR"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 7,
+                  "enabled": false,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                }
+              ]
+            },
+            {
+              "id": "rotation-b33598c3-458f-484b-80df-3f013b26fca1",
+              "angle": 90,
+              "width": 1280,
+              "height": 720,
+              "scenes": [
+                {
+                  "id": "scene-3273a7c0-ef03-4325-aeeb-2737748f5a28",
+                  "name": "Seyir",
+                  "widgets": [
+                    {
+                      "id": "widget-13113cfd-14da-491b-a6f1-c52b61101977",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-42d95692-55ee-4082-8667-c9547b4ecfd5",
+                      "name": "Video",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 40,
+                        "y": 80,
+                        "width": 400,
+                        "height": 560
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-4c72f389-cff5-407e-ae2d-73425d441a75"
+                      ],
+                      "mediaType": "video",
+                      "mediaSlide": {
+                        "items": [
+                          {
+                            "id": "media-item-9be2ebdd-4469-409b-b7ae-a825fc5def6a",
+                            "mediaType": "video",
+                            "assetId": "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+                            "duration": 6,
+                            "loop": true
+                          }
+                        ],
+                        "loop": true
+                      }
+                    },
+                    {
+                      "id": "widget-4f9e003a-b1b5-4868-b61d-76a621b0d7ac",
+                      "name": "Yön",
+                      "widgetType": "direction",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 760,
+                        "y": 88,
+                        "width": 200,
+                        "height": 80
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "style": {
+                        "directionStyleId": "direction-default"
+                      }
+                    },
+                    {
+                      "id": "widget-cbb6798d-f4f4-41e1-9165-451d6036ef1f",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 620,
+                        "y": 188,
+                        "width": 400,
+                        "height": 300
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-b19798b1-c3dc-4c1b-8c58-ae31b80dd515",
+                      "name": "Standart",
+                      "widgetType": "text",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 620,
+                        "y": 620,
+                        "width": 400,
+                        "height": 56
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "EN 81-70 konum / yön",
+                        "textByLanguage": {
+                          "tr": "EN 81-70 konum / yön",
+                          "en": "EN 81-70 position / direction"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 0,
+                  "enabled": true,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-39e873dd-c305-41b5-bc00-a9e3bc8cac93",
+                  "name": "Yangın",
+                  "widgets": [
+                    {
+                      "id": "widget-d6071358-d371-414a-9289-8c38002ac68f",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-aa10b731-e689-4827-8adf-4c4ccfc4b587",
+                      "name": "Yangın işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 120,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-60869fb1-4902-40c6-85c8-2e026e7c7a91",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 160,
+                        "y": 460,
+                        "width": 160,
+                        "height": 160
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-59985ecd-0625-4f27-a199-6340e4bc8c88",
+                      "name": "Yangın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 120,
+                        "width": 760,
+                        "height": 100
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "YANGIN",
+                        "textByLanguage": {
+                          "tr": "YANGIN",
+                          "en": "FIRE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-03754477-0117-439c-9bfc-7d7a605e6b93",
+                      "name": "Merdiven",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 240,
+                        "width": 760,
+                        "height": 88
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "MERDİVEN KULLANIN",
+                        "textByLanguage": {
+                          "tr": "MERDİVEN KULLANIN",
+                          "en": "USE THE STAIRS"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-23c889c8-48b7-4433-9c62-30df13217cc2",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 360,
+                        "width": 760,
+                        "height": 80
+                      },
+                      "zIndex": 5,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-e779afcc-6369-4919-b697-5510c3db204e",
+                      "name": "Kullanmayın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 460,
+                        "width": 760,
+                        "height": 80
+                      },
+                      "zIndex": 6,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "ASANSÖRÜ KULLANMAYIN",
+                        "textByLanguage": {
+                          "tr": "ASANSÖRÜ KULLANMAYIN",
+                          "en": "DO NOT USE THE LIFT"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 10,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "fire",
+                      "operator": "equals",
+                      "value": true
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-900aa6ab-2940-44b8-ad22-b48b75811c42",
+                  "name": "Aşırı yük",
+                  "widgets": [
+                    {
+                      "id": "widget-639e649e-f2f6-470c-a0fe-a9db1b61b60d",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-8d552429-d3f1-4b69-9ab2-1d67750f4377",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 40,
+                        "y": 160,
+                        "width": 360,
+                        "height": 400
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-c0cd850f-98fb-45d9-a330-d201b1a22659",
+                      "name": "Aşırı yük işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 480,
+                        "y": 120,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-e5d95f28-ec00-41d0-9e47-a6d3bbc4d420",
+                      "name": "Aşırı yük",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 840,
+                        "y": 160,
+                        "width": 400,
+                        "height": 120
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "AŞIRI YÜK",
+                        "textByLanguage": {
+                          "tr": "AŞIRI YÜK",
+                          "en": "OVERLOAD"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-43d54ac5-87a0-48ab-88be-0b2d8eaec4ec",
+                      "name": "Kapasite",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 840,
+                        "y": 320,
+                        "width": 400,
+                        "height": 88
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KAPASİTE AŞILDI",
+                        "textByLanguage": {
+                          "tr": "KAPASİTE AŞILDI",
+                          "en": "RATED LOAD EXCEEDED"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 8,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "overload"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-ec88017d-2764-4e43-a8f5-fe494a786e59",
+                  "name": "Girilmez",
+                  "widgets": [
+                    {
+                      "id": "widget-2dbf92bf-3dad-4998-9a8f-518ecc98c023",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-4e4eada3-fbe8-40c4-bf5d-5554d5f93897",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 200,
+                        "y": 160,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-5fc0bf88-7537-4d89-804d-bf1d4151c41d",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 200,
+                        "width": 600,
+                        "height": 120
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-3402a0ac-0d7a-47e5-be9a-6ac0c2c58105",
+                      "name": "Servis dışı",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 360,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "SERVİS DIŞI",
+                        "textByLanguage": {
+                          "tr": "SERVİS DIŞI",
+                          "en": "OUT OF SERVICE"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 9,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "service_out"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-62a13abc-04d5-4b75-806d-93d6030e2fcf",
+                  "name": "Deprem",
+                  "widgets": [
+                    {
+                      "id": "widget-e3f1a993-71cd-45c0-82b6-9f11e75a9cb4",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-a01c5858-c507-43c9-8541-15c2922488cc",
+                      "name": "Deprem işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 200,
+                        "y": 160,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-e767ace8-3044-4814-80ec-8aa115af05fb"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-2fdff33b-0f4f-4721-bfe1-4600ccaf65b4",
+                      "name": "Deprem",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 200,
+                        "width": 600,
+                        "height": 120
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "DEPREM",
+                        "textByLanguage": {
+                          "tr": "DEPREM",
+                          "en": "EARTHQUAKE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-ae3e5a18-592b-41ee-9044-9bfa1e5063df",
+                      "name": "Bekleyin",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 360,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KABİNDE KALIN",
+                        "textByLanguage": {
+                          "tr": "KABİNDE KALIN",
+                          "en": "STAY IN THE CAR"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 7,
+                  "enabled": false,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                }
+              ]
+            },
+            {
+              "id": "rotation-d6dbc933-56a7-43fd-8724-10eb08b96b29",
+              "angle": 180,
+              "width": 720,
+              "height": 1280,
+              "scenes": [
+                {
+                  "id": "scene-cec8422b-75bd-4e3a-84c9-3407780d03c4",
+                  "name": "Seyir",
+                  "widgets": [
+                    {
+                      "id": "widget-9a4d14a2-a8e2-436c-8a92-73e72db80c61",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-c79853ad-81c5-4454-a1cc-7506525ec923",
+                      "name": "Video",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 48,
+                        "width": 560,
+                        "height": 220
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-4c72f389-cff5-407e-ae2d-73425d441a75"
+                      ],
+                      "mediaType": "video",
+                      "mediaSlide": {
+                        "items": [
+                          {
+                            "id": "media-item-78df48ba-5b05-40a8-bcd1-910021bdbdab",
+                            "mediaType": "video",
+                            "assetId": "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+                            "duration": 6,
+                            "loop": true
+                          }
+                        ],
+                        "loop": true
+                      }
+                    },
+                    {
+                      "id": "widget-ec73dd1a-dc35-4ccb-ab6f-a19956b7419a",
+                      "name": "Yön",
+                      "widgetType": "direction",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 260,
+                        "y": 292,
+                        "width": 200,
+                        "height": 88
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "style": {
+                        "directionStyleId": "direction-default"
+                      }
+                    },
+                    {
+                      "id": "widget-2fcf432a-cd36-4687-befa-41dc50623b07",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 130,
+                        "y": 400,
+                        "width": 460,
+                        "height": 300
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-0cd41f6c-8e11-4134-a185-72661f665842",
+                      "name": "Standart",
+                      "widgetType": "text",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 1188,
+                        "width": 560,
+                        "height": 56
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "EN 81-70 konum / yön",
+                        "textByLanguage": {
+                          "tr": "EN 81-70 konum / yön",
+                          "en": "EN 81-70 position / direction"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 0,
+                  "enabled": true,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-7b2c370b-f29e-4afe-b2e9-dc511ed7303f",
+                  "name": "Yangın",
+                  "widgets": [
+                    {
+                      "id": "widget-c8924e5a-b711-4244-a6d7-463a670b236e",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-9aab3b4e-bc09-4652-a9ef-fa38ff3469ca",
+                      "name": "Yangın işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 96,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-51b4eab1-44ba-4071-b51f-862390b3c49d",
+                      "name": "Yangın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 424,
+                        "width": 600,
+                        "height": 100
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "YANGIN",
+                        "textByLanguage": {
+                          "tr": "YANGIN",
+                          "en": "FIRE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-5d5074b8-4818-4487-86dc-109f112d3468",
+                      "name": "Merdiven",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 536,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "MERDİVEN KULLANIN",
+                        "textByLanguage": {
+                          "tr": "MERDİVEN KULLANIN",
+                          "en": "USE THE STAIRS"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-eb1c17b3-03cb-44dc-a589-db60ab7784e3",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 260,
+                        "y": 656,
+                        "width": 200,
+                        "height": 200
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-7389bf39-6103-4055-9b3e-6f7dd353f84a",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 880,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 5,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-2c60b533-8e56-4d83-a207-582c581fefd8",
+                      "name": "Kullanmayın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 976,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 6,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "ASANSÖRÜ KULLANMAYIN",
+                        "textByLanguage": {
+                          "tr": "ASANSÖRÜ KULLANMAYIN",
+                          "en": "DO NOT USE THE LIFT"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 10,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "fire",
+                      "operator": "equals",
+                      "value": true
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-41409789-ce89-4e5b-9d5a-74d173657922",
+                  "name": "Aşırı yük",
+                  "widgets": [
+                    {
+                      "id": "widget-b569fa34-47f4-4258-93ed-fd50ce5ae9e3",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-75a3a1eb-168d-4ce9-8608-78a34c71b4b4",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 130,
+                        "y": 64,
+                        "width": 460,
+                        "height": 220
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-a2b876e9-7606-46a2-a272-5e37b17e4dac",
+                      "name": "Aşırı yük işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 312,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-4ff801f8-c9ec-42b8-aecc-02938a9b8490",
+                      "name": "Aşırı yük",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 640,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "AŞIRI YÜK",
+                        "textByLanguage": {
+                          "tr": "AŞIRI YÜK",
+                          "en": "OVERLOAD"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-3fe89f5c-f3c1-4900-816b-9ed520561570",
+                      "name": "Kapasite",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 768,
+                        "width": 600,
+                        "height": 80
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KAPASİTE AŞILDI",
+                        "textByLanguage": {
+                          "tr": "KAPASİTE AŞILDI",
+                          "en": "RATED LOAD EXCEEDED"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 8,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "overload"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-4558d3af-141c-41c5-8293-e9235051db24",
+                  "name": "Girilmez",
+                  "widgets": [
+                    {
+                      "id": "widget-21257dba-30ec-4b22-8cf9-b572a9b240df",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-6c618b22-7bd1-482b-a95b-6f80a38f1beb",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 160,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-86dd514f-c32e-4450-a513-27f7e9bbe36a",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 496,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-dd850c52-ee5d-4efc-9496-18ed26c7b8d1",
+                      "name": "Servis dışı",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 624,
+                        "width": 600,
+                        "height": 90
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "SERVİS DIŞI",
+                        "textByLanguage": {
+                          "tr": "SERVİS DIŞI",
+                          "en": "OUT OF SERVICE"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 9,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "service_out"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-dd86b466-df6f-4865-94c4-94e7b53d8396",
+                  "name": "Deprem",
+                  "widgets": [
+                    {
+                      "id": "widget-7ab09ab0-2b0c-482f-a30f-2d3b9cbc396a",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 720,
+                        "height": 1280
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-4bdabc4a-210c-4836-ae12-85d374027aad",
+                      "name": "Deprem işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 210,
+                        "y": 160,
+                        "width": 300,
+                        "height": 300
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-e767ace8-3044-4814-80ec-8aa115af05fb"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-066b4057-3855-4b42-9d22-d4e1995035e8",
+                      "name": "Deprem",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 496,
+                        "width": 600,
+                        "height": 110
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "DEPREM",
+                        "textByLanguage": {
+                          "tr": "DEPREM",
+                          "en": "EARTHQUAKE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-e8d36b7d-693b-44dc-a8bb-075e99e54500",
+                      "name": "Bekleyin",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 60,
+                        "y": 624,
+                        "width": 600,
+                        "height": 90
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KABİNDE KALIN",
+                        "textByLanguage": {
+                          "tr": "KABİNDE KALIN",
+                          "en": "STAY IN THE CAR"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 7,
+                  "enabled": false,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                }
+              ]
+            },
+            {
+              "id": "rotation-e847cc38-5473-415b-aaaa-0372fa5da946",
+              "angle": 270,
+              "width": 1280,
+              "height": 720,
+              "scenes": [
+                {
+                  "id": "scene-721d91d1-757a-4a70-99f7-b52bf120fcac",
+                  "name": "Seyir",
+                  "widgets": [
+                    {
+                      "id": "widget-839028d4-8a2e-4ecd-8258-b304e41de765",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-fe58f844-2509-4a5e-9cc2-53906edc4675",
+                      "name": "Video",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 40,
+                        "y": 80,
+                        "width": 400,
+                        "height": 560
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-4c72f389-cff5-407e-ae2d-73425d441a75"
+                      ],
+                      "mediaType": "video",
+                      "mediaSlide": {
+                        "items": [
+                          {
+                            "id": "media-item-bf90016e-12f8-45b4-b748-5273b47e7cb6",
+                            "mediaType": "video",
+                            "assetId": "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+                            "duration": 6,
+                            "loop": true
+                          }
+                        ],
+                        "loop": true
+                      }
+                    },
+                    {
+                      "id": "widget-01e5d541-b221-430e-8caa-b5f7b87993e7",
+                      "name": "Yön",
+                      "widgetType": "direction",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 760,
+                        "y": 88,
+                        "width": 200,
+                        "height": 80
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "style": {
+                        "directionStyleId": "direction-default"
+                      }
+                    },
+                    {
+                      "id": "widget-fbf43386-f502-4577-b425-fcc167e7587d",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 620,
+                        "y": 188,
+                        "width": 400,
+                        "height": 300
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-4da38b84-b0e0-4746-8600-ba182e4a4287",
+                      "name": "Standart",
+                      "widgetType": "text",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 620,
+                        "y": 620,
+                        "width": 400,
+                        "height": 56
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "EN 81-70 konum / yön",
+                        "textByLanguage": {
+                          "tr": "EN 81-70 konum / yön",
+                          "en": "EN 81-70 position / direction"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 0,
+                  "enabled": true,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-33b05987-d8b9-4cd6-a7b8-8bd91f40066c",
+                  "name": "Yangın",
+                  "widgets": [
+                    {
+                      "id": "widget-65efe867-e797-48d6-a870-980d945811a8",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-7439f98b-da92-40a0-9ee7-d4a6976fd553",
+                      "name": "Yangın işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 80,
+                        "y": 120,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-a8785a54-0ad6-42bf-9ea9-3e887cf75540",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 160,
+                        "y": 460,
+                        "width": 160,
+                        "height": 160
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-002841ae-b0ec-4975-a5ee-d6305e4660fe",
+                      "name": "Yangın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 120,
+                        "width": 760,
+                        "height": 100
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "YANGIN",
+                        "textByLanguage": {
+                          "tr": "YANGIN",
+                          "en": "FIRE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-ad76e30b-8bac-49cc-a440-6dcae3589f5b",
+                      "name": "Merdiven",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 240,
+                        "width": 760,
+                        "height": 88
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "MERDİVEN KULLANIN",
+                        "textByLanguage": {
+                          "tr": "MERDİVEN KULLANIN",
+                          "en": "USE THE STAIRS"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-cfa2af19-d08c-4ef4-985d-9eb9f9b8459d",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 360,
+                        "width": 760,
+                        "height": 80
+                      },
+                      "zIndex": 5,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-404f7c95-727a-44f9-bdfa-7600bee5815d",
+                      "name": "Kullanmayın",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 460,
+                        "y": 460,
+                        "width": 760,
+                        "height": 80
+                      },
+                      "zIndex": 6,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "ASANSÖRÜ KULLANMAYIN",
+                        "textByLanguage": {
+                          "tr": "ASANSÖRÜ KULLANMAYIN",
+                          "en": "DO NOT USE THE LIFT"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 10,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "fire",
+                      "operator": "equals",
+                      "value": true
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-9ae997d0-e59f-4cb0-a71f-8d18927c2f60",
+                  "name": "Aşırı yük",
+                  "widgets": [
+                    {
+                      "id": "widget-9c47c355-0392-44b5-b77f-03314bf6a9d6",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-c6bfb981-1d03-48a4-b00a-3a34dd7dce53",
+                      "name": "Kat",
+                      "widgetType": "digit",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 40,
+                        "y": 160,
+                        "width": 360,
+                        "height": 400
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "sourceStateId": "floor",
+                        "floorMappingId": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2"
+                      },
+                      "style": {
+                        "digitStyleId": "digit-default"
+                      }
+                    },
+                    {
+                      "id": "widget-07aca1c7-37ab-4db0-9366-0c928b4a1f65",
+                      "name": "Aşırı yük işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 480,
+                        "y": 120,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-ae6c2f11-7bd2-45d1-9558-40be6981cdf8",
+                      "name": "Aşırı yük",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 840,
+                        "y": 160,
+                        "width": 400,
+                        "height": 120
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "AŞIRI YÜK",
+                        "textByLanguage": {
+                          "tr": "AŞIRI YÜK",
+                          "en": "OVERLOAD"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-79ca26ae-c69f-4b1c-9a74-ce710c9c3a29",
+                      "name": "Kapasite",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 840,
+                        "y": 320,
+                        "width": 400,
+                        "height": 88
+                      },
+                      "zIndex": 4,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KAPASİTE AŞILDI",
+                        "textByLanguage": {
+                          "tr": "KAPASİTE AŞILDI",
+                          "en": "RATED LOAD EXCEEDED"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 8,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "overload"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-3f32a73e-b916-4be0-ab1f-25d0a0ff9c79",
+                  "name": "Girilmez",
+                  "widgets": [
+                    {
+                      "id": "widget-53177cdf-e9b1-49b6-9f2e-df084fdbd016",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-5de96eff-9573-476d-bb77-608bcb9ccaa8",
+                      "name": "Girilmez işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 200,
+                        "y": 160,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-d9fb0550-4715-4b9f-8a51-ad5700818998"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-1837046a-dae1-4993-b7aa-a00bf0056bbb",
+                      "name": "Girilmez",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 200,
+                        "width": 600,
+                        "height": 120
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "GİRİLMEZ",
+                        "textByLanguage": {
+                          "tr": "GİRİLMEZ",
+                          "en": "DO NOT ENTER"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-43932e4e-f62b-4e8e-bfc5-7b3e55d51416",
+                      "name": "Servis dışı",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 360,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "SERVİS DIŞI",
+                        "textByLanguage": {
+                          "tr": "SERVİS DIŞI",
+                          "en": "OUT OF SERVICE"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 9,
+                  "enabled": true,
+                  "activationConditions": [
+                    {
+                      "source": "state",
+                      "stateId": "service_state",
+                      "operator": "equals",
+                      "value": "service_out"
+                    }
+                  ],
+                  "activationConditionMode": "all"
+                },
+                {
+                  "id": "scene-52875d68-260b-4227-9868-1afc20dc6dfe",
+                  "name": "Deprem",
+                  "widgets": [
+                    {
+                      "id": "widget-9577c768-9a13-49dc-a8c4-9c3069b7446a",
+                      "name": "Arka plan",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": true,
+                      "geometry": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 1280,
+                        "height": 720
+                      },
+                      "zIndex": 0,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-7be0141c-e240-40c9-a63e-c1e1b553ca92",
+                      "name": "Deprem işareti",
+                      "widgetType": "media",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 200,
+                        "y": 160,
+                        "width": 320,
+                        "height": 320
+                      },
+                      "zIndex": 1,
+                      "bindings": [],
+                      "assetIds": [
+                        "asset-e767ace8-3044-4814-80ec-8aa115af05fb"
+                      ],
+                      "mediaType": "image"
+                    },
+                    {
+                      "id": "widget-e6e2d5d1-d7a2-41b2-ae1f-1d181ab8fd17",
+                      "name": "Deprem",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 200,
+                        "width": 600,
+                        "height": 120
+                      },
+                      "zIndex": 2,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "DEPREM",
+                        "textByLanguage": {
+                          "tr": "DEPREM",
+                          "en": "EARTHQUAKE"
+                        }
+                      }
+                    },
+                    {
+                      "id": "widget-8f59bfd6-5d1d-4f34-9c71-36d19cdaa6bc",
+                      "name": "Bekleyin",
+                      "widgetType": "warning",
+                      "enabled": true,
+                      "visible": true,
+                      "locked": false,
+                      "geometry": {
+                        "x": 600,
+                        "y": 360,
+                        "width": 600,
+                        "height": 88
+                      },
+                      "zIndex": 3,
+                      "bindings": [],
+                      "assetIds": [],
+                      "content": {
+                        "text": "KABİNDE KALIN",
+                        "textByLanguage": {
+                          "tr": "KABİNDE KALIN",
+                          "en": "STAY IN THE CAR"
+                        }
+                      }
+                    }
+                  ],
+                  "priority": 7,
+                  "enabled": false,
+                  "activationConditions": [],
+                  "activationConditionMode": "all"
+                }
+              ]
+            }
+          ],
+          "resources": [
+            "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9",
+            "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+            "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90",
+            "asset-d9fb0550-4715-4b9f-8a51-ad5700818998",
+            "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148",
+            "asset-e767ace8-3044-4814-80ec-8aa115af05fb"
+          ],
+          "floorMappings": [
+            {
+              "id": "floor-mapping-803e7661-61a0-45cf-bf8b-fbb2f22506a2",
+              "entries": [
+                {
+                  "firmwareValue": "B1",
+                  "displayValue": "B1"
+                },
+                {
+                  "firmwareValue": "0",
+                  "displayValue": "G"
+                },
+                {
+                  "firmwareValue": "1",
+                  "displayValue": "1"
+                },
+                {
+                  "firmwareValue": "2",
+                  "displayValue": "2"
+                },
+                {
+                  "firmwareValue": "3",
+                  "displayValue": "3"
+                },
+                {
+                  "firmwareValue": "4",
+                  "displayValue": "4"
+                },
+                {
+                  "firmwareValue": "5",
+                  "displayValue": "5"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-f2ce3a85-f68b-4d11-89e4-dbaa7f14c9f9",
+      "name": "Kabin arka plan",
+      "sourcePath": "assets/arkaplan.png",
+      "mediaType": "image",
+      "metadata": {
+        "originalFileName": "arkaplan.png",
+        "typeInferred": true
+      }
+    },
+    {
+      "id": "asset-4c72f389-cff5-407e-ae2d-73425d441a75",
+      "name": "Kabin video",
+      "sourcePath": "assets/kabin-loop.mp4",
+      "mediaType": "video",
+      "metadata": {
+        "originalFileName": "kabin-loop.mp4",
+        "typeInferred": true
+      }
+    },
+    {
+      "id": "asset-c7fae429-4f8d-4690-9a94-0ae02070ac90",
+      "name": "Yangın işareti",
+      "sourcePath": "assets/yangin.jpg",
+      "mediaType": "image",
+      "metadata": {
+        "originalFileName": "yangin.jpg",
+        "typeInferred": true
+      }
+    },
+    {
+      "id": "asset-d9fb0550-4715-4b9f-8a51-ad5700818998",
+      "name": "Girilmez işareti",
+      "sourcePath": "assets/girilmez.jpg",
+      "mediaType": "image",
+      "metadata": {
+        "originalFileName": "girilmez.jpg",
+        "typeInferred": true
+      }
+    },
+    {
+      "id": "asset-f87dcba7-dffa-4f8f-9263-7fdbfe0e7148",
+      "name": "Aşırı yük işareti",
+      "sourcePath": "assets/asiri-yuk.jpg",
+      "mediaType": "image",
+      "metadata": {
+        "originalFileName": "asiri-yuk.jpg",
+        "typeInferred": true
+      }
+    },
+    {
+      "id": "asset-e767ace8-3044-4814-80ec-8aa115af05fb",
+      "name": "Deprem işareti",
+      "sourcePath": "assets/deprem.jpg",
+      "mediaType": "image",
+      "metadata": {
+        "originalFileName": "deprem.jpg",
+        "typeInferred": true
+      }
+    }
+  ],
+  "metadata": {
+    "note": "EN 81-20 overload, EN 81-70 position/direction, EN 81-73 fire, EN 81-77 earthquake layout (disabled until a seismic runtime state exists)."
+  }
+}

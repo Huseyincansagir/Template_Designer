@@ -24,7 +24,10 @@ async function leakIntoProperties(page: Page) {
   return page.evaluate(() => {
     const props = document.querySelector("[data-panel='properties']");
     const canvas = document.querySelector(".canvas-workspace");
-    if (!props || !canvas) return { error: "missing-panels", offenders: [], gap: 0 };
+    if (!props || !canvas) {
+      const empty = { left: 0, top: 0, right: 0, bottom: 0 };
+      return { error: "missing-panels", offenders: [], gap: 0, properties: empty, canvas: empty };
+    }
     const pr = props.getBoundingClientRect();
     const offenders: { cls: string; x: number; y: number }[] = [];
     const visit = (el: Element) => {
