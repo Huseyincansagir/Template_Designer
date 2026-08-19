@@ -179,6 +179,27 @@ D6 re-verified its matrix against a late peer table, retracted one of its own so
 **Acted on immediately — the one part with no specification risk.** There were **three** inline ID generators: `Core/editor-application.ts` called `crypto.randomUUID()` bare, which **throws** wherever it is unavailable (non-secure contexts, older engines); `Domain/factories.ts` guarded it and fell back to `Math.random().toString(36)`; `App.tsx` did the same thing a third way for binding ids. So a single document could carry ids in three different shapes, and one layer could hard-crash where the others degraded quietly. Identity now comes from `src/Domain/identity.ts` alone: one shape everywhere, a proper 128-bit RFC-4122 fallback, and no hard dependency on `crypto.randomUUID`. An architecture test forbids inline generation anywhere else and was verified to fail when it is reintroduced; two unit tests cover the shape, uniqueness and the missing-`randomUUID` path.
 
 **Also recorded:** parts of the asset-browser specification are *explicitly undecided*, not merely unimplemented — `MEDIA_ASSET_BROWSER_QUESTIONNAIRE_V1:504` states two of its own questions were never answered and that decisions were deliberately not advanced assuming them. Asset remediation therefore has no settled ID, colour-coding or folder contract to build against, which is why the asset system shipped in this pass models only what every document agrees on.
+### Post-report correction (D6 final — a defect in my own asset importer)
+
+D6's last delivery named F7c, and it landed on code I had written earlier in this pass. It was right, and the defect was mine.
+
+| ID | Sev | Class | Observed | Decision | Status |
+|----|-----|-------|----------|----------|--------|
+| F7c | P2 | BUG (mine) | `Asset.mediaType` was **required** over a closed union with no unassigned member, so my importer had nowhere to put a file whose type it could not infer — it returned `undefined` and the file was **silently discarded**. Picking three files gave two assets and no mention of the third. `WIDGET_SYSTEM_QUESTIONNAIRE_V1:225-233` (uncontradicted) requires the opposite: the dropped file exists first as a Resource with `Type: None`, receives a semantic type if the profile supports the format, and otherwise stays `Unsupported`. My own live test had *asserted the silence as correct* ("unsupported files ignored"). | `Asset.mediaType` is now optional — an explicit resting state. Every picked file is imported; un-inferable ones arrive untyped, are reported by name, and the Asset Browser switches to Unsupported Files so they are visible. The existing media-type select gained a "Not assigned" option, so a type can be assigned *and* cleared. | **FIXED** |
+| F7c-follow-on | P2 | VALIDATION BUG | Making untyped assets representable exposed a second problem: `ASSET_FORMAT_UNSUPPORTED` was an unconditional **error**, so one unused `.txt` resting in the depot blocked the entire build. That makes the spec's "stays Unsupported" state unusable. | Both asset rules are now scoped by reference: an **unused** untyped or unsupported-format resource is a **warning** (it rests, and says why it cannot be assigned); the **same asset referenced** by a theme or widget is an **error**, because the package would carry it. Removing the reference returns it to the resting state. | **FIXED** |
+
+**A crash that only a live run could catch.** Hoisting the new label helpers put `assetTypeLabel` in a temporal dead zone relative to the Explorer tree that uses it, and the whole `App` fell to the error boundary:
+
+```
+ReferenceError: Cannot access 'assetTypeLabel' before initialization
+The above error occurred in the <App> component.
+```
+
+`tsc` does not flag TDZ across statement order in the same scope, all 143 unit tests passed, and the build succeeded — because nothing in the suite renders `App`. It surfaced within one minute of a browser probe. This is the concrete cost of D6's "zero UI-interaction tests" finding, and the reason every batch in this pass ended with a live run rather than a green test summary.
+
+**Also folded in from D6's final delivery:** `C10d` three (`MEDIA_LAYERING:149-155`) vs five (`MEDIA_ASSET_BROWSER_QUESTIONNAIRE_V1:381-389`) audio channels — flag before any audio work begins. `C6` is now **resolved against the implementation** at three documents to one (`MEDIA_LAYERING:30-32`, `PRODUCT_CONTRACT_V2:221,828`, `CONTRACT_V2:64` vs `SCENE_DESIGNER_QUESTIONNAIRE_V1:185-191`): per-binding priority 0–10 is a real V1 gap, and the domain carries priority only on `Scene`. Recorded, not implemented — conflicting bindings currently resolve by document order, which is deterministic but not the specified rule. `F7`'s missing surface is specifically a drop target on Project Explorer / Theme Resources, **not** the canvas: `MAB:38` forbids canvas drop outright.
+
+**Widget type change** was listed by D6 as DOMAIN-ONLY against base HEAD; it is wired and covered (live run 2, E7/E8).
 ### Verified working — reported and confirmed, no change needed
 
 `D2-14` rotation dimension swap · `D2-15` per-rotation scene/widget isolation · `D2-16` theme/scene undo-redo + save/reload · `D2-17` canonical four rotations on menu-created and duplicated themes · `D2-18` selection pruning · `D4` all 14 command descriptors render and every rendered control resolves to a working handler · `D3` dirty-flag correctness, `beforeunload` + Tauri close guard, 30× undo/redo, 200-widget project usable, all four program settings genuinely consumed.

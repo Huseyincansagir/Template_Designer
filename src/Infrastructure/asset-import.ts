@@ -74,9 +74,12 @@ type PickedFileLike = {
  * Converts a picked file into a logical asset record. Exported so the same
  * rules are testable without a DOM and reused by every import source.
  */
-export function toAssetDraft(file: PickedFileLike, options: AssetPickOptions = {}): AssetDraft | undefined {
+export function toAssetDraft(file: PickedFileLike, options: AssetPickOptions = {}): AssetDraft {
+  // A file whose media type cannot be inferred is still imported, with no type
+  // assigned. Silently dropping it lost the file and contradicted
+  // WIDGET_SYSTEM_QUESTIONNAIRE_V1:225-233, which requires the resource to
+  // exist first and receive its semantic type afterwards (F7c).
   const mediaType = inferMediaType(file.name, file.type);
-  if (!mediaType) return undefined;
   const prefix = options.sourcePrefix?.replace(/[\\/]+$/, "");
   const relative = file.name.replace(/^.*[\\/]/, "");
   const sourcePath = file.path && file.path.trim().length > 0
@@ -87,7 +90,7 @@ export function toAssetDraft(file: PickedFileLike, options: AssetPickOptions = {
   return {
     name: displayNameOf(file.name),
     sourcePath,
-    mediaType,
+    ...(mediaType ? { mediaType } : {}),
     metadata: {
       originalFileName: relative,
       contentType: file.type ?? "",
@@ -95,6 +98,7 @@ export function toAssetDraft(file: PickedFileLike, options: AssetPickOptions = {
       // The browser transport cannot read a real filesystem path; recording
       // that fact keeps the package honest about what it can resolve.
       resolvedPath: Boolean(file.path && file.path.trim().length > 0),
+      typeInferred: Boolean(mediaType),
     },
   };
 }
@@ -128,7 +132,7 @@ export class BrowserFileAssetImportSource implements AssetImportSource {
       };
       input.addEventListener("change", () => {
         const files = Array.from(input.files ?? []);
-        finish(files.map((file) => toAssetDraft(file, options)).filter((draft): draft is AssetDraft => Boolean(draft)));
+        finish(files.map((file) => toAssetDraft(file, options)));
       });
       // A cancelled dialog fires `cancel` in modern browsers; the focus
       // fallback keeps the promise from leaking in older ones.

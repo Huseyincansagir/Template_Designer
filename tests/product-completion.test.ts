@@ -398,7 +398,15 @@ describe("Asset import inference (browser transport)", () => {
     expect(native?.sourcePath).toBe("D:/media/lobby.png");
     expect(native?.metadata?.resolvedPath).toBe(true);
 
-    expect(toAssetDraft({ name: "readme.txt", type: "text/plain" })).toBeUndefined();
+    // A file the importer cannot classify is still imported, with no media type
+    // assigned. Dropping it silently lost the user's file and contradicted
+    // WIDGET_SYSTEM_QUESTIONNAIRE_V1:225-233 (F7c).
+    const unclassified = toAssetDraft({ name: "readme.txt", type: "text/plain" });
+    expect(unclassified.name).toBe("readme");
+    expect(unclassified.sourcePath).toBe("readme.txt");
+    expect(unclassified.mediaType).toBeUndefined();
+    expect(unclassified.metadata?.typeInferred).toBe(false);
+    expect(relative?.metadata?.typeInferred).toBe(true);
   });
 });
 
@@ -662,5 +670,78 @@ describe("Stable identity (C10a)", () => {
     } finally {
       Object.defineProperty(globalThis.crypto, "randomUUID", { value: original, configurable: true, writable: true });
     }
+  });
+});
+describe("Unassigned resources (F7c)", () => {
+  it("imports a file whose type cannot be inferred, then lets the user assign one", () => {
+    const { project } = fixture();
+    const { store, editor } = setup(project);
+    // WSQ:225-233: the resource exists first, with Type: None.
+    const created = editor.addAssets([{ name: "Readme", sourcePath: "assets/readme.txt" }]);
+    expect(created.changed).toBe(true);
+    const assetId = created.createdIds?.[0] as string;
+    expect(current(store).assets[0].mediaType).toBeUndefined();
+
+    // Unassigned is a resting state, so it warns rather than blocking a build.
+    const unassignedIssues = validateProject(current(store), foundationDeviceProfile).issues;
+    expect(unassignedIssues.some((issue) => issue.code === "ASSET_TYPE_UNASSIGNED" && issue.severity === "warning")).toBe(true);
+    expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(true);
+
+    // Assigning a type makes it usable, and clearing it returns to unassigned.
+    expect(editor.setAssetProperties(assetId, { mediaType: "image" }).changed).toBe(true);
+    expect(current(store).assets[0].mediaType).toBe("image");
+    expect(editor.setAssetProperties(assetId, { mediaType: undefined }).changed).toBe(true);
+    expect(current(store).assets[0].mediaType).toBeUndefined();
+    // A garbage type is still refused.
+    expect(editor.setAssetProperties(assetId, { mediaType: "hologram" as never }).changed).toBe(false);
+  });
+
+  it("blocks a build that references an asset with no media type", async () => {
+    const { project, sceneId, themeId } = fixture([widget("w1", "media")]);
+    const { store, editor } = setup(project);
+    const assetId = editor.addAssets([{ name: "Mystery", sourcePath: "assets/mystery.png" }]).createdIds?.[0] as string;
+    expect(editor.setThemeResources(themeId, [assetId]).changed).toBe(true);
+
+    // Referencing a typeless asset would put a record with no media type into
+    // the package, so THIS one is an error, not a warning.
+    const issues = validateProject(current(store), foundationDeviceProfile).issues;
+    const blocking = issues.find((issue) => issue.code === "REFERENCED_ASSET_TYPE_UNASSIGNED");
+    expect(blocking?.severity).toBe("error");
+    expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(false);
+    const service = createDeploymentService([]);
+    expect((await service.buildVerified(current(store), foundationDeviceProfile)).status).toBe("blocked");
+
+    // Assigning the type resolves it and the package builds.
+    editor.setAssetProperties(assetId, { mediaType: "image" });
+    expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(true);
+    expect((await service.buildVerified(current(store), foundationDeviceProfile)).status).toBe("built");
+    expect(sceneId.length).toBeGreaterThan(0);
+  });
+});
+describe("Unsupported formats block only when referenced (F7c follow-on)", () => {
+  it("lets an unused unsupported resource rest, and blocks the same asset once referenced", () => {
+    const { project, themeId } = fixture();
+    const { store, editor } = setup(project);
+    // A dropped file the profile cannot use stays as a resource. Blocking the
+    // whole build because it merely SITS in the depot would make the spec's
+    // "stays Unsupported" state unusable.
+    const assetId = editor.addAssets([{ name: "Notes", sourcePath: "assets/notes.txt", mediaType: "image" }]).createdIds?.[0] as string;
+    const resting = validateProject(current(store), foundationDeviceProfile);
+    const restingIssue = resting.issues.find((issue) => issue.code === "ASSET_FORMAT_UNSUPPORTED");
+    expect(restingIssue?.severity).toBe("warning");
+    expect(restingIssue?.message).toMatch(/stays unsupported/i);
+    expect(resting.valid).toBe(true);
+
+    // Referencing it would put it in the package, so now it blocks.
+    expect(editor.setThemeResources(themeId, [assetId]).changed).toBe(true);
+    const referenced = validateProject(current(store), foundationDeviceProfile);
+    const referencedIssue = referenced.issues.find((issue) => issue.code === "ASSET_FORMAT_UNSUPPORTED");
+    expect(referencedIssue?.severity).toBe("error");
+    expect(referencedIssue?.message).toMatch(/is referenced but/i);
+    expect(referenced.valid).toBe(false);
+
+    // Removing the reference returns it to the resting state.
+    expect(editor.setThemeResources(themeId, []).changed).toBe(true);
+    expect(validateProject(current(store), foundationDeviceProfile).valid).toBe(true);
   });
 });

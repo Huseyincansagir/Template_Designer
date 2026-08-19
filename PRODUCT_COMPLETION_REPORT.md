@@ -124,10 +124,10 @@ Three focused commits: `3bc8a89`, `0477b7d`, `6a5950f`. 2 942 insertions, 177 de
 | Gate | Result |
 |------|--------|
 | `npm run typecheck` | **PASS** — clean |
-| `npm test` | **PASS** — 140/140 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
+| `npm test` | **PASS** — 143/143 in 12 files (was 90/11), including two enforced architecture invariants, the selection-refusal policy and the alignment primitives |
 | `npm run build` | **PASS** — `tsc --noEmit && vite build`, 375 KB JS / 45 KB CSS |
 | `npm run tauri:check` | **BLOCKED** — `cargo` is not installed in this environment. Not simulated. |
-| Live browser acceptance | **PASS** — 158 checks across 6 scripted runs, **0 console errors** |
+| Live browser acceptance | **PASS** — 159 checks across 6 scripted runs, **0 console errors** |
 
 New tests prove product behaviour, not helper internals: asset import as one undoable command, reference-purging delete, the manifest actually receiving asset ids, widget configuration with type-transition cleanup, media-slide type constraints, activation rules the runtime honours, scene reordering, profile switching with re-dimension and clamping, the canonical rotation guards, the seven new validation rules, media-type inference, project-file parsing, `create` persistence, `adopt` dirtiness, rejection reporting and the duplicate-ID gate.
 
@@ -154,6 +154,7 @@ Live runs: **run 5** (19) align/distribute, enable toggle, deselect, zoom-to-fit
 | Binary media in the package | Deliberate boundary: `*.asset.json` with `binary: false`; materialization is the deployment adapter's job. |
 | Explorer filter/search at 12+ scenes | The scene switcher removed the acute pain; tree search is not built. |
 | Audio channel / priority authoring | Blocked upstream: the specification contradicts itself on runtime-setting defaults, channel counts, and where override rules live (C10b). Deciding it here would be invention. |
+| Per-binding priority 0-10 | A real V1 gap at three documents to one (C6): the domain carries priority only on `Scene`, and conflicting bindings resolve by document order instead. |
 | Sequential media inside one Media Slide | Blocked upstream: `MEDIA_ASSET_BROWSER_QUESTIONNAIRE_V1` says a slide plays one media at `:203` and describes sequential media inside a slide at `:247`/`:270`. The largest remaining V1 domain gap; needs one product decision. |
 | Deterministic stable IDs | Required by `WIDGET_SYSTEM_QUESTIONNAIRE_V1:219`, but the composition it serves is contradictory and the package/ID model is explicitly undecided (C10a). Generation is now unified and shape-stable; determinism awaits the firmware contract. |
 
@@ -175,7 +176,7 @@ Honest, and measured against what a designer needs — not against the test suit
 |------|-------|---------------|
 | Core editing | **9 / 10** | Create, select, move, resize, rename, duplicate, lock, hide, z-order, clipboard, marquee, snap, nudge, align, distribute — all through the canonical pipeline, all undoable. Edge/centre snap is arithmetically unreachable at grid 10 / threshold 6. |
 | Widget system | **9 / 10** | Every type is creatable and fully configurable, including type change, and multi-selection align/distribute now exists. Widget-level bounding-group layout (a specified V1 concept) is still absent. |
-| Asset system | **7 / 10** | Import, list, categorise, name, re-path, retype, assign, replace, reuse, usage counts, reference-purging delete, export scope. No thumbnails, no folders, no bytes in the package. |
+| Asset system | **8 / 10** | Import (every picked file, with an explicit untyped resting state), list, categorise, name, re-path, assign/clear type, assign to widgets, replace, reuse, usage counts, reference-purging delete, reference-scoped validation, export scope. No thumbnails, no folders, no drop target, no bytes in the package. |
 | Scene workflow | **9 / 10** | Create, rename, duplicate, delete, reorder, one-click switch, keyboard switch, priority, enabled, and a real activation-rule editor. No cross-rotation scene copy. |
 | Rotation workflow | **9 / 10** | Always four, always reachable, always labelled, dimension-correct, keyboard-navigable, structurally protected. Per-rotation layout inheritance does not exist (nor is it specified). |
 | Project lifecycle | **8 / 10** | New with name + device, save, autosave slot, revert, portable file import/export, dirty guards, close guard, session restore. No recent-projects list, no multi-document. |

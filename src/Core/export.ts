@@ -83,7 +83,9 @@ function assetFile(asset: Asset): DeploymentFile {
     content: stableSerialize({
       id: asset.id,
       name: asset.name,
-      mediaType: asset.mediaType,
+      // Validation blocks a referenced asset without a type, so this cannot be
+      // reached through the product; the guard keeps the package schema total.
+      mediaType: asset.mediaType ?? "unassigned",
       sourcePath: asset.sourcePath,
       metadata: asset.metadata ?? {},
       binary: false,

@@ -12,7 +12,8 @@ export type MutationResult = { readonly changed: boolean; readonly createdIds?: 
 export type AssetDraft = {
   readonly name: string;
   readonly sourcePath: string;
-  readonly mediaType: MediaType;
+  /** Absent when the format is not one the importer could classify (F7c). */
+  readonly mediaType?: MediaType;
   readonly metadata?: Readonly<Record<string, string | number | boolean>>;
 };
 
@@ -161,8 +162,11 @@ function clampGeometry(geometry: Geometry, bounds: { width: number; height: numb
 function normalizeAssetDraft(draft: AssetDraft): AssetDraft | undefined {
   const name = draft.name.trim();
   const sourcePath = draft.sourcePath.trim();
-  if (name.length === 0 || sourcePath.length === 0 || !isMediaType(draft.mediaType)) return undefined;
-  return { name, sourcePath, mediaType: draft.mediaType, metadata: draft.metadata };
+  if (name.length === 0 || sourcePath.length === 0) return undefined;
+  // An absent media type is a legitimate resting state; a PRESENT but invalid
+  // one is a programming error and is still refused.
+  if (draft.mediaType !== undefined && !isMediaType(draft.mediaType)) return undefined;
+  return { name, sourcePath, ...(draft.mediaType ? { mediaType: draft.mediaType } : {}), metadata: draft.metadata };
 }
 
 function duplicateWidget(widget: Widget, id: string = newId("widget")): Widget {
@@ -348,11 +352,13 @@ export class EditorApplication {
     if (!current || !current.assets.some((asset) => asset.id === assetId)) return { changed: false };
     if (patch.name !== undefined && patch.name.trim().length === 0) return { changed: false };
     if (patch.sourcePath !== undefined && patch.sourcePath.trim().length === 0) return { changed: false };
-    if (patch.mediaType !== undefined && !isMediaType(patch.mediaType)) return { changed: false };
+    // `mediaType: undefined` clears the assignment, which is how a resource
+    // returns to the unassigned state.
+    if (patch.mediaType !== undefined && patch.mediaType !== null && !isMediaType(patch.mediaType)) return { changed: false };
     const cleanPatch: Partial<Asset> = {
       ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
       ...(patch.sourcePath !== undefined ? { sourcePath: patch.sourcePath.trim() } : {}),
-      ...(patch.mediaType !== undefined ? { mediaType: patch.mediaType } : {}),
+      ...("mediaType" in patch ? { mediaType: patch.mediaType ?? undefined } : {}),
       ...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
     };
     return this.execute("Edit Asset", (project) => ({

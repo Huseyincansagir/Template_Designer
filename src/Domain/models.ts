@@ -199,7 +199,14 @@ export interface Asset {
   id: Id;
   name: string;
   sourcePath: string;
-  mediaType: MediaType;
+  /**
+   * Absent means the semantic type is not assigned yet. An imported file first
+   * exists as a Resource with no type; it becomes usable once a type the active
+   * DeviceProfile supports is chosen, and stays unassigned when the profile does
+   * not support its format (WIDGET_SYSTEM_QUESTIONNAIRE_V1:225-233). Discarding
+   * such a file at import instead would lose it silently.
+   */
+  mediaType?: MediaType;
   metadata?: Readonly<Record<string, string | number | boolean>>;
 }
 

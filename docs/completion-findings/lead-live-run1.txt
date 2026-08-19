@@ -31,11 +31,12 @@ PASS B4 switching theme restores that theme scenes
 PASS C1 asset browser has an Import control
 PASS C2 empty state tells the user what to do :: ▱ / No assets in this project yet
 PASS C3 Import opens a real file chooser :: {"mode":"selectMultiple"}
-PASS C4 supported files imported, unsupported ignored :: 2 row(s): lobby|chime
-PASS C5 Depot count is real (no hardcoded 0) :: ▱ Asset Depot 2 || ▤ Project Resources 0 || ◈ Scene Content 0 || ⊘ Unsupported Files 0
-PASS C6 both assets report as unused
+PASS C4 every picked file is imported, unclassified ones without a type :: 3 row(s): lobby|chime|notes
+PASS C5 Depot count is real (no hardcoded 0) :: ▱ Asset Depot 3 || ▤ Project Resources 0 || ◈ Scene Content 0 || ⊘ Unsupported Files 1
+PASS C5b the untyped import is reported, not silently dropped :: 1 of them have no media type yet (notes) — assign one in Properties, or delete them. They are listed under Unsupported Files.
+PASS C6 all assets report as unused
 PASS C7 import created undo history
-PASS C8 Explorer has a real Assets subtree :: ▾ ▱ Assets 2 assets · 0 theme resources
+PASS C8 Explorer has a real Assets subtree :: ▾ ▱ Assets 3 assets · 0 theme resources
 PASS C9 individual assets appear as tree nodes
 PASS C10 selecting an asset resolves in the inspector :: ◇ / lobbyimage · unused
 PASS C11 asset inspector offers a real Asset section :: IDENTITY|CANONICAL CONTEXT|ASSET

@@ -132,8 +132,15 @@ function validateAssetReference(
   path: string,
   issues: ValidationIssue[],
 ): void {
-  if (!assets.has(assetId)) {
+  const asset = assets.get(assetId);
+  if (!asset) {
     issue(issues, "MISSING_REFERENCED_ASSET", `Asset '${assetId}' cannot be resolved.`, path, "Import the asset or remove the broken reference.");
+    return;
+  }
+  if (!asset.mediaType) {
+    // Referencing a typeless asset would put a record with no media type into
+    // the deployment package, so this one blocks.
+    issue(issues, "REFERENCED_ASSET_TYPE_UNASSIGNED", `Asset '${asset.name}' is referenced but has no media type.`, path, "Assign a media type to the asset, or remove the reference.");
   }
 }
 
@@ -367,10 +374,42 @@ function validateThemeProject(
   theme.floorMappings?.forEach((mapping, index) => validateFloorMapping(mapping, profile, new Set(assets.keys()), `${path}.floorMappings[${index}]`, issues));
 }
 
+/**
+ * Every asset id the document actually points at. An unused resource that the
+ * profile cannot classify is a legitimate resting state (a dropped file awaiting
+ * a type, WIDGET_SYSTEM_QUESTIONNAIRE_V1:225-233), so it must not block a build;
+ * the same asset REFERENCED by a theme or widget must, because the package would
+ * then carry it.
+ */
+function collectReferencedAssetIds(project: Project, profile?: DeviceProfile): ReadonlySet<string> {
+  const referenced = new Set<string>([...(project.defaultAssetIds ?? []), ...(profile?.defaultAssetIds ?? [])]);
+  for (const group of project.themeProjectGroups) {
+    for (const theme of group.themeProjects) {
+      theme.resources.forEach((id) => referenced.add(id));
+      theme.defaultAssetIds?.forEach((id) => referenced.add(id));
+      for (const rotation of theme.rotations) {
+        for (const scene of Array.isArray(rotation.scenes) ? rotation.scenes : []) {
+          for (const widget of Array.isArray(scene.widgets) ? scene.widgets : []) {
+            (Array.isArray(widget.assetIds) ? (widget.assetIds as readonly string[]) : []).forEach((id) => referenced.add(id));
+            if (widget.audioAssetId) referenced.add(widget.audioAssetId);
+            if (widget.mediaSlide) {
+              referenced.add(widget.mediaSlide.assetId);
+              if (widget.mediaSlide.audioAssetId) referenced.add(widget.mediaSlide.audioAssetId);
+            }
+            (Array.isArray(widget.bindings) ? (widget.bindings as readonly Binding[]) : []).forEach((binding) => { if (binding.contentId) referenced.add(binding.contentId); });
+          }
+        }
+      }
+    }
+  }
+  return referenced;
+}
+
 export function validateProject(project: Project, profile?: DeviceProfile): ValidationResult {
   const issues: ValidationIssue[] = [];
   const assetIds = new Set(project.assets.map((asset) => asset.id));
   const assets = new Map(project.assets.map((asset) => [asset.id, asset]));
+  const referencedAssetIds = collectReferencedAssetIds(project, profile);
 
   if (project.name.trim().length === 0) {
     issue(issues, "PROJECT_NAME_REQUIRED", "Project name is required.", "name", "Provide a non-empty project name.");
@@ -387,6 +426,12 @@ export function validateProject(project: Project, profile?: DeviceProfile): Vali
   project.assets.forEach((asset, index) => {
     if (asset.name.trim().length === 0) issue(issues, "ASSET_NAME_REQUIRED", "Asset display name is required.", `assets[${index}].name`, "Provide a display name without changing the stable ID.");
     if (asset.sourcePath.trim().length === 0) issue(issues, "ASSET_SOURCE_REQUIRED", "Asset source path is required.", `assets[${index}].sourcePath`, "Import or locate the source asset.");
+    if (!asset.mediaType && !referencedAssetIds.has(asset.id)) {
+      // An imported file exists before its semantic type is chosen. That is a
+      // legitimate resting state, so it informs rather than blocks - unless the
+      // asset is actually referenced, which is checked below.
+      issue(issues, "ASSET_TYPE_UNASSIGNED", `Asset '${asset.name}' has no media type yet.`, `assets[${index}].mediaType`, "Choose Image, Video or Audio in Properties, or delete the asset if the active DeviceProfile cannot use its format.", "warning");
+    }
   });
 
   // A project without any Theme Project is not publishable; validation must
@@ -426,7 +471,19 @@ export function validateProject(project: Project, profile?: DeviceProfile): Vali
     project.assets.forEach((asset, index) => {
       const extension = asset.sourcePath.match(/\.([a-z0-9]+)$/i)?.[1].toLowerCase();
       if (extension && !supportedFormats.includes(extension)) {
-        issue(issues, "ASSET_FORMAT_UNSUPPORTED", `Asset format '.${extension}' is not supported by the active DeviceProfile.`, `assets[${index}].sourcePath`, "Use a profile-supported format or remove the asset reference.");
+        // Unused: the resource simply stays Unsupported and informs. Referenced:
+        // the package would carry it, so it blocks.
+        const referenced = referencedAssetIds.has(asset.id);
+        issue(
+          issues,
+          "ASSET_FORMAT_UNSUPPORTED",
+          referenced
+            ? `Asset '${asset.name}' is referenced but its format '.${extension}' is not supported by the active DeviceProfile.`
+            : `Asset '${asset.name}' has format '.${extension}', which the active DeviceProfile does not support, so it stays unsupported.`,
+          `assets[${index}].sourcePath`,
+          referenced ? "Replace it with a profile-supported format, or remove the reference." : "Convert it to a supported format, or delete the resource. It cannot be assigned to a widget as it is.",
+          referenced ? "error" : "warning",
+        );
       }
     });
   }
