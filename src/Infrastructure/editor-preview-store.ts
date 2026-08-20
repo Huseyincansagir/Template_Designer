@@ -2,8 +2,9 @@
  * Editor-only snapshot cache. Not part of the Project document and not part of
  * the V1 deployment package (`*.asset.json`, `binary: false`).
  *
- * Images keep the original file bytes (PNG alpha included). Videos keep only
- * the captured first-frame poster. Audio has no visual snapshot.
+ * Images keep the original file bytes (PNG alpha included). Videos keep the
+ * original file bytes plus an optional first-frame poster. Audio has no visual
+ * snapshot. The package itself stays logical (`*.asset.json`, `binary: false`).
  */
 
 export type StoredEditorPreview = {
@@ -12,6 +13,8 @@ export type StoredEditorPreview = {
   readonly kind: "image" | "video";
   readonly mime: string;
   readonly blob: Blob;
+  readonly posterBlob?: Blob;
+  readonly posterMime?: string;
 };
 
 export interface EditorPreviewStore {

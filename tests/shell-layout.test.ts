@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 const css = readFileSync(resolve(__dirname, "../src/App/app.css"), "utf8");
 
 function rule(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*");
   const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]+)\\}`));
   expect(match, `missing CSS rule ${selector}`).toBeTruthy();
   return match?.[1] ?? "";
@@ -39,8 +39,10 @@ describe("shell layout containment (UI-D-0024)", () => {
   it("lets media snapshot faces fill the widget box", () => {
     expect(rule(".canvas-widget > .widget-render")).toMatch(/position:\s*absolute/);
     expect(rule(".canvas-widget > .widget-render")).toMatch(/inset:\s*0/);
-    expect(rule(".canvas-widget img.media-face")).toMatch(/object-fit:\s*cover/);
-    expect(rule(".canvas-widget img.media-face")).toMatch(/height:\s*100%/);
+    const mediaFace = rule(".canvas-widget img.media-face, .canvas-widget video.media-face");
+    expect(mediaFace).toMatch(/object-fit:\s*cover/);
+    expect(mediaFace).toMatch(/height:\s*100%/);
+    expect(mediaFace).toMatch(/pointer-events:\s*auto/);
   });
 
   it("keeps docked Properties above leaked canvas content", () => {

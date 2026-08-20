@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dataUrlToBlob, displaySrcForPreview, storedPreviewRecord, type AssetPreview } from "../src/App/asset-preview";
+import { dataUrlToBlob, displaySrcForPreview, storedPreviewNeedsRefetch, storedPreviewRecord, type AssetPreview } from "../src/App/asset-preview";
 import { pickedFromFiles } from "../src/Infrastructure/asset-import";
 import { MemoryEditorPreviewStore } from "../src/Infrastructure/editor-preview-store";
 
@@ -30,16 +30,21 @@ describe("editor asset previews", () => {
     expect(await blob?.text()).toBe("hello");
   });
 
-  it("stores original image bytes and a video poster, never audio", () => {
+  it("stores original image bytes and original video bytes plus a poster, never audio", () => {
     const png = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
     const image = storedPreviewRecord("p1", "a1", { src: "blob:x", kind: "image" }, png);
     expect(image).toMatchObject({ projectId: "p1", assetId: "a1", kind: "image", mime: "image/png" });
     expect(image?.blob).toBe(png);
 
     const poster = "data:image/jpeg;base64,aGVsbG8=";
-    const video = storedPreviewRecord("p1", "a2", { src: "blob:v", poster, kind: "video" }, new Blob(["mp4"], { type: "video/mp4" }));
+    const mp4 = new Blob(["mp4"], { type: "video/mp4" });
+    const video = storedPreviewRecord("p1", "a2", { src: "blob:v", poster, kind: "video" }, mp4);
     expect(video?.kind).toBe("video");
-    expect(video?.mime).toBe("image/jpeg");
+    expect(video?.mime).toBe("video/mp4");
+    expect(video?.blob).toBe(mp4);
+    expect(video?.posterBlob?.type).toBe("image/jpeg");
+    expect(storedPreviewNeedsRefetch(video!)).toBe(false);
+    expect(storedPreviewNeedsRefetch({ projectId: "p1", assetId: "old", kind: "video", mime: "image/jpeg", blob: new Blob(["jpg"], { type: "image/jpeg" }) })).toBe(true);
     expect(storedPreviewRecord("p1", "a3", { src: "blob:a", kind: "audio" }, new Blob(["wav"]))).toBeUndefined();
   });
 });

@@ -640,7 +640,8 @@ body.relaxed-density .panel-heading { min-height: 36px; }
   position: static;
   background: transparent;
 }
-.canvas-widget img.media-face {
+.canvas-widget img.media-face,
+.canvas-widget video.media-face {
   position: absolute;
   inset: 0;
   z-index: 0;
@@ -649,6 +650,8 @@ body.relaxed-density .panel-heading { min-height: 36px; }
   height: 100%;
   max-width: none;
   object-fit: cover;
+  background: #000;
+  pointer-events: auto;
 }
 .widget-render-media.has-face strong, .widget-render-media.has-face small { display: none; }
 .widget-render-media-glyph { color: var(--accent-on-dark); font-size: clamp(9px, 2cqw, 20px); line-height: 1; }

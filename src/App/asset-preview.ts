@@ -14,6 +14,7 @@ export type AssetPreview = {
 export function revokeAssetPreview(preview: AssetPreview | undefined): void {
   if (!preview) return;
   if (preview.src.startsWith("blob:")) URL.revokeObjectURL(preview.src);
+  if (preview.poster?.startsWith("blob:") && preview.poster !== preview.src) URL.revokeObjectURL(preview.poster);
 }
 
 function captureVideoPoster(src: string): Promise<string | undefined> {
@@ -105,7 +106,7 @@ export function dataUrlToBlob(dataUrl: string): Blob | undefined {
   }
 }
 
-/** Durable cache record from a live preview. Audio and failed video posters are skipped. */
+/** Durable cache record from a live preview. Audio is skipped. */
 export function storedPreviewRecord(
   projectId: string,
   assetId: string,
@@ -116,17 +117,35 @@ export function storedPreviewRecord(
     return { projectId, assetId, kind: "image", mime: originalBlob.type || "image/png", blob: originalBlob };
   }
   if (preview.kind === "video") {
-    if (!preview.poster?.startsWith("data:")) return undefined;
-    const poster = dataUrlToBlob(preview.poster);
-    if (!poster) return undefined;
-    return { projectId, assetId, kind: "video", mime: poster.type || "image/jpeg", blob: poster };
+    const poster = preview.poster?.startsWith("data:") ? dataUrlToBlob(preview.poster) : undefined;
+    return {
+      projectId,
+      assetId,
+      kind: "video",
+      mime: originalBlob.type || "video/mp4",
+      blob: originalBlob,
+      ...(poster ? { posterBlob: poster, posterMime: poster.type || "image/jpeg" } : {}),
+    };
   }
   return undefined;
+}
+
+/** True when a cached video record is a poster JPEG and cannot be played. */
+export function storedPreviewNeedsRefetch(record: StoredEditorPreview): boolean {
+  if (record.kind !== "video") return false;
+  const mime = (record.mime || record.blob.type || "").toLowerCase();
+  return !mime.startsWith("video/") && mime !== "application/octet-stream";
+}
+
+export function playableVideoSrc(preview: AssetPreview | undefined): string | undefined {
+  if (!preview || preview.kind !== "video") return undefined;
+  return preview.src;
 }
 
 export function assetPreviewFromStored(record: StoredEditorPreview): AssetPreview | undefined {
   if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return undefined;
   const src = URL.createObjectURL(record.blob);
   if (record.kind === "image") return { src, kind: "image" };
-  return { src, poster: src, kind: "video" };
+  const poster = record.posterBlob ? URL.createObjectURL(record.posterBlob) : undefined;
+  return { src, poster, kind: "video" };
 }

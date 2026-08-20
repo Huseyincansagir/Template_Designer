@@ -30,10 +30,24 @@ describe("live EN 81 cabin snapshots", () => {
       if (await confirm.count()) await confirm.click();
       await page.waitForTimeout(2000);
 
+      const video = page.locator("video.media-face").first();
+      await video.waitFor({ state: "visible", timeout: 20_000 });
+      const playback = await video.evaluate(async (node: HTMLVideoElement) => {
+        try { await node.play(); } catch { /* autoplay may already be running */ }
+        const t0 = node.currentTime;
+        await new Promise((resolve) => window.setTimeout(resolve, 600));
+        return { paused: node.paused, t0, t1: node.currentTime, duration: node.duration, w: node.videoWidth };
+      });
+      expect(playback.duration).toBeGreaterThan(2);
+      expect(playback.paused).toBe(false);
+      expect(playback.t1).toBeGreaterThan(playback.t0);
+      expect(playback.w).toBeGreaterThan(200);
+
       const seyah = await page.evaluate(() => {
-        const faces = [...document.querySelectorAll(".canvas-widget img.media-face")].map((img) => {
-          const r = img.getBoundingClientRect();
-          return { w: r.width, h: r.height, nw: (img as HTMLImageElement).naturalWidth };
+        const faces = [...document.querySelectorAll(".canvas-widget img.media-face, .canvas-widget video.media-face")].map((el) => {
+          const r = el.getBoundingClientRect();
+          const img = el as HTMLImageElement;
+          return { w: r.width, h: r.height, nw: img.naturalWidth || (el as HTMLVideoElement).videoWidth || 0 };
         });
         const frame = document.querySelector(".device-frame")?.getBoundingClientRect();
         const stage = document.querySelector("[data-testid='canvas-stage']")?.getBoundingClientRect();
@@ -68,7 +82,7 @@ describe("live EN 81 cabin snapshots", () => {
       const arrows = await page.evaluate(() => [...document.querySelectorAll(".arrow-face")].map((img) => img.getBoundingClientRect().height));
       expect(Math.max(0, ...arrows), `arrow faces ${JSON.stringify(arrows)}`).toBeGreaterThan(20);
 
-      await page.getByLabel("Fire").check();
+      await page.locator(".sim-input-row").filter({ hasText: /^Fire/ }).locator("input[type=checkbox]").check();
       await page.getByRole("button", { name: "Evaluate" }).click();
       await page.waitForTimeout(300);
       const fireScene = await page.evaluate(() => document.querySelector(".canvas-rail-label")?.textContent ?? "");

@@ -14,7 +14,7 @@ import { stableSerialize } from "../Core/serialize";
 import { createStableId } from "../Domain/identity";
 import { LocalStorageProjectStorage } from "../Infrastructure/project-storage";
 import { createAssetImportSource, extensionOf, isFileDrag, pickedFromFiles } from "../Infrastructure/asset-import";
-import { assetPreviewFromStored, displaySrcForPreview, editorPreviewFromBlob, revokeAssetPreview, storedPreviewRecord, type AssetPreview } from "./asset-preview";
+import { assetPreviewFromStored, displaySrcForPreview, editorPreviewFromBlob, playableVideoSrc, revokeAssetPreview, storedPreviewNeedsRefetch, storedPreviewRecord, type AssetPreview } from "./asset-preview";
 import { createEditorPreviewStore } from "../Infrastructure/editor-preview-store";
 import { createProjectFileGateway, parseProjectFile } from "../Infrastructure/project-file";
 import { LocalStorageWorkspaceSession } from "../Infrastructure/workspace-session-storage";
@@ -840,18 +840,27 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
       }
       if (cancelled || generation !== previewGenerationRef.current) return;
       const incoming: Record<string, AssetPreview> = {};
-      const cached = new Set(records.map((record) => record.assetId));
+      const restored = new Set<string>();
       for (const record of records) {
-        if (assetPreviewsRef.current[record.assetId]) continue;
+        if (storedPreviewNeedsRefetch(record)) continue;
+        if (assetPreviewsRef.current[record.assetId]) {
+          restored.add(record.assetId);
+          continue;
+        }
         const preview = assetPreviewFromStored(record);
-        if (preview) incoming[record.assetId] = preview;
+        if (preview) {
+          incoming[record.assetId] = preview;
+          restored.add(record.assetId);
+        }
       }
-      const missing = project.assets.filter((asset) => !cached.has(asset.id) && !assetPreviewsRef.current[asset.id] && asset.sourcePath && !asset.sourcePath.includes("://") && !asset.sourcePath.includes("\\"));
+      const missing = project.assets.filter((asset) => !restored.has(asset.id) && !assetPreviewsRef.current[asset.id] && asset.sourcePath && !asset.sourcePath.includes("://") && !asset.sourcePath.includes("\\"));
       const fetched = await Promise.all(missing.map(async (asset) => {
         try {
           const response = await fetch(`/${asset.sourcePath.replace(/^\//, "")}`);
           if (!response.ok) return undefined;
-          const blob = await response.blob();
+          const raw = await response.blob();
+          const mime = raw.type || (asset.mediaType === "video" ? "video/mp4" : asset.mediaType === "image" ? "image/png" : asset.mediaType === "audio" ? "audio/mpeg" : raw.type);
+          const blob = raw.type === mime ? raw : new Blob([await raw.arrayBuffer()], { type: mime });
           const preview = await editorPreviewFromBlob(blob, asset.mediaType);
           if (!preview) return undefined;
           const stored = storedPreviewRecord(projectId, asset.id, preview, blob);
@@ -3364,10 +3373,17 @@ export function App({ profileRegistry }: { profileRegistry: DeviceProfileRegistr
     if (widget.widgetType === "media") {
       const assetId = effect?.contentId ?? widget.mediaSlide?.items[0]?.assetId ?? widget.assetIds?.[0];
       const asset = assetId ? project.assets.find((candidate) => candidate.id === assetId) : undefined;
-      const face = displaySrcForPreview(assetId ? assetPreviews[assetId] : undefined);
+      const preview = assetId ? assetPreviews[assetId] : undefined;
+      const videoSrc = playableVideoSrc(preview);
+      const face = displaySrcForPreview(preview);
+      const shouldLoop = widget.mediaSlide ? widget.mediaSlide.loop === true || widget.mediaSlide.items[0]?.loop === true : true;
       return (
-        <span className={`widget-render widget-render-media ${face ? "has-face" : ""}`}>
-          {face ? <img className="media-face" src={face} alt="" /> : <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>}
+        <span className={`widget-render widget-render-media ${videoSrc || face ? "has-face" : ""}`}>
+          {videoSrc
+            ? <video className="media-face" src={videoSrc} poster={preview?.poster} autoPlay muted loop={shouldLoop} playsInline preload="auto" aria-label={asset?.name ?? "Video"} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); const node = event.currentTarget; if (node.paused) void node.play(); else node.pause(); }} />
+            : face
+              ? <img className="media-face" src={face} alt="" />
+              : <span className="widget-render-media-glyph">{assetGlyph(asset?.mediaType ?? widget.mediaType ?? "image")}</span>}
           <strong>{asset?.name ?? (assetId ? `${assetId} (unresolved)` : "No asset")}</strong>
           <small>{widget.mediaType ?? "type not set"}{widget.mediaSlide ? ` · ${widget.mediaSlide.items.length} entr${widget.mediaSlide.items.length === 1 ? "y" : "ies"}${widget.mediaSlide.loop ? " · loop" : ""}` : ""}{previewActive && effect?.playback ? ` · ${effect.playback}` : ""}</small>
           {!previewActive && !assetId ? <button type="button" className="media-assign-cta" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); openAssetsForAssign(widget); }}>Assign asset…</button> : null}
