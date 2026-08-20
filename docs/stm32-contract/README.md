@@ -13,6 +13,7 @@ Kaynak repo: MyApplication_6 `docs/` (baseline `feb5f56` / sözleşme commit `2c
 | [binding_yapisi_20260819.md](binding_yapisi_20260819.md) | Binding → `sahne=` (derleme) |
 | [stm32_binding_motoru_20260819.md](stm32_binding_motoru_20260819.md) | STM32 Binding motoru (RAM, 0–15, üyelik AND) |
 | [stm32_binding_mantik_operatorleri_20260819.md](stm32_binding_mantik_operatorleri_20260819.md) | Tam AND/OR/NOT/XOR — DNF ve C yığın VM |
+| [COMPILED_RUNTIME_RULE_ENGINE_IMPLEMENTATION_PLAN.md](COMPILED_RUNTIME_RULE_ENGINE_IMPLEMENTATION_PLAN.md) | `prompt.txt` master plan: firmware map + Logic IR + Binding + eylem (kod yok) |
 | [template_designer_v2_stm32_paket_sozlesmesi_plani_20260819.md](template_designer_v2_stm32_paket_sozlesmesi_plani_20260819.md) | Uzun plan / errata |
 
 **Başlangıç işi bu depoda:** DeviceProfile MJPG + `0:/tN` `tema.cfg` derleyici. Firmware dumanından önce CM7 patch yok.
