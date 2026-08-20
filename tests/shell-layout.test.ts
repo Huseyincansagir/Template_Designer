@@ -45,6 +45,12 @@ describe("shell layout containment (UI-D-0024)", () => {
     expect(mediaFace).toMatch(/pointer-events:\s*auto/);
   });
 
+  it("drops editor widget chrome in Preview so the device face is the template", () => {
+    const preview = rule(".canvas-widget.is-preview");
+    expect(preview).toMatch(/border-color:\s*transparent/);
+    expect(preview).toMatch(/background:\s*transparent/);
+  });
+
   it("keeps docked Properties above leaked canvas content", () => {
     const panel = rule(".tool-panel");
     expect(panel).toMatch(/z-index:\s*2/);

@@ -29,8 +29,9 @@ describe("EN 81 cabin fixture", () => {
       expect(types.has("digit")).toBe(true);
       expect(types.has("direction")).toBe(true);
     }
-    expect(parsed.project.assets.length).toBeGreaterThanOrEqual(16);
+    expect(parsed.project.assets.length).toBeGreaterThanOrEqual(18);
     expect(parsed.project.assets.some((asset) => asset.name === "digit-8")).toBe(true);
     expect(parsed.project.assets.some((asset) => asset.name === "arrow-up")).toBe(true);
+    expect(parsed.project.assets.some((asset) => asset.name === "SAVAS logo")).toBe(true);
   });
 });
